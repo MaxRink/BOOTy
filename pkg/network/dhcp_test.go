@@ -86,3 +86,23 @@ func TestDHCPMode_WaitForConnectivity(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+// TestDHCPSetup_ParallelContextCancel verifies that canceling the context
+// terminates all concurrent NIC probes promptly (well under N×15 s).
+// In environments with no physical NICs, Setup returns immediately with an
+// error — that case is also valid and proves no blocking.
+func TestDHCPSetup_ParallelContextCancel(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	d := &DHCPMode{}
+	_ = d.Setup(ctx, &Config{})
+	elapsed := time.Since(start)
+
+	// Must complete well within 15 s (the per-NIC sequential worst-case).
+	// If probing were serial, 2+ NICs would take 30 s+; parallel caps at ~15 s.
+	if elapsed > 2*time.Second {
+		t.Fatalf("Setup took %v — context cancellation did not propagate promptly", elapsed)
+	}
+}
