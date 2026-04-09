@@ -1,9 +1,11 @@
 package secureboot
 
 import (
+	"debug/pe"
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/telekom/BOOTy/pkg/efi"
 )
@@ -45,12 +47,8 @@ func (cv *ChainVerifier) Verify() (*ChainResult, error) {
 	return result, nil
 }
 
-// checkComponentPresence checks that expected Secure Boot chain components exist.
-// NOTE: This is a presence check only — it does not verify cryptographic signatures.
-// Full PE/COFF signature verification is planned but not yet implemented.
-// checkComponentPresence checks whether boot chain binaries exist on disk.
-// This is intentionally a presence-only check — actual signature verification
-// would require parsing PE/COFF and validating against db/dbx EFI variables.
+// checkComponentPresence checks whether boot chain binaries exist on disk
+// and validates PE/COFF headers for EFI binaries.
 func (cv *ChainVerifier) checkComponentPresence() []ComponentStatus {
 	paths := []struct {
 		name  string
@@ -78,17 +76,44 @@ func (cv *ChainVerifier) checkComponentPresence() []ComponentStatus {
 		status := ComponentStatus{Name: p.name}
 		found := false
 		for _, path := range p.paths {
-			if _, err := os.Stat(path); err == nil {
-				found = true
-				break
+			if _, err := os.Stat(path); err != nil {
+				continue
 			}
+			found = true
+			if isEFIPath(path) {
+				if err := validatePEHeader(path); err != nil {
+					status.Error = fmt.Sprintf("invalid PE/COFF header in %s: %v", path, err)
+					found = false
+				}
+			}
+			break
 		}
-		if !found {
+		if !found && status.Error == "" {
 			status.Error = fmt.Sprintf("not found: tried %v", p.paths)
 		}
 		components = append(components, status)
 	}
 	return components
+}
+
+// isEFIPath reports whether path points to a PE/COFF EFI binary.
+// Kernel vmlinuz paths are excluded — they are not PE binaries.
+func isEFIPath(path string) bool {
+	lower := strings.ToLower(path)
+	return strings.HasSuffix(lower, ".efi")
+}
+
+// validatePEHeader opens path as a PE/COFF binary using debug/pe and
+// returns an error if the file is missing, truncated, or has an invalid header.
+func validatePEHeader(path string) error {
+	f, err := pe.Open(path)
+	if err != nil {
+		return fmt.Errorf("PE/COFF parse failed: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		slog.Warn("failed to close PE file", "path", path, "error", err)
+	}
+	return nil
 }
 
 func (cv *ChainVerifier) allComponentsPresent(components []ComponentStatus) bool {
