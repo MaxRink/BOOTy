@@ -198,6 +198,7 @@ func TestWipeOrSecureEraseDisks(t *testing.T) {
 				cmd.setResult("wipefs -af", nil, tc.wipeErr)
 			}
 			if tc.secureErr != nil {
+				cmd.setResult("nvme format", nil, tc.secureErr)
 				cmd.setResult("wipefs -af", nil, tc.secureErr)
 			}
 			provider := &mockProvider{}

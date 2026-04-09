@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/digineo/go-dhclient"
@@ -56,33 +57,32 @@ func (d *DHCPMode) Setup(ctx context.Context, _ *Config) error {
 
 	results := make(chan dhcpResult, len(ifaces))
 	var wg sync.WaitGroup
+	var winner atomic.Int32
 
 	for i := range ifaces {
 		wg.Add(1)
 		go func(iface net.Interface) {
 			defer wg.Done()
-			d.probeNIC(probeCtx, iface, results)
+			d.probeNIC(probeCtx, iface, results, &winner)
 		}(ifaces[i])
 	}
 
-	// Close results channel once all goroutines finish.
 	go func() {
 		wg.Wait()
 		close(results)
 	}()
 
-	// Take the first successful result; cancel remaining probes immediately.
 	for res := range results {
-		if d.client == nil {
-			d.client = res.client
-			d.log.Info("DHCP succeeded", "interface", res.iface)
-			probeCancel()
-		} else {
-			res.client.Stop()
-		}
+		d.client = res.client
+		d.log.Info("DHCP succeeded", "interface", res.iface)
+		probeCancel()
+		break
 	}
 
 	if d.client == nil {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("DHCP probing canceled: %w", err)
+		}
 		return fmt.Errorf("DHCP failed on all %d interfaces", len(ifaces))
 	}
 	return nil
@@ -90,7 +90,7 @@ func (d *DHCPMode) Setup(ctx context.Context, _ *Config) error {
 
 // probeNIC attempts DHCP on a single interface with a 15 s timeout.
 // On success it sends a dhcpResult to the results channel.
-func (d *DHCPMode) probeNIC(ctx context.Context, iface net.Interface, results chan<- dhcpResult) {
+func (d *DHCPMode) probeNIC(ctx context.Context, iface net.Interface, results chan<- dhcpResult, winner *atomic.Int32) {
 	d.log.Info("Attempting DHCP", "interface", iface.Name)
 
 	link, err := netlink.LinkByName(iface.Name)
@@ -106,7 +106,7 @@ func (d *DHCPMode) probeNIC(ctx context.Context, iface net.Interface, results ch
 	leased := make(chan struct{}, 1)
 	client := &dhclient.Client{
 		Iface:   &iface,
-		OnBound: d.onBound(link, iface.Name, leased),
+		OnBound: d.onBound(link, iface.Name, leased, winner),
 	}
 
 	hostname, _ := os.Hostname()
@@ -131,8 +131,13 @@ func (d *DHCPMode) probeNIC(ctx context.Context, iface net.Interface, results ch
 }
 
 // onBound returns a callback that configures the interface address and default route.
-func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- struct{}) func(*dhclient.Lease) {
+// The winner flag ensures only the first NIC to receive a lease applies netlink changes;
+// subsequent leases are acknowledged (to keep the DHCP client happy) but not configured.
+func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- struct{}, winner *atomic.Int32) func(*dhclient.Lease) {
 	return func(lease *dhclient.Lease) {
+		if !winner.CompareAndSwap(0, 1) {
+			return
+		}
 		cidr := net.IPNet{IP: lease.FixedAddress, Mask: lease.Netmask}
 		addr, _ := netlink.ParseAddr(cidr.String())
 		if err := netlink.AddrAdd(link, addr); err != nil {
@@ -140,7 +145,6 @@ func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- struc
 			return
 		}
 		d.log.Info("DHCP lease obtained", "iface", ifName, "addr", cidr.String())
-		// Default gateway from DHCP option 3 (routers).
 		if len(lease.Router) > 0 {
 			if err := netlink.RouteAdd(&netlink.Route{Gw: lease.Router[0]}); err != nil {
 				d.log.Warn("failed to add default route", "gw", lease.Router[0], "error", err)
