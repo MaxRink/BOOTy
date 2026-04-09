@@ -7,18 +7,23 @@ import (
 	"testing"
 )
 
-const peOptionalHeader32MinSize = 96
+// peOptionalHeader32PlusMinSize is the minimum size of a PE32+ optional header
+// (IMAGE_OPTIONAL_HEADER64), as required by the PE/COFF specification.
+const peOptionalHeader32PlusMinSize = 112
 
+// minimalValidPE returns a minimal PE32+ (64-bit) binary for use in tests.
+// PE32+ uses magic 0x020b and machine type AMD64 (0x8664), matching the
+// format used by real x86_64 EFI binaries such as shim and GRUB.
 func minimalValidPE() []byte {
 	const (
-		dosStubSize  = 64
-		peSignature  = 4
-		coffHdrSize  = 20
-		optHdrOffset = dosStubSize + peSignature + coffHdrSize
-		machineAMD64 = uint16(0x8664)
-		magicPE32    = uint16(0x010b)
+		dosStubSize   = 64
+		peSignature   = 4
+		coffHdrSize   = 20
+		optHdrOffset  = dosStubSize + peSignature + coffHdrSize
+		machineAMD64  = uint16(0x8664)
+		magicPE32Plus = uint16(0x020b)
 	)
-	buf := make([]byte, optHdrOffset+peOptionalHeader32MinSize)
+	buf := make([]byte, optHdrOffset+peOptionalHeader32PlusMinSize)
 
 	buf[0] = 'M'
 	buf[1] = 'Z'
@@ -28,10 +33,10 @@ func minimalValidPE() []byte {
 
 	coffBase := dosStubSize + peSignature
 	binary.LittleEndian.PutUint16(buf[coffBase:], machineAMD64)
-	binary.LittleEndian.PutUint16(buf[coffBase+16:], peOptionalHeader32MinSize)
+	binary.LittleEndian.PutUint16(buf[coffBase+16:], peOptionalHeader32PlusMinSize)
 	binary.LittleEndian.PutUint16(buf[coffBase+18:], 0x0002)
 
-	binary.LittleEndian.PutUint16(buf[optHdrOffset:], magicPE32)
+	binary.LittleEndian.PutUint16(buf[optHdrOffset:], magicPE32Plus)
 
 	return buf
 }
@@ -74,6 +79,42 @@ func TestValidatePEHeader_EmptyFile(t *testing.T) {
 	path := writeTempFile(t, []byte{}, "empty.efi")
 	if err := validatePEHeader(path); err == nil {
 		t.Error("expected error for empty file, got nil")
+	}
+}
+
+func TestFindValidCandidate_SkipsInvalidPEThenFindsValid(t *testing.T) {
+	dir := t.TempDir()
+
+	invalid := filepath.Join(dir, "bad.efi")
+	if err := os.WriteFile(invalid, []byte("not a PE binary"), 0o600); err != nil {
+		t.Fatalf("write invalid: %v", err)
+	}
+
+	valid := filepath.Join(dir, "good.efi")
+	if err := os.WriteFile(valid, minimalValidPE(), 0o600); err != nil {
+		t.Fatalf("write valid: %v", err)
+	}
+
+	status := findValidCandidate("shim", []string{invalid, valid})
+	if status.Error != "" {
+		t.Errorf("expected valid candidate to be found, got error: %s", status.Error)
+	}
+}
+
+func TestFindValidCandidate_AllInvalidPEReturnsError(t *testing.T) {
+	dir := t.TempDir()
+
+	bad1 := filepath.Join(dir, "bad1.efi")
+	bad2 := filepath.Join(dir, "bad2.efi")
+	for _, p := range []string{bad1, bad2} {
+		if err := os.WriteFile(p, []byte("garbage"), 0o600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+
+	status := findValidCandidate("shim", []string{bad1, bad2})
+	if status.Error == "" {
+		t.Error("expected error when all candidates have invalid PE headers")
 	}
 }
 

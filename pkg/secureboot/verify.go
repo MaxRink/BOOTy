@@ -50,7 +50,7 @@ func (cv *ChainVerifier) Verify() (*ChainResult, error) {
 // checkComponentPresence checks whether boot chain binaries exist on disk
 // and validates PE/COFF headers for EFI binaries.
 func (cv *ChainVerifier) checkComponentPresence() []ComponentStatus {
-	paths := []struct {
+	specs := []struct {
 		name  string
 		paths []string
 	}{
@@ -71,29 +71,33 @@ func (cv *ChainVerifier) checkComponentPresence() []ComponentStatus {
 			"/boot/vmlinuz-linux",
 		}},
 	}
-	components := make([]ComponentStatus, 0, len(paths))
-	for _, p := range paths {
-		status := ComponentStatus{Name: p.name}
-		found := false
-		for _, path := range p.paths {
-			if _, err := os.Stat(path); err != nil {
-				continue
-			}
-			found = true
-			if isEFIPath(path) {
-				if err := validatePEHeader(path); err != nil {
-					status.Error = fmt.Sprintf("invalid PE/COFF header in %s: %v", path, err)
-					found = false
-				}
-			}
-			break
-		}
-		if !found && status.Error == "" {
-			status.Error = fmt.Sprintf("not found: tried %v", p.paths)
-		}
-		components = append(components, status)
+	components := make([]ComponentStatus, 0, len(specs))
+	for _, s := range specs {
+		components = append(components, findValidCandidate(s.name, s.paths))
 	}
 	return components
+}
+
+// findValidCandidate scans candidates in order, returning the first that exists
+// and passes PE/COFF validation (for .efi paths). If no candidate passes,
+// the returned ComponentStatus carries an error string.
+func findValidCandidate(name string, candidates []string) ComponentStatus {
+	status := ComponentStatus{Name: name}
+	for _, path := range candidates {
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
+		if isEFIPath(path) {
+			if err := validatePEHeader(path); err != nil {
+				slog.Warn("PE/COFF validation failed, trying next candidate",
+					"path", path, "error", err)
+				continue
+			}
+		}
+		return status
+	}
+	status.Error = fmt.Sprintf("not found: tried %v", candidates)
+	return status
 }
 
 // isEFIPath reports whether path points to a PE/COFF EFI binary.
