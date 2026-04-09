@@ -379,7 +379,7 @@ func ensureNetworkConnectivity(ctx context.Context, cfg *config.MachineConfig, n
 			}
 			newMode, setupErr := setupNetworkMode(ctx, cfg)
 			if setupErr != nil {
-				return netMode, fmt.Errorf("network retry setup: %w", setupErr)
+				return nil, fmt.Errorf("network retry setup: %w", setupErr)
 			}
 			netMode = newMode
 		}
@@ -436,10 +436,9 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 	if cfg.VLANs != "" {
 		vlans, err := network.ParseVLANs(cfg.VLANs)
 		if err != nil {
-			slog.Error("invalid VLAN configuration", "error", err)
-		} else {
-			netCfg.VLANs = vlans
+			return nil, fmt.Errorf("invalid VLAN configuration: %w", err)
 		}
+		netCfg.VLANs = vlans
 	}
 
 	// Set up VLANs first — they create sub-interfaces that other modes use.
