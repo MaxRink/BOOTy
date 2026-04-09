@@ -311,7 +311,10 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 
 	// Set up networking with retry — if connectivity fails, teardown and
 	// rebuild the entire network stack before giving up.
-	netMode := setupNetworkMode(ctx, cfg)
+	netMode, err := setupNetworkMode(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
 	connectivityTarget := cfg.InitURL
 	if connectivityTarget == "" {
 		connectivityTarget = cfg.SuccessURL
@@ -374,7 +377,11 @@ func ensureNetworkConnectivity(ctx context.Context, cfg *config.MachineConfig, n
 			if tErr := netMode.Teardown(ctx); tErr != nil {
 				slog.Warn("network teardown failed", "error", tErr)
 			}
-			netMode = setupNetworkMode(ctx, cfg)
+			newMode, setupErr := setupNetworkMode(ctx, cfg)
+			if setupErr != nil {
+				return netMode, fmt.Errorf("network retry setup: %w", setupErr)
+			}
+			netMode = newMode
 		}
 	}
 	slog.Error("network connectivity failed after all retries", "attempts", maxRetries)
@@ -382,7 +389,7 @@ func ensureNetworkConnectivity(ctx context.Context, cfg *config.MachineConfig, n
 }
 
 // setupNetworkMode detects and configures the appropriate network mode.
-func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mode {
+func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.Mode, error) {
 	netCfg := &network.Config{
 		UnderlaySubnet:   cfg.UnderlaySubnet,
 		UnderlayIP:       cfg.UnderlayIP,
@@ -438,6 +445,7 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 	// Set up VLANs first — they create sub-interfaces that other modes use.
 	if netCfg.IsVLANMode() {
 		slog.Info("setting up VLAN interfaces", "count", len(netCfg.VLANs))
+		var vlanErrs []error
 		for _, v := range netCfg.VLANs {
 			name, err := vlan.Setup(&vlan.Config{
 				ID:      v.ID,
@@ -447,12 +455,15 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 			})
 			if err != nil {
 				slog.Error("VLAN setup failed", "vlan", v.ID, "parent", v.Parent, "error", err)
+				vlanErrs = append(vlanErrs, fmt.Errorf("vlan %d on %s: %w", v.ID, v.Parent, err))
 				continue
 			}
-			// If static interface is not set, use the first VLAN interface.
 			if netCfg.StaticIface == "" {
 				netCfg.StaticIface = name
 			}
+		}
+		if err := errors.Join(vlanErrs...); err != nil {
+			return nil, fmt.Errorf("vlan setup: %w", err)
 		}
 	}
 
@@ -461,8 +472,9 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 		slog.Info("setting up LACP bond")
 		bond := &network.BondMode{}
 		if err := bond.Setup(ctx, netCfg); err != nil {
-			slog.Error("bond setup failed", "error", err)
-		} else if netCfg.StaticIface == "" {
+			return nil, fmt.Errorf("bond setup: %w", err)
+		}
+		if netCfg.StaticIface == "" {
 			netCfg.StaticIface = "bond0"
 		}
 	}
@@ -478,11 +490,11 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 			if frrErr := mgr.Setup(ctx, netCfg); frrErr != nil {
 				slog.Error("FRR fallback also failed", "error", frrErr)
 				mgr.DumpFRRState()
-				return dhcpFallback(ctx, netCfg)
+				return dhcpFallback(ctx, netCfg), nil
 			}
-			return mgr
+			return mgr, nil
 		}
-		return stack
+		return stack, nil
 	}
 
 	if netCfg.IsFRRMode() {
@@ -492,9 +504,9 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 		if err := mgr.Setup(ctx, netCfg); err != nil {
 			slog.Error("FRR network setup failed, falling back to DHCP", "error", err)
 			mgr.DumpFRRState()
-			return dhcpFallback(ctx, netCfg)
+			return dhcpFallback(ctx, netCfg), nil
 		}
-		return mgr
+		return mgr, nil
 	}
 
 	if netCfg.IsStaticMode() {
@@ -502,13 +514,13 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) network.Mo
 		mode := &network.StaticMode{}
 		if err := mode.Setup(ctx, netCfg); err != nil {
 			slog.Error("static network setup failed, falling back to DHCP", "error", err)
-			return dhcpFallback(ctx, netCfg)
+			return dhcpFallback(ctx, netCfg), nil
 		}
-		return mode
+		return mode, nil
 	}
 
 	slog.Info("using DHCP network mode")
-	return dhcpFallback(ctx, netCfg)
+	return dhcpFallback(ctx, netCfg), nil
 }
 
 // dhcpFallback creates a DHCP mode and attempts setup.
