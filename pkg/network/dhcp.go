@@ -132,7 +132,7 @@ func (d *DHCPMode) probeNIC(ctx context.Context, iface net.Interface, results ch
 
 // onBound returns a callback that configures the interface address and default route.
 // The winner flag ensures only the first NIC to receive a lease applies netlink changes;
-// subsequent leases are acknowledged (to keep the DHCP client happy) but not configured.
+// subsequent leases are ignored by this callback and do not trigger additional configuration.
 func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- struct{}, winner *atomic.Int32) func(*dhclient.Lease) {
 	return func(lease *dhclient.Lease) {
 		if !winner.CompareAndSwap(0, 1) {
