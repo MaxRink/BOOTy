@@ -83,20 +83,28 @@ func (cv *ChainVerifier) checkComponentPresence() []ComponentStatus {
 // the returned ComponentStatus carries an error string.
 func findValidCandidate(name string, candidates []string) ComponentStatus {
 	status := ComponentStatus{Name: name}
+	var lastValidationErr error
+	anyFound := false
 	for _, path := range candidates {
 		if _, err := os.Stat(path); err != nil {
 			continue
 		}
+		anyFound = true
 		if isEFIPath(path) {
 			if err := validatePEHeader(path); err != nil {
-				slog.Warn("PE/COFF validation failed, trying next candidate",
+				slog.Warn("pe/coff validation failed, trying next candidate",
 					"path", path, "error", err)
+				lastValidationErr = err
 				continue
 			}
 		}
 		return status
 	}
-	status.Error = fmt.Sprintf("not found: tried %v", candidates)
+	if anyFound && lastValidationErr != nil {
+		status.Error = fmt.Sprintf("pe/coff validation failed for all candidates %v: %v", candidates, lastValidationErr)
+	} else {
+		status.Error = fmt.Sprintf("not found: tried %v", candidates)
+	}
 	return status
 }
 
@@ -112,7 +120,7 @@ func isEFIPath(path string) bool {
 func validatePEHeader(path string) error {
 	f, err := pe.Open(path)
 	if err != nil {
-		return fmt.Errorf("PE/COFF parse failed: %w", err)
+		return fmt.Errorf("pe/coff parse failed: %w", err)
 	}
 	if err := f.Close(); err != nil {
 		slog.Warn("failed to close PE file", "path", path, "error", err)

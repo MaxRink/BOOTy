@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -115,6 +116,9 @@ func TestFindValidCandidate_AllInvalidPEReturnsError(t *testing.T) {
 	status := findValidCandidate("shim", []string{bad1, bad2})
 	if status.Error == "" {
 		t.Error("expected error when all candidates have invalid PE headers")
+	}
+	if !strings.Contains(status.Error, "pe/coff") {
+		t.Errorf("expected pe/coff validation error, got misleading message: %q", status.Error)
 	}
 }
 
