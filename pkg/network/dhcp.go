@@ -42,6 +42,9 @@ func (d *DHCPMode) Setup(ctx context.Context, _ *Config) error {
 	if d.log == nil {
 		d.log = slog.Default().With("component", "dhcp")
 	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("dhcp setup: %w", err)
+	}
 	ifaces, err := physicalInterfaces()
 	if err != nil {
 		return fmt.Errorf("listing interfaces: %w", err)
@@ -81,9 +84,9 @@ func (d *DHCPMode) Setup(ctx context.Context, _ *Config) error {
 
 	if d.client == nil {
 		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("DHCP probing canceled: %w", err)
+			return fmt.Errorf("dhcp probing canceled: %w", err)
 		}
-		return fmt.Errorf("DHCP failed on all %d interfaces", len(ifaces))
+		return fmt.Errorf("dhcp failed on all %d interfaces", len(ifaces))
 	}
 	return nil
 }
