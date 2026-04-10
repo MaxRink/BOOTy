@@ -444,25 +444,21 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 	// Set up VLANs first — they create sub-interfaces that other modes use.
 	if netCfg.IsVLANMode() {
 		slog.Info("setting up VLAN interfaces", "count", len(netCfg.VLANs))
-		var vlanErrs []error
-		for _, v := range netCfg.VLANs {
-			name, err := vlan.Setup(&vlan.Config{
+		vlanCfgs := make([]vlan.Config, len(netCfg.VLANs))
+		for i, v := range netCfg.VLANs {
+			vlanCfgs[i] = vlan.Config{
 				ID:      v.ID,
 				Parent:  v.Parent,
 				Address: v.Address,
 				Gateway: v.Gateway,
-			})
-			if err != nil {
-				slog.Error("VLAN setup failed", "vlan", v.ID, "parent", v.Parent, "error", err)
-				vlanErrs = append(vlanErrs, fmt.Errorf("vlan %d on %s: %w", v.ID, v.Parent, err))
-				continue
-			}
-			if netCfg.StaticIface == "" {
-				netCfg.StaticIface = name
 			}
 		}
-		if err := errors.Join(vlanErrs...); err != nil {
+		names, err := vlan.SetupAll(vlanCfgs)
+		if err != nil {
 			return nil, fmt.Errorf("vlan setup: %w", err)
+		}
+		if netCfg.StaticIface == "" && len(names) > 0 {
+			netCfg.StaticIface = names[0]
 		}
 	}
 
@@ -471,6 +467,7 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 		slog.Info("setting up LACP bond")
 		bond := &network.BondMode{}
 		if err := bond.Setup(ctx, netCfg); err != nil {
+			_ = bond.Teardown(ctx)
 			return nil, fmt.Errorf("bond setup: %w", err)
 		}
 		if netCfg.StaticIface == "" {
