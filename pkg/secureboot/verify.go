@@ -176,7 +176,10 @@ func validatePEHeader(path string) (retErr error) {
 		}
 	}()
 
-	return validatePEMachineType(f)
+	if err := validatePEMachineType(f); err != nil {
+		return err
+	}
+	return validatePESubsystem(f)
 }
 
 // validatePEMachineType checks that the PE file's machine type matches the
@@ -188,8 +191,36 @@ func validatePEMachineType(f *pe.File) error {
 		// Unknown host arch — skip arch validation to avoid false negatives.
 		return nil
 	}
-	if f.FileHeader.Machine != want {
-		return fmt.Errorf("pe/coff machine type mismatch: got %#x, want %#x", f.FileHeader.Machine, want)
+	if f.Machine != want {
+		return fmt.Errorf("pe/coff machine type mismatch: got %#x, want %#x", f.Machine, want)
+	}
+	return nil
+}
+
+// efiSubsystems is the set of PE subsystem values that are valid for EFI binaries.
+// See UEFI Specification table "Windows Subsystem" and the PE/COFF spec §4.1.
+var efiSubsystems = map[uint16]bool{
+	pe.IMAGE_SUBSYSTEM_EFI_APPLICATION:         true,
+	pe.IMAGE_SUBSYSTEM_EFI_BOOT_SERVICE_DRIVER: true,
+	pe.IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER:      true,
+}
+
+// validatePESubsystem verifies that the PE optional header subsystem field
+// identifies an EFI binary. Non-EFI subsystems (e.g. Windows GUI, Windows CUI)
+// are rejected to prevent accidentally installing the wrong binary as a boot loader.
+// Files with no optional header (pure COFF objects) are also rejected.
+func validatePESubsystem(f *pe.File) error {
+	var subsystem uint16
+	switch oh := f.OptionalHeader.(type) {
+	case *pe.OptionalHeader32:
+		subsystem = oh.Subsystem
+	case *pe.OptionalHeader64:
+		subsystem = oh.Subsystem
+	default:
+		return fmt.Errorf("pe/coff: no optional header — not a valid EFI image")
+	}
+	if !efiSubsystems[subsystem] {
+		return fmt.Errorf("pe/coff subsystem %d is not an EFI subsystem (want 10, 11, or 12)", subsystem)
 	}
 	return nil
 }

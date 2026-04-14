@@ -15,14 +15,14 @@ import (
 const peOptionalHeader32PlusMinSize = 112
 
 // minimalValidPE returns a minimal PE32+ binary whose machine type matches
-// the host architecture, so it passes validatePEHeader on any supported arch.
+// the host architecture and has IMAGE_SUBSYSTEM_EFI_APPLICATION set,
+// so it passes validatePEHeader on any supported arch.
 func minimalValidPE() []byte {
 	hostMachine := hostPEMachineType()
 	if hostMachine == pe.IMAGE_FILE_MACHINE_UNKNOWN {
-		// Fall back to AMD64 for unsupported arches (arch check is skipped anyway).
 		hostMachine = pe.IMAGE_FILE_MACHINE_AMD64
 	}
-	return minimalPEWithMachine(hostMachine)
+	return minimalPEWithMachineAndSubsystem(hostMachine, pe.IMAGE_SUBSYSTEM_EFI_APPLICATION)
 }
 
 func writeTempFile(t *testing.T, data []byte, name string) string {
@@ -105,15 +105,24 @@ func TestFindValidCandidate_AllInvalidPEReturnsError(t *testing.T) {
 	}
 }
 
-// minimalPEWithMachine returns a minimal PE binary with the given machine type.
+// minimalPEWithMachine returns a minimal PE binary with the given machine type
+// and IMAGE_SUBSYSTEM_EFI_APPLICATION as the subsystem.
 // The optional header magic is PE32+ (0x020b) regardless of machine type.
 func minimalPEWithMachine(machine uint16) []byte {
+	return minimalPEWithMachineAndSubsystem(machine, pe.IMAGE_SUBSYSTEM_EFI_APPLICATION)
+}
+
+// minimalPEWithMachineAndSubsystem returns a minimal PE32+ binary with the
+// given machine type and subsystem values. It is the canonical builder for
+// all PE test fixtures in this package.
+func minimalPEWithMachineAndSubsystem(machine uint16, subsystem uint16) []byte {
 	const (
 		dosStubSize   = 64
 		peSignature   = 4
 		coffHdrSize   = 20
 		optHdrOffset  = dosStubSize + peSignature + coffHdrSize
 		magicPE32Plus = uint16(0x020b)
+		subsystemOff  = 68 // byte offset of Subsystem within OptionalHeader64
 	)
 	buf := make([]byte, optHdrOffset+peOptionalHeader32PlusMinSize)
 	buf[0] = 'M'
@@ -125,6 +134,7 @@ func minimalPEWithMachine(machine uint16) []byte {
 	binary.LittleEndian.PutUint16(buf[coffBase+16:], peOptionalHeader32PlusMinSize)
 	binary.LittleEndian.PutUint16(buf[coffBase+18:], 0x0002)
 	binary.LittleEndian.PutUint16(buf[optHdrOffset:], magicPE32Plus)
+	binary.LittleEndian.PutUint16(buf[optHdrOffset+subsystemOff:], subsystem)
 	return buf
 }
 
@@ -187,5 +197,42 @@ func TestIsEFIPath(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("isEFIPath(%q) = %v, want %v", tc.path, got, tc.want)
 		}
+	}
+}
+
+func TestValidatePEHeader_SizeCap(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "huge.efi")
+
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := f.Truncate(maxEFIBinarySize + 1); err != nil {
+		_ = f.Close()
+		t.Fatalf("truncate: %v", err)
+	}
+	_ = f.Close()
+
+	if err := validatePEHeader(path); err == nil {
+		t.Error("expected error for oversized file, got nil")
+	} else if !strings.Contains(err.Error(), "too large") {
+		t.Errorf("expected 'too large' in error, got: %v", err)
+	}
+}
+
+func TestValidatePEHeader_NonEFISubsystem(t *testing.T) {
+	machine := hostPEMachineType()
+	if machine == pe.IMAGE_FILE_MACHINE_UNKNOWN {
+		machine = pe.IMAGE_FILE_MACHINE_AMD64
+	}
+	data := minimalPEWithMachineAndSubsystem(machine, pe.IMAGE_SUBSYSTEM_WINDOWS_GUI)
+	path := writeTempFile(t, data, "windows.efi")
+	err := validatePEHeader(path)
+	if err == nil {
+		t.Error("expected error for non-EFI subsystem, got nil")
+	}
+	if err != nil && !strings.Contains(err.Error(), "not an EFI subsystem") {
+		t.Errorf("expected 'not an EFI subsystem' in error, got: %v", err)
 	}
 }
