@@ -53,7 +53,7 @@ func (d *DHCPMode) Setup(ctx context.Context, _ *Config) error {
 		return fmt.Errorf("no physical interfaces found for DHCP")
 	}
 
-	d.log.Info("Probing DHCP on all interfaces in parallel", "count", len(ifaces))
+	d.log.Info("probing DHCP on all interfaces in parallel", "count", len(ifaces))
 
 	probeCtx, probeCancel := context.WithCancel(ctx)
 	defer probeCancel()
@@ -94,15 +94,15 @@ func (d *DHCPMode) Setup(ctx context.Context, _ *Config) error {
 // probeNIC attempts DHCP on a single interface with a 15 s timeout.
 // On success it sends a dhcpResult to the results channel.
 func (d *DHCPMode) probeNIC(ctx context.Context, iface net.Interface, results chan<- dhcpResult, winner *atomic.Int32) {
-	d.log.Info("Attempting DHCP", "interface", iface.Name)
+	d.log.Info("attempting DHCP", "interface", iface.Name)
 
 	link, err := netlink.LinkByName(iface.Name)
 	if err != nil {
-		d.log.Warn("Cannot find link for DHCP", "interface", iface.Name, "error", err)
+		d.log.Warn("cannot find link for DHCP", "interface", iface.Name, "error", err)
 		return
 	}
 	if err := netlink.LinkSetUp(link); err != nil {
-		d.log.Warn("Cannot bring up link for DHCP", "interface", iface.Name, "error", err)
+		d.log.Warn("cannot bring up link for DHCP", "interface", iface.Name, "error", err)
 		return
 	}
 
