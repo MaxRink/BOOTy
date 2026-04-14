@@ -1,9 +1,11 @@
 package secureboot
 
 import (
+	"debug/pe"
 	"encoding/binary"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -12,34 +14,15 @@ import (
 // (IMAGE_OPTIONAL_HEADER64), as required by the PE/COFF specification.
 const peOptionalHeader32PlusMinSize = 112
 
-// minimalValidPE returns a minimal PE32+ (64-bit) binary for use in tests.
-// PE32+ uses magic 0x020b and machine type AMD64 (0x8664), matching the
-// format used by real x86_64 EFI binaries such as shim and GRUB.
+// minimalValidPE returns a minimal PE32+ binary whose machine type matches
+// the host architecture, so it passes validatePEHeader on any supported arch.
 func minimalValidPE() []byte {
-	const (
-		dosStubSize   = 64
-		peSignature   = 4
-		coffHdrSize   = 20
-		optHdrOffset  = dosStubSize + peSignature + coffHdrSize
-		machineAMD64  = uint16(0x8664)
-		magicPE32Plus = uint16(0x020b)
-	)
-	buf := make([]byte, optHdrOffset+peOptionalHeader32PlusMinSize)
-
-	buf[0] = 'M'
-	buf[1] = 'Z'
-	binary.LittleEndian.PutUint32(buf[0x3c:], dosStubSize)
-
-	copy(buf[dosStubSize:], []byte("PE\x00\x00"))
-
-	coffBase := dosStubSize + peSignature
-	binary.LittleEndian.PutUint16(buf[coffBase:], machineAMD64)
-	binary.LittleEndian.PutUint16(buf[coffBase+16:], peOptionalHeader32PlusMinSize)
-	binary.LittleEndian.PutUint16(buf[coffBase+18:], 0x0002)
-
-	binary.LittleEndian.PutUint16(buf[optHdrOffset:], magicPE32Plus)
-
-	return buf
+	hostMachine := hostPEMachineType()
+	if hostMachine == pe.IMAGE_FILE_MACHINE_UNKNOWN {
+		// Fall back to AMD64 for unsupported arches (arch check is skipped anyway).
+		hostMachine = pe.IMAGE_FILE_MACHINE_AMD64
+	}
+	return minimalPEWithMachine(hostMachine)
 }
 
 func writeTempFile(t *testing.T, data []byte, name string) string {
@@ -117,8 +100,74 @@ func TestFindValidCandidate_AllInvalidPEReturnsError(t *testing.T) {
 	if status.Error == "" {
 		t.Error("expected error when all candidates have invalid PE headers")
 	}
-	if !strings.Contains(status.Error, "pe/coff") {
-		t.Errorf("expected pe/coff validation error, got misleading message: %q", status.Error)
+	if !strings.HasPrefix(status.Error, "pe/coff validation failed for all candidates") {
+		t.Errorf("expected pe/coff validation failed for all candidates error prefix, got misleading message: %q", status.Error)
+	}
+}
+
+// minimalPEWithMachine returns a minimal PE binary with the given machine type.
+// The optional header magic is PE32+ (0x020b) regardless of machine type.
+func minimalPEWithMachine(machine uint16) []byte {
+	const (
+		dosStubSize   = 64
+		peSignature   = 4
+		coffHdrSize   = 20
+		optHdrOffset  = dosStubSize + peSignature + coffHdrSize
+		magicPE32Plus = uint16(0x020b)
+	)
+	buf := make([]byte, optHdrOffset+peOptionalHeader32PlusMinSize)
+	buf[0] = 'M'
+	buf[1] = 'Z'
+	binary.LittleEndian.PutUint32(buf[0x3c:], dosStubSize)
+	copy(buf[dosStubSize:], []byte("PE\x00\x00"))
+	coffBase := dosStubSize + peSignature
+	binary.LittleEndian.PutUint16(buf[coffBase:], machine)
+	binary.LittleEndian.PutUint16(buf[coffBase+16:], peOptionalHeader32PlusMinSize)
+	binary.LittleEndian.PutUint16(buf[coffBase+18:], 0x0002)
+	binary.LittleEndian.PutUint16(buf[optHdrOffset:], magicPE32Plus)
+	return buf
+}
+
+// wrongArchMachine returns the PE machine type for an architecture that is
+// guaranteed to differ from the host, so we can test arch-mismatch rejection.
+func wrongArchMachine() uint16 {
+	switch runtime.GOARCH {
+	case "amd64":
+		return pe.IMAGE_FILE_MACHINE_ARM64
+	default:
+		// For arm64 (and any other arch), use AMD64 as the wrong type.
+		return pe.IMAGE_FILE_MACHINE_AMD64
+	}
+}
+
+// TestValidatePEHeader_MachineTypeMismatch verifies that validatePEHeader
+// rejects EFI binaries that target a different architecture than the host.
+func TestValidatePEHeader_MachineTypeMismatch(t *testing.T) {
+	if hostPEMachineType() == pe.IMAGE_FILE_MACHINE_UNKNOWN {
+		t.Skip("host arch not mapped to a PE machine type; skipping arch-mismatch test")
+	}
+	data := minimalPEWithMachine(wrongArchMachine())
+	path := writeTempFile(t, data, "wrongarch.efi")
+	err := validatePEHeader(path)
+	if err == nil {
+		t.Error("expected error for EFI binary with wrong machine type, got nil")
+	}
+	if err != nil && !strings.Contains(err.Error(), "machine type mismatch") {
+		t.Errorf("expected 'machine type mismatch' in error, got: %v", err)
+	}
+}
+
+// TestValidatePEHeader_CorrectMachineType verifies that validatePEHeader
+// accepts an EFI binary that targets the host architecture.
+func TestValidatePEHeader_CorrectMachineType(t *testing.T) {
+	want := hostPEMachineType()
+	if want == pe.IMAGE_FILE_MACHINE_UNKNOWN {
+		t.Skip("host arch not mapped to a PE machine type; skipping machine type test")
+	}
+	data := minimalPEWithMachine(want)
+	path := writeTempFile(t, data, "correctarch.efi")
+	if err := validatePEHeader(path); err != nil {
+		t.Errorf("expected valid PE for host arch to pass, got: %v", err)
 	}
 }
 

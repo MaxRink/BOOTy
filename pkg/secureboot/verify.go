@@ -2,13 +2,21 @@ package secureboot
 
 import (
 	"debug/pe"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/telekom/BOOTy/pkg/efi"
 )
+
+// maxEFIBinarySize is the maximum accepted size for an EFI binary before
+// attempting to parse it with debug/pe. Real shim/grub EFI binaries are
+// typically a few MiB; rejecting oversized files guards against memory/CPU
+// exhaustion from crafted headers.
+const maxEFIBinarySize = 64 * 1024 * 1024 // 64 MiB
 
 // ChainVerifier validates the Secure Boot chain using EFI variables.
 type ChainVerifier struct {
@@ -80,13 +88,24 @@ func (cv *ChainVerifier) checkComponentPresence() []ComponentStatus {
 
 // findValidCandidate scans candidates in order, returning the first that exists
 // and passes PE/COFF validation (for .efi paths). If no candidate passes,
-// the returned ComponentStatus carries an error string.
+// the returned ComponentStatus carries an error string that distinguishes
+// "file not found" from "pe/coff validation failed" for all existing candidates.
 func findValidCandidate(name string, candidates []string) ComponentStatus {
 	status := ComponentStatus{Name: name}
-	var lastValidationErr error
+	type candidateErr struct {
+		path string
+		err  error
+	}
+	var validationErrs []candidateErr
 	anyFound := false
 	for _, path := range candidates {
 		if _, err := os.Stat(path); err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				// Unexpected stat error (permission denied, I/O error, etc.).
+				// Return immediately so the caller sees the real failure.
+				status.Error = fmt.Sprintf("stat %s: %v", path, err)
+				return status
+			}
 			continue
 		}
 		anyFound = true
@@ -94,14 +113,20 @@ func findValidCandidate(name string, candidates []string) ComponentStatus {
 			if err := validatePEHeader(path); err != nil {
 				slog.Warn("pe/coff validation failed, trying next candidate",
 					"path", path, "error", err)
-				lastValidationErr = err
+				validationErrs = append(validationErrs, candidateErr{path: path, err: err})
 				continue
 			}
 		}
 		return status
 	}
-	if anyFound && lastValidationErr != nil {
-		status.Error = fmt.Sprintf("pe/coff validation failed for all candidates %v: %v", candidates, lastValidationErr)
+	if anyFound && len(validationErrs) > 0 {
+		// Build a per-candidate summary so operators can identify the corrupt file.
+		var sb strings.Builder
+		sb.WriteString("pe/coff validation failed for all candidates")
+		for _, ce := range validationErrs {
+			fmt.Fprintf(&sb, "; %s: %v", ce.path, ce.err)
+		}
+		status.Error = sb.String()
 	} else {
 		status.Error = fmt.Sprintf("not found: tried %v", candidates)
 	}
@@ -115,15 +140,56 @@ func isEFIPath(path string) bool {
 	return strings.HasSuffix(lower, ".efi")
 }
 
-// validatePEHeader opens path as a PE/COFF binary using debug/pe and
-// returns an error if the file is missing, truncated, or has an invalid header.
-func validatePEHeader(path string) error {
+// hostPEMachineType returns the PE machine type that matches the running host
+// architecture. It is used to validate that EFI binaries target the correct arch.
+func hostPEMachineType() uint16 {
+	switch runtime.GOARCH {
+	case "amd64":
+		return pe.IMAGE_FILE_MACHINE_AMD64
+	case "arm64":
+		return pe.IMAGE_FILE_MACHINE_ARM64
+	default:
+		return pe.IMAGE_FILE_MACHINE_UNKNOWN
+	}
+}
+
+// validatePEHeader opens path as a PE/COFF binary, checks the file size,
+// validates the PE machine type against the host architecture, and returns
+// an error if the file is missing, too large, truncated, has an invalid
+// header, or targets a mismatched architecture.
+func validatePEHeader(path string) (retErr error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("pe/coff stat failed: %w", err)
+	}
+	if info.Size() > maxEFIBinarySize {
+		return fmt.Errorf("pe/coff file too large: %d bytes (max %d)", info.Size(), maxEFIBinarySize)
+	}
+
 	f, err := pe.Open(path)
 	if err != nil {
 		return fmt.Errorf("pe/coff parse failed: %w", err)
 	}
-	if err := f.Close(); err != nil {
-		slog.Warn("failed to close PE file", "path", path, "error", err)
+	defer func() {
+		if cerr := f.Close(); cerr != nil && retErr == nil {
+			retErr = fmt.Errorf("pe/coff close failed: %w", cerr)
+		}
+	}()
+
+	return validatePEMachineType(f)
+}
+
+// validatePEMachineType checks that the PE file's machine type matches the
+// host architecture. An unknown host arch (GOARCH not in the switch) skips
+// the check to avoid false negatives in cross-compilation/CI environments.
+func validatePEMachineType(f *pe.File) error {
+	want := hostPEMachineType()
+	if want == pe.IMAGE_FILE_MACHINE_UNKNOWN {
+		// Unknown host arch — skip arch validation to avoid false negatives.
+		return nil
+	}
+	if f.FileHeader.Machine != want {
+		return fmt.Errorf("pe/coff machine type mismatch: got %#x, want %#x", f.FileHeader.Machine, want)
 	}
 	return nil
 }
