@@ -455,7 +455,7 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 		}
 		names, err := vlan.SetupAll(vlanCfgs)
 		if err != nil {
-			return nil, fmt.Errorf("vlan setup: %w", err)
+			return nil, err
 		}
 		if netCfg.StaticIface == "" && len(names) > 0 {
 			netCfg.StaticIface = names[0]

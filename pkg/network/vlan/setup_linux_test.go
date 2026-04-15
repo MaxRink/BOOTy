@@ -197,3 +197,42 @@ func TestTeardownConfig_Nil(t *testing.T) {
 		t.Fatal("expected error for nil config")
 	}
 }
+
+func TestSetupAll_FailureIsFatal(t *testing.T) {
+	restore := snapshotNetlinkFns()
+	defer restore()
+
+	setupErr := errors.New("interface not found")
+	linkByName = func(string) (netlink.Link, error) { return nil, setupErr }
+
+	_, err := SetupAll([]Config{{ID: 100, Parent: "eth0"}})
+	if err == nil {
+		t.Fatal("expected SetupAll to return an error on VLAN setup failure")
+	}
+	if !errors.Is(err, setupErr) {
+		t.Fatalf("expected error to wrap the original error, got: %v", err)
+	}
+}
+
+func TestSetupAll_HappyPath(t *testing.T) {
+	restore := snapshotNetlinkFns()
+	defer restore()
+
+	parent := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "eth0", Index: 10}}
+	linkByName = func(name string) (netlink.Link, error) {
+		if name == "eth0" {
+			return parent, nil
+		}
+		return nil, errors.New("not found")
+	}
+	linkSetUp = func(netlink.Link) error { return nil }
+	linkAdd = func(netlink.Link) error { return nil }
+
+	names, err := SetupAll([]Config{{ID: 100, Parent: "eth0"}})
+	if err != nil {
+		t.Fatalf("SetupAll() unexpected error: %v", err)
+	}
+	if len(names) != 1 {
+		t.Fatalf("expected 1 name, got %d", len(names))
+	}
+}
