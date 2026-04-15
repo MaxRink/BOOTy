@@ -385,7 +385,10 @@ func ensureNetworkConnectivity(ctx context.Context, cfg *config.MachineConfig, n
 		}
 	}
 	slog.Error("network connectivity failed after all retries", "attempts", maxRetries)
-	return netMode, fmt.Errorf("network connectivity timeout after %d attempts", maxRetries)
+	if tErr := netMode.Teardown(ctx); tErr != nil {
+		slog.Warn("network teardown failed on final retry", "error", tErr)
+	}
+	return nil, fmt.Errorf("network connectivity timeout after %d attempts", maxRetries)
 }
 
 // setupNetworkMode detects and configures the appropriate network mode.
@@ -463,6 +466,9 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 	}
 
 	// Set up bonding if configured (bond becomes the interface for other modes).
+	if strings.EqualFold(cfg.NetworkMode, "bond") && cfg.BondInterfaces == "" {
+		return nil, fmt.Errorf("bond setup: bond mode requires BondInterfaces to be set")
+	}
 	if netCfg.IsBondMode() {
 		slog.Info("setting up LACP bond")
 		bond := &network.BondMode{}
