@@ -134,17 +134,33 @@ func (d *DHCPMode) probeNIC(ctx context.Context, iface net.Interface, results ch
 }
 
 // onBound returns a callback that configures the interface address and default route.
-// The winner flag ensures only the first NIC to receive a lease applies netlink changes;
-// subsequent leases are ignored by this callback and do not trigger additional configuration.
+// The winner flag ensures only the first NIC to successfully apply an address wins;
+// if AddrAdd fails, the winner slot is released so another NIC can still claim it.
 func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- struct{}, winner *atomic.Int32) func(*dhclient.Lease) {
+	return d.onBoundWith(link, ifName, leased, winner, netlink.AddrAdd, netlink.AddrDel)
+}
+
+// onBoundWith is the testable form of onBound; addrAdd/addrDel are injected so
+// tests can simulate netlink success/failure without a real kernel socket.
+func (d *DHCPMode) onBoundWith(
+	link netlink.Link,
+	ifName string,
+	leased chan<- struct{},
+	winner *atomic.Int32,
+	addrAdd func(netlink.Link, *netlink.Addr) error,
+	addrDel func(netlink.Link, *netlink.Addr) error,
+) func(*dhclient.Lease) {
 	return func(lease *dhclient.Lease) {
-		if !winner.CompareAndSwap(0, 1) {
-			return
-		}
 		cidr := net.IPNet{IP: lease.FixedAddress, Mask: lease.Netmask}
 		addr, _ := netlink.ParseAddr(cidr.String())
-		if err := netlink.AddrAdd(link, addr); err != nil {
+		if err := addrAdd(link, addr); err != nil {
 			d.log.Warn("failed to assign DHCP address", "iface", ifName, "error", err)
+			return
+		}
+		// Only claim winner status after AddrAdd succeeds.
+		// If another goroutine already claimed it, undo our address to stay clean.
+		if !winner.CompareAndSwap(0, 1) {
+			_ = addrDel(link, addr)
 			return
 		}
 		d.log.Info("DHCP lease obtained", "iface", ifName, "addr", cidr.String())

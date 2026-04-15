@@ -4,10 +4,16 @@ package network
 
 import (
 	"context"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	dhclient "github.com/digineo/go-dhclient"
+	"github.com/vishvananda/netlink"
 )
 
 func TestDHCPMode_Setup(t *testing.T) {
@@ -102,5 +108,84 @@ func TestDHCPSetup_ContextCancelPropagates(t *testing.T) {
 
 	if elapsed > 700*time.Millisecond {
 		t.Fatalf("Setup took %v — context cancellation did not propagate promptly", elapsed)
+	}
+}
+
+func makeLease(ip, mask string) *dhclient.Lease {
+	fixedIP := net.ParseIP(ip).To4()
+	_, ipnet, _ := net.ParseCIDR(ip + "/" + mask)
+	return &dhclient.Lease{
+		FixedAddress: fixedIP,
+		Netmask:      ipnet.Mask,
+	}
+}
+
+func TestOnBoundWith_FirstLeaseWins(t *testing.T) {
+	var addrDelCalls atomic.Int32
+	addrAddOK := func(_ netlink.Link, _ *netlink.Addr) error { return nil }
+	addrDelNoop := func(_ netlink.Link, _ *netlink.Addr) error {
+		addrDelCalls.Add(1)
+		return nil
+	}
+
+	var winner atomic.Int32
+	leased1 := make(chan struct{}, 1)
+	leased2 := make(chan struct{}, 1)
+
+	d := &DHCPMode{}
+	cb1 := d.onBoundWith(nil, "eth0", leased1, &winner, addrAddOK, addrDelNoop)
+	cb2 := d.onBoundWith(nil, "eth1", leased2, &winner, addrAddOK, addrDelNoop)
+
+	lease := makeLease("192.168.1.10", "24")
+
+	cb1(lease)
+	cb2(lease)
+
+	if len(leased1) != 1 {
+		t.Error("first goroutine should have signaled on leased channel")
+	}
+	if len(leased2) != 0 {
+		t.Error("second goroutine should not signal — first already won")
+	}
+	if winner.Load() != 1 {
+		t.Errorf("winner not set, got %d", winner.Load())
+	}
+	if addrDelCalls.Load() != 1 {
+		t.Errorf("loser should have called addrDel once, got %d", addrDelCalls.Load())
+	}
+}
+
+func TestOnBoundWith_AddrAddFailure_AllowsNextToWin(t *testing.T) {
+	failErr := errors.New("addrAdd kernel error")
+	addrAddFail := func(_ netlink.Link, _ *netlink.Addr) error { return failErr }
+	addrAddOK := func(_ netlink.Link, _ *netlink.Addr) error { return nil }
+	addrDelNoop := func(_ netlink.Link, _ *netlink.Addr) error { return nil }
+
+	var winner atomic.Int32
+	leased1 := make(chan struct{}, 1)
+	leased2 := make(chan struct{}, 1)
+
+	d := &DHCPMode{}
+	cb1 := d.onBoundWith(nil, "eth0", leased1, &winner, addrAddFail, addrDelNoop)
+	cb2 := d.onBoundWith(nil, "eth1", leased2, &winner, addrAddOK, addrDelNoop)
+
+	lease := makeLease("10.0.0.5", "24")
+
+	cb1(lease)
+
+	if len(leased1) != 0 {
+		t.Error("first goroutine should not win when AddrAdd fails")
+	}
+	if winner.Load() != 0 {
+		t.Errorf("winner slot must remain 0 after AddrAdd failure, got %d", winner.Load())
+	}
+
+	cb2(lease)
+
+	if len(leased2) != 1 {
+		t.Error("second goroutine should win after first goroutine's AddrAdd failure")
+	}
+	if winner.Load() != 1 {
+		t.Errorf("winner should be set after second goroutine succeeds, got %d", winner.Load())
 	}
 }
