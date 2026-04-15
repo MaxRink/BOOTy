@@ -77,7 +77,7 @@ func (d *DHCPMode) Setup(ctx context.Context, _ *Config) error {
 
 	for res := range results {
 		d.client = res.client
-		d.log.Info("DHCP succeeded", "interface", res.iface)
+		d.log.Info("dhcp succeeded", "interface", res.iface)
 		probeCancel()
 		break
 	}
@@ -126,10 +126,10 @@ func (d *DHCPMode) probeNIC(ctx context.Context, iface net.Interface, results ch
 		results <- dhcpResult{client: client, iface: iface.Name}
 	case <-timer.C:
 		client.Stop()
-		d.log.Info("DHCP timeout on interface", "interface", iface.Name)
+		d.log.Info("dhcp timeout on interface", "interface", iface.Name)
 	case <-ctx.Done():
 		client.Stop()
-		d.log.Info("DHCP probe canceled", "interface", iface.Name, "error", ctx.Err())
+		d.log.Info("dhcp probe canceled", "interface", iface.Name, "error", ctx.Err())
 	}
 }
 
@@ -150,11 +150,15 @@ func (d *DHCPMode) onBoundWith(
 	addrAdd func(netlink.Link, *netlink.Addr) error,
 	addrDel func(netlink.Link, *netlink.Addr) error,
 ) func(*dhclient.Lease) {
+	log := d.log
+	if log == nil {
+		log = slog.Default().With("component", "dhcp")
+	}
 	return func(lease *dhclient.Lease) {
 		cidr := net.IPNet{IP: lease.FixedAddress, Mask: lease.Netmask}
 		addr, _ := netlink.ParseAddr(cidr.String())
 		if err := addrAdd(link, addr); err != nil {
-			d.log.Warn("failed to assign DHCP address", "iface", ifName, "error", err)
+			log.Warn("failed to assign DHCP address", "iface", ifName, "error", err)
 			return
 		}
 		// Only claim winner status after AddrAdd succeeds.
@@ -163,10 +167,10 @@ func (d *DHCPMode) onBoundWith(
 			_ = addrDel(link, addr)
 			return
 		}
-		d.log.Info("DHCP lease obtained", "iface", ifName, "addr", cidr.String())
+		log.Info("dhcp lease obtained", "iface", ifName, "addr", cidr.String())
 		if len(lease.Router) > 0 {
 			if err := netlink.RouteAdd(&netlink.Route{Gw: lease.Router[0]}); err != nil {
-				d.log.Warn("failed to add default route", "gw", lease.Router[0], "error", err)
+				log.Warn("failed to add default route", "gw", lease.Router[0], "error", err)
 			}
 		}
 		select {
