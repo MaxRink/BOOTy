@@ -365,9 +365,10 @@ func TestHandleRedactsSensitiveAttrs(t *testing.T) {
 	var mu sync.Mutex
 	var bodies []string
 
-	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
+			http.Error(w, "read error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		mu.Lock()

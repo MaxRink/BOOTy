@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 )
@@ -144,15 +145,16 @@ func isSensitiveKey(key string) bool {
 // RemoteHandler is a slog.Handler that ships log lines to the CAPRF /log endpoint.
 // It wraps another handler so logs appear both in the console and remotely.
 type RemoteHandler struct {
-	client *Client
-	inner  slog.Handler
-	level  slog.Leveler
-	buf    chan string
-	attrs  []slog.Attr
-	groups []string
-	done   chan struct{}
-	once   *sync.Once
-	cancel context.CancelFunc
+	client  *Client
+	inner   slog.Handler
+	level   slog.Leveler
+	buf     chan string
+	attrs   []slog.Attr
+	groups  []string
+	done    chan struct{}
+	once    *sync.Once
+	cancel  context.CancelFunc
+	closing *atomic.Bool
 }
 
 // NewRemoteHandler creates a handler that sends logs to the CAPRF server.
@@ -164,13 +166,14 @@ func NewRemoteHandler(client *Client, inner slog.Handler, level slog.Leveler, bu
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &RemoteHandler{
-		client: client,
-		inner:  inner,
-		level:  level,
-		buf:    make(chan string, bufSize),
-		done:   make(chan struct{}),
-		once:   &sync.Once{},
-		cancel: cancel,
+		client:  client,
+		inner:   inner,
+		level:   level,
+		buf:     make(chan string, bufSize),
+		done:    make(chan struct{}),
+		once:    &sync.Once{},
+		cancel:  cancel,
+		closing: &atomic.Bool{},
 	}
 	go h.drain(ctx)
 	return h
@@ -241,9 +244,13 @@ func (h *RemoteHandler) Handle(ctx context.Context, r slog.Record) error { //nol
 		return true
 	})
 
-	select {
-	case h.buf <- sb.String():
-	default:
+	// Guard against sending on a closed channel: if Close() has already been
+	// called (or is in progress), skip the send to avoid a panic.
+	if h.closing == nil || !h.closing.Load() {
+		select {
+		case h.buf <- sb.String():
+		default:
+		}
 	}
 
 	return nil
@@ -252,30 +259,32 @@ func (h *RemoteHandler) Handle(ctx context.Context, r slog.Record) error { //nol
 // WithAttrs returns a new handler with the given attributes.
 func (h *RemoteHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	return &RemoteHandler{
-		client: h.client,
-		inner:  h.inner.WithAttrs(attrs),
-		level:  h.level,
-		buf:    h.buf,
-		attrs:  append(append([]slog.Attr{}, h.attrs...), attrs...),
-		groups: h.groups,
-		done:   h.done,
-		once:   h.once,
-		cancel: h.cancel,
+		client:  h.client,
+		inner:   h.inner.WithAttrs(attrs),
+		level:   h.level,
+		buf:     h.buf,
+		attrs:   append(append([]slog.Attr{}, h.attrs...), attrs...),
+		groups:  h.groups,
+		done:    h.done,
+		once:    h.once,
+		cancel:  h.cancel,
+		closing: h.closing,
 	}
 }
 
 // WithGroup returns a new handler with the given group name.
 func (h *RemoteHandler) WithGroup(name string) slog.Handler {
 	return &RemoteHandler{
-		client: h.client,
-		inner:  h.inner.WithGroup(name),
-		level:  h.level,
-		buf:    h.buf,
-		attrs:  h.attrs,
-		groups: append(append([]string{}, h.groups...), name),
-		done:   h.done,
-		once:   h.once,
-		cancel: h.cancel,
+		client:  h.client,
+		inner:   h.inner.WithGroup(name),
+		level:   h.level,
+		buf:     h.buf,
+		attrs:   h.attrs,
+		groups:  append(append([]string{}, h.groups...), name),
+		done:    h.done,
+		once:    h.once,
+		cancel:  h.cancel,
+		closing: h.closing,
 	}
 }
 
@@ -288,6 +297,9 @@ func (h *RemoteHandler) Close() {
 		h.once = &sync.Once{}
 	}
 	h.once.Do(func() {
+		if h.closing != nil {
+			h.closing.Store(true)
+		}
 		close(h.buf)
 		select {
 		case <-h.done:
