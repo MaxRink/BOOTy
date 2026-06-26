@@ -63,6 +63,7 @@ func main() {
 	// initramfs the kernel default may only contain /sbin:/bin; make sure
 	// /usr/bin, /usr/sbin, and /usr/local/bin are also reachable.
 	ensurePATH("/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin", "/usr/local/sbin")
+	startPID1ChildReaper(context.Background(), os.Getpid())
 
 	setupMountsAndDevices()
 	loadModules()
@@ -74,6 +75,71 @@ func main() {
 	slog.Info("beginning provisioning process")
 	ctx := context.Background()
 	runCAPRF(ctx)
+}
+
+const orphanReapDelay = 500 * time.Millisecond
+
+type waitExitedChildFunc func() (int, syscall.WaitStatus, error)
+
+// startPID1ChildReaper reaps daemonized children that get adopted by BOOTy as
+// PID 1. The delay gives exec.Cmd.Wait callers first chance to reap processes
+// they started directly.
+func startPID1ChildReaper(ctx context.Context, pid int) {
+	if pid != 1 {
+		return
+	}
+
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGCHLD)
+	go func() {
+		defer signal.Stop(signals)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-signals:
+				waitBeforeReaping(ctx, orphanReapDelay, reapExitedChildren)
+			}
+		}
+	}()
+}
+
+func waitBeforeReaping(ctx context.Context, delay time.Duration, reap func()) {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+	case <-timer.C:
+		reap()
+	}
+}
+
+func reapExitedChildren() {
+	reapExitedChildrenWith(waitExitedChild)
+}
+
+func waitExitedChild() (int, syscall.WaitStatus, error) {
+	var status syscall.WaitStatus
+	pid, err := syscall.Wait4(-1, &status, syscall.WNOHANG, nil)
+	return pid, status, err
+}
+
+func reapExitedChildrenWith(waitChild waitExitedChildFunc) {
+	for {
+		pid, status, err := waitChild()
+		if errors.Is(err, syscall.ECHILD) {
+			return
+		}
+		if err != nil {
+			slog.Warn("failed to reap child process", "error", err)
+			return
+		}
+		if pid <= 0 {
+			return
+		}
+		slog.Debug("reaped child process", "pid", pid, "status", status)
+	}
 }
 
 // ensurePATH adds each dir to PATH if not already present, preserving any

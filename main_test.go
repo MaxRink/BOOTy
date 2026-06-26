@@ -4,8 +4,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/network"
@@ -153,5 +156,71 @@ func TestSetupNetworkModeExplicitGoBGPFailsClosed(t *testing.T) {
 	if !strings.Contains(err.Error(), "gobgp network setup") ||
 		!strings.Contains(err.Error(), "invalid underlay AF") {
 		t.Fatalf("error = %q, want GoBGP setup failure context", err.Error())
+	}
+}
+
+func TestReapExitedChildrenWithDrainsUntilNoChildren(t *testing.T) {
+	calls := 0
+	reaped := []int{}
+	statuses := []syscall.WaitStatus{0, 1}
+	waitChild := func() (int, syscall.WaitStatus, error) {
+		calls++
+		switch calls {
+		case 1, 2:
+			reaped = append(reaped, calls)
+			return calls, statuses[calls-1], nil
+		default:
+			return -1, 0, syscall.ECHILD
+		}
+	}
+
+	reapExitedChildrenWith(waitChild)
+
+	if len(reaped) != 2 {
+		t.Fatalf("reaped = %v, want two children", reaped)
+	}
+	if calls != 3 {
+		t.Fatalf("calls = %d, want 3", calls)
+	}
+}
+
+func TestReapExitedChildrenWithStopsWhenNoProcessReady(t *testing.T) {
+	calls := 0
+
+	reapExitedChildrenWith(func() (int, syscall.WaitStatus, error) {
+		calls++
+		return 0, 0, nil
+	})
+
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1", calls)
+	}
+}
+
+func TestReapExitedChildrenWithStopsOnUnexpectedError(t *testing.T) {
+	calls := 0
+	wantErr := errors.New("wait failure")
+
+	reapExitedChildrenWith(func() (int, syscall.WaitStatus, error) {
+		calls++
+		return -1, 0, wantErr
+	})
+
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1", calls)
+	}
+}
+
+func TestWaitBeforeReapingRespectsContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	called := false
+	waitBeforeReaping(ctx, time.Hour, func() {
+		called = true
+	})
+
+	if called {
+		t.Fatal("reap called after context cancellation")
 	}
 }
