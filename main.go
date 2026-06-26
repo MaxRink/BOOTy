@@ -63,7 +63,9 @@ func main() {
 	// initramfs the kernel default may only contain /sbin:/bin; make sure
 	// /usr/bin, /usr/sbin, and /usr/local/bin are also reachable.
 	ensurePATH("/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin", "/usr/local/sbin")
-	startPID1ChildReaper(context.Background(), os.Getpid())
+	ctx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stopSignals()
+	startPID1ChildReaper(ctx, os.Getpid())
 
 	setupMountsAndDevices()
 	loadModules()
@@ -73,7 +75,6 @@ func main() {
 	ux.SysInfo()
 
 	slog.Info("beginning provisioning process")
-	ctx := context.Background()
 	runCAPRF(ctx)
 }
 
@@ -130,6 +131,9 @@ func reapExitedChildrenWith(waitChild waitExitedChildFunc) {
 		pid, status, err := waitChild()
 		if errors.Is(err, syscall.ECHILD) {
 			return
+		}
+		if errors.Is(err, syscall.EINTR) {
+			continue
 		}
 		if err != nil {
 			slog.Warn("failed to reap child process", "error", err)
@@ -254,10 +258,6 @@ func loadModule(path string) error {
 
 // runCAPRF runs the CAPRF provisioning flow (ISO-based, /deploy/vars config).
 func runCAPRF(ctx context.Context) {
-	// Handle SIGTERM/SIGINT for graceful shutdown.
-	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
-	defer cancel()
-
 	client, err := caprf.New(varsPath)
 	if err != nil {
 		slog.Error("failed to create CAPRF client", "error", err)

@@ -211,6 +211,26 @@ func TestReapExitedChildrenWithStopsOnUnexpectedError(t *testing.T) {
 	}
 }
 
+func TestReapExitedChildrenWithRetriesInterruptedWait(t *testing.T) {
+	calls := 0
+
+	reapExitedChildrenWith(func() (int, syscall.WaitStatus, error) {
+		calls++
+		switch calls {
+		case 1:
+			return -1, 0, syscall.EINTR
+		case 2:
+			return 42, 0, nil
+		default:
+			return -1, 0, syscall.ECHILD
+		}
+	})
+
+	if calls != 3 {
+		t.Fatalf("calls = %d, want EINTR retry, child reap, and ECHILD stop", calls)
+	}
+}
+
 func TestWaitBeforeReapingRespectsContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
