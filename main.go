@@ -123,6 +123,9 @@ func reapExitedChildren() {
 func waitExitedChild() (int, syscall.WaitStatus, error) {
 	var status syscall.WaitStatus
 	pid, err := syscall.Wait4(-1, &status, syscall.WNOHANG, nil)
+	if err != nil {
+		return pid, status, fmt.Errorf("wait for exited child: %w", err)
+	}
 	return pid, status, err
 }
 
