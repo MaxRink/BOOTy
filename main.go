@@ -489,7 +489,6 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 		mgr := frr.NewManager(nil)
 		if err := mgr.Setup(ctx, netCfg); err != nil {
 			slog.Error("FRR network setup failed, falling back to DHCP", "error", err)
-			mgr.DumpFRRState()
 			return networkModeWithResolvers(netCfg, dhcpFallback(ctx, netCfg))
 		}
 		return networkModeWithResolvers(netCfg, mgr)

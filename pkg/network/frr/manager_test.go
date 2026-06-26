@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -64,12 +65,14 @@ func TestNewManagerCustomCommander(t *testing.T) {
 func TestTeardown(t *testing.T) {
 	cmd := newMockFRRCommander()
 	mgr := NewManager(cmd)
+	mgr.frrStartMethod = frrStartSystemctl
+	commands, _ := installDaemonHooks(t, nil, nil)
 
 	if err := mgr.Teardown(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(cmd.calls) != 1 {
-		t.Fatalf("expected 1 call, got %d", len(cmd.calls))
+	if got := commandBases(*commands); strings.Join(got, ",") != "systemctl" {
+		t.Fatalf("commands = %v, want systemctl", got)
 	}
 }
 
@@ -294,6 +297,294 @@ func TestResolveFRRDaemonsSurfacesStatErrors(t *testing.T) {
 	if strings.Contains(err.Error(), "required FRR daemons not found") {
 		t.Fatalf("error flattened stat failure into missing daemon: %v", err)
 	}
+}
+
+func TestStartDaemonsDirectStopsStartedDaemonsOnRequiredFailure(t *testing.T) {
+	setupFakeDaemonDir(t, []string{"mgmtd", "zebra", "staticd", "bgpd", "bfdd"})
+	commands, signals := installDaemonHooks(t,
+		func(name string) error {
+			if filepath.Base(name) == "bgpd" {
+				return fmt.Errorf("bgpd failed")
+			}
+			return nil
+		},
+		map[string][]int{"mgmtd": {101}, "zebra": {102}, "staticd": {103}},
+	)
+
+	mgr := NewManager(nil)
+	err := mgr.startDaemonsDirect(context.Background())
+	if err == nil {
+		t.Fatal("expected bgpd start failure")
+	}
+	if !strings.Contains(err.Error(), "start FRR daemon bgpd") {
+		t.Fatalf("error = %q, want bgpd context", err.Error())
+	}
+
+	wantCommands := []string{"mgmtd", "zebra", "staticd", "bgpd"}
+	if got := commandBases(*commands); strings.Join(got, ",") != strings.Join(wantCommands, ",") {
+		t.Fatalf("commands = %v, want %v", got, wantCommands)
+	}
+	wantSignals := []string{"staticd:103:terminated", "zebra:102:terminated", "mgmtd:101:terminated"}
+	if strings.Join(*signals, ",") != strings.Join(wantSignals, ",") {
+		t.Fatalf("signals = %v, want %v", *signals, wantSignals)
+	}
+	if len(mgr.directDaemonList) != 0 {
+		t.Fatalf("directDaemonList = %v, want cleared after rollback", mgr.directDaemonList)
+	}
+}
+
+func TestTeardownStopsTrackedDirectDaemons(t *testing.T) {
+	_, signals := installDaemonHooks(t, nil, map[string][]int{
+		"zebra": {201},
+		"bgpd":  {202},
+		"bfdd":  {203},
+	})
+	mgr := NewManager(newMockFRRCommander())
+	mgr.frrStartMethod = frrStartDirect
+	mgr.directDaemonList = []string{"zebra", "bgpd", "bfdd"}
+
+	if err := mgr.Teardown(context.Background()); err != nil {
+		t.Fatalf("Teardown: %v", err)
+	}
+
+	wantSignals := []string{"bfdd:203:terminated", "bgpd:202:terminated", "zebra:201:terminated"}
+	if strings.Join(*signals, ",") != strings.Join(wantSignals, ",") {
+		t.Fatalf("signals = %v, want %v", *signals, wantSignals)
+	}
+	if mgr.frrStartMethod != "" {
+		t.Fatalf("frrStartMethod = %q, want cleared", mgr.frrStartMethod)
+	}
+	if len(mgr.directDaemonList) != 0 {
+		t.Fatalf("directDaemonList = %v, want cleared", mgr.directDaemonList)
+	}
+}
+
+func TestRestartFRRRestartsTrackedDirectDaemons(t *testing.T) {
+	setupFakeDaemonDir(t, []string{"zebra", "bgpd", "bfdd"})
+	commands, signals := installDaemonHooks(t, nil, map[string][]int{
+		"zebra": {301},
+		"bgpd":  {302},
+		"bfdd":  {303},
+	})
+	mgr := NewManager(nil)
+	mgr.frrStartMethod = frrStartDirect
+	mgr.directDaemonList = []string{"zebra", "bgpd", "bfdd"}
+
+	if err := mgr.restartFRR(context.Background()); err != nil {
+		t.Fatalf("restartFRR: %v", err)
+	}
+
+	wantSignals := []string{"bfdd:303:terminated", "bgpd:302:terminated", "zebra:301:terminated"}
+	if strings.Join(*signals, ",") != strings.Join(wantSignals, ",") {
+		t.Fatalf("signals = %v, want %v", *signals, wantSignals)
+	}
+	wantCommands := []string{"zebra", "bgpd", "bfdd"}
+	if got := commandBases(*commands); strings.Join(got, ",") != strings.Join(wantCommands, ",") {
+		t.Fatalf("commands = %v, want %v", got, wantCommands)
+	}
+	if mgr.frrStartMethod != frrStartDirect {
+		t.Fatalf("frrStartMethod = %q, want direct", mgr.frrStartMethod)
+	}
+	if got := strings.Join(mgr.directDaemonList, ","); got != "zebra,bgpd,bfdd" {
+		t.Fatalf("directDaemonList = %v, want restarted daemons", mgr.directDaemonList)
+	}
+}
+
+func TestStartStopRestartFRRUsesInitScript(t *testing.T) {
+	initPath := filepath.Join(t.TempDir(), "frrinit.sh")
+	if err := os.WriteFile(initPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("write fake frrinit.sh: %v", err)
+	}
+	origInitPath := frrInitScriptPath
+	frrInitScriptPath = initPath
+	t.Cleanup(func() { frrInitScriptPath = origInitPath })
+
+	commands, _ := installDaemonHooks(t, func(name string) error {
+		if filepath.Base(name) == "systemctl" {
+			return fmt.Errorf("systemctl unavailable")
+		}
+		return nil
+	}, nil)
+	mgr := NewManager(nil)
+
+	if err := mgr.startFRR(context.Background()); err != nil {
+		t.Fatalf("startFRR: %v", err)
+	}
+	if mgr.frrStartMethod != frrStartInit {
+		t.Fatalf("frrStartMethod = %q, want init script", mgr.frrStartMethod)
+	}
+	if err := mgr.stopFRR(context.Background()); err != nil {
+		t.Fatalf("stopFRR: %v", err)
+	}
+	if err := mgr.restartFRR(context.Background()); err != nil {
+		t.Fatalf("restartFRR: %v", err)
+	}
+
+	wantCommands := []string{"systemctl", "frrinit.sh", "frrinit.sh", "frrinit.sh"}
+	if got := commandBases(*commands); strings.Join(got, ",") != strings.Join(wantCommands, ",") {
+		t.Fatalf("commands = %v, want %v", got, wantCommands)
+	}
+}
+
+func TestStopFRRBestEffortWhenStartMethodUnknown(t *testing.T) {
+	origInitPath := frrInitScriptPath
+	frrInitScriptPath = filepath.Join(t.TempDir(), "missing-frrinit.sh")
+	t.Cleanup(func() { frrInitScriptPath = origInitPath })
+
+	commands, _ := installDaemonHooks(t, func(string) error {
+		return fmt.Errorf("command unavailable")
+	}, nil)
+	mgr := NewManager(nil)
+
+	if err := mgr.stopFRR(context.Background()); err != nil {
+		t.Fatalf("stopFRR: %v", err)
+	}
+	if got := commandBases(*commands); strings.Join(got, ",") != "systemctl" {
+		t.Fatalf("commands = %v, want best-effort systemctl stop", got)
+	}
+}
+
+func TestStopDaemonsDirectEscalatesToSIGKILL(t *testing.T) {
+	origFind := findFRRDaemonPIDs
+	origSignal := signalFRRProcess
+	origStopWait := frrDaemonStopWait
+	origKillWait := frrDaemonKillWait
+	active := true
+	signals := []string{}
+	findFRRDaemonPIDs = func(names []string) (map[string][]int, error) {
+		pids := make(map[string][]int, len(names))
+		if active {
+			pids["zebra"] = []int{401}
+		}
+		return pids, nil
+	}
+	signalFRRProcess = func(pid int, sig syscall.Signal) error {
+		signals = append(signals, fmt.Sprintf("zebra:%d:%s", pid, sig))
+		if sig == syscall.SIGKILL {
+			active = false
+		}
+		return nil
+	}
+	frrDaemonStopWait = 0
+	frrDaemonKillWait = 0
+	t.Cleanup(func() {
+		findFRRDaemonPIDs = origFind
+		signalFRRProcess = origSignal
+		frrDaemonStopWait = origStopWait
+		frrDaemonKillWait = origKillWait
+	})
+
+	mgr := NewManager(nil)
+	mgr.frrStartMethod = frrStartDirect
+	mgr.directDaemonList = []string{"zebra"}
+
+	if err := mgr.stopDaemonsDirect(context.Background()); err != nil {
+		t.Fatalf("stopDaemonsDirect: %v", err)
+	}
+	wantSignals := []string{"zebra:401:terminated", "zebra:401:killed"}
+	if strings.Join(signals, ",") != strings.Join(wantSignals, ",") {
+		t.Fatalf("signals = %v, want %v", signals, wantSignals)
+	}
+}
+
+func TestRollbackSetupSkipsFRRStateDumpBeforeStart(t *testing.T) {
+	cmd := newMockFRRCommander()
+	mgr := NewManager(cmd)
+
+	err := mgr.rollbackSetup(context.Background(), fmt.Errorf("setup failed"))
+	if err == nil || !strings.Contains(err.Error(), "setup failed") {
+		t.Fatalf("rollbackSetup error = %v, want original setup failure", err)
+	}
+	if len(cmd.calls) != 0 {
+		t.Fatalf("commands = %v, want no vtysh dump before FRR start", cmd.calls)
+	}
+}
+
+func setupFakeDaemonDir(t *testing.T, names []string) {
+	t.Helper()
+	dir := t.TempDir()
+	origDirs := frrDaemonDirs
+	frrDaemonDirs = []string{dir}
+	t.Cleanup(func() { frrDaemonDirs = origDirs })
+	for _, name := range names {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatalf("write fake daemon %s: %v", name, err)
+		}
+	}
+}
+
+func installDaemonHooks(
+	t *testing.T,
+	runErr func(string) error,
+	pids map[string][]int,
+) (*[]string, *[]string) {
+	t.Helper()
+	origRun := runFRRDaemonCommand
+	origDelay := frrDaemonStartDelay
+	origFind := findFRRDaemonPIDs
+	origSignal := signalFRRProcess
+	commands := []string{}
+	signals := []string{}
+	activePIDs, pidNames := copyPIDMap(pids)
+	runFRRDaemonCommand = func(_ context.Context, name string, _ ...string) error {
+		commands = append(commands, name)
+		if runErr != nil {
+			return runErr(name)
+		}
+		return nil
+	}
+	frrDaemonStartDelay = 0
+	findFRRDaemonPIDs = func(names []string) (map[string][]int, error) {
+		result := make(map[string][]int, len(names))
+		for _, name := range names {
+			result[name] = append([]int(nil), activePIDs[name]...)
+		}
+		return result, nil
+	}
+	signalFRRProcess = func(pid int, sig syscall.Signal) error {
+		name := pidNames[pid]
+		signals = append(signals, fmt.Sprintf("%s:%d:%s", name, pid, sig))
+		activePIDs[name] = removePID(activePIDs[name], pid)
+		return nil
+	}
+	t.Cleanup(func() {
+		runFRRDaemonCommand = origRun
+		frrDaemonStartDelay = origDelay
+		findFRRDaemonPIDs = origFind
+		signalFRRProcess = origSignal
+	})
+	return &commands, &signals
+}
+
+func copyPIDMap(pids map[string][]int) (map[string][]int, map[int]string) {
+	active := make(map[string][]int, len(pids))
+	names := make(map[int]string)
+	for name, ids := range pids {
+		active[name] = append([]int(nil), ids...)
+		for _, pid := range ids {
+			names[pid] = name
+		}
+	}
+	return active, names
+}
+
+func removePID(pids []int, remove int) []int {
+	out := pids[:0]
+	for _, pid := range pids {
+		if pid != remove {
+			out = append(out, pid)
+		}
+	}
+	return out
+}
+
+func commandBases(commands []string) []string {
+	out := make([]string, 0, len(commands))
+	for _, cmd := range commands {
+		out = append(out, filepath.Base(cmd))
+	}
+	return out
 }
 
 func TestWaitForHTTPWithFRRRestartsOnFailure(t *testing.T) {

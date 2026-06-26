@@ -24,9 +24,11 @@ import (
 
 // Manager handles FRR/EVPN network setup and teardown.
 type Manager struct {
-	cfg       network.Config
-	commander Commander
-	log       *slog.Logger
+	cfg              network.Config
+	commander        Commander
+	log              *slog.Logger
+	frrStartMethod   string
+	directDaemonList []string
 }
 
 // Commander abstracts command execution for testing.
@@ -66,15 +68,29 @@ func (m *Manager) Setup(ctx context.Context, cfg *network.Config) error {
 
 	nics, err := m.setupInterfaces(cfg, underlayIP, overlayIP, bridgeMAC)
 	if err != nil {
-		return err
+		return m.rollbackSetup(ctx, err)
 	}
 
 	if err := m.startFRRStack(ctx, cfg, underlayIP, overlayIP, nics); err != nil {
-		return err
+		return m.rollbackSetup(ctx, err)
 	}
 
 	m.log.Info("FRR/EVPN network setup complete", "nics", nics)
 	return nil
+}
+
+func (m *Manager) rollbackSetup(ctx context.Context, setupErr error) error {
+	if m.frrStartMethod != "" || len(m.directDaemonList) > 0 {
+		m.DumpFRRState()
+		if err := m.Teardown(ctx); err != nil {
+			return errors.Join(setupErr, fmt.Errorf("rollback FRR setup: %w", err))
+		}
+		return setupErr
+	}
+	if err := m.cleanupNetworkState(); err != nil {
+		return errors.Join(setupErr, fmt.Errorf("rollback FRR setup: %w", err))
+	}
+	return setupErr
 }
 
 // setupInterfaces creates VRF, dummy, VXLAN, bridge, loopback, and configures NICs.
@@ -159,7 +175,7 @@ func (m *Manager) WaitForConnectivity(ctx context.Context, target string, timeou
 func (m *Manager) Teardown(ctx context.Context) error {
 	var firstErr error
 
-	if _, err := m.commander.Run(ctx, "systemctl", "stop", "frr"); err != nil {
+	if err := m.stopFRR(ctx); err != nil {
 		m.log.Warn("failed to stop FRR", "error", err)
 		firstErr = err
 	}
@@ -642,18 +658,39 @@ bfdd_options="   -A 127.0.0.1"
 	return nil
 }
 
+const (
+	frrStartSystemctl = "systemctl"
+	frrStartInit      = "frrinit"
+	frrStartDirect    = "direct"
+)
+
+var (
+	runFRRDaemonCommand = runDaemonCmd
+	frrRestartInterval  = 120 * time.Second
+	frrDaemonStartDelay = 500 * time.Millisecond
+	frrDaemonStopWait   = 3 * time.Second
+	frrDaemonKillWait   = time.Second
+	findFRRDaemonPIDs   = findFRRDaemonPIDsFromProc
+	signalFRRProcess    = syscall.Kill
+	frrInitScriptPath   = "/usr/lib/frr/frrinit.sh"
+)
+
 // startFRR launches FRR daemons using the best available method.
 // All methods avoid CombinedOutput() because FRR daemons fork with -d,
 // and child processes inherit pipes, blocking CombinedOutput() indefinitely.
 func (m *Manager) startFRR(ctx context.Context) error {
-	if err := runDaemonCmd(ctx, "systemctl", "restart", "frr"); err == nil {
+	m.frrStartMethod = ""
+	m.directDaemonList = nil
+
+	if err := runFRRDaemonCommand(ctx, "systemctl", "restart", "frr"); err == nil {
+		m.frrStartMethod = frrStartSystemctl
 		m.log.Info("FRR daemons started via systemctl")
 		return nil
 	}
 
-	initPath := "/usr/lib/frr/frrinit.sh"
-	if _, statErr := os.Stat(initPath); statErr == nil {
-		if err := runDaemonCmd(ctx, initPath, "start"); err == nil {
+	if _, statErr := os.Stat(frrInitScriptPath); statErr == nil {
+		if err := runFRRDaemonCommand(ctx, frrInitScriptPath, "start"); err == nil {
+			m.frrStartMethod = frrStartInit
 			m.log.Info("FRR daemons started via frrinit.sh")
 			return nil
 		}
@@ -661,6 +698,58 @@ func (m *Manager) startFRR(ctx context.Context) error {
 	}
 
 	return m.startDaemonsDirect(ctx)
+}
+
+func (m *Manager) stopFRR(ctx context.Context) error {
+	switch m.frrStartMethod {
+	case frrStartSystemctl:
+		return runFRRDaemonCommand(ctx, "systemctl", "stop", "frr")
+	case frrStartInit:
+		return runFRRDaemonCommand(ctx, frrInitScriptPath, "stop")
+	case frrStartDirect:
+		return m.stopDaemonsDirect(ctx)
+	default:
+		if len(m.directDaemonList) > 0 {
+			return m.stopDaemonsDirect(ctx)
+		}
+		return stopFRRBestEffort(ctx)
+	}
+}
+
+func (m *Manager) restartFRR(ctx context.Context) error {
+	switch m.frrStartMethod {
+	case frrStartSystemctl:
+		return runFRRDaemonCommand(ctx, "systemctl", "restart", "frr")
+	case frrStartInit:
+		return runFRRDaemonCommand(ctx, frrInitScriptPath, "restart")
+	case frrStartDirect:
+		if err := m.stopDaemonsDirect(ctx); err != nil {
+			return err
+		}
+		return m.startDaemonsDirect(ctx)
+	default:
+		return restartFRRBestEffort(ctx)
+	}
+}
+
+func restartFRRBestEffort(ctx context.Context) error {
+	if err := runFRRDaemonCommand(ctx, "systemctl", "restart", "frr"); err == nil {
+		return nil
+	}
+	if _, statErr := os.Stat(frrInitScriptPath); statErr == nil {
+		return runFRRDaemonCommand(ctx, frrInitScriptPath, "restart")
+	}
+	return fmt.Errorf("no FRR restart method available")
+}
+
+func stopFRRBestEffort(ctx context.Context) error {
+	if err := runFRRDaemonCommand(ctx, "systemctl", "stop", "frr"); err == nil {
+		return nil
+	}
+	if _, statErr := os.Stat(frrInitScriptPath); statErr == nil {
+		return runFRRDaemonCommand(ctx, frrInitScriptPath, "stop")
+	}
+	return nil
 }
 
 // runDaemonCmd runs a command that may fork long-lived daemons.
@@ -685,6 +774,19 @@ type frrDaemonSpec struct {
 }
 
 var frrDaemonDirs = []string{"/usr/lib/frr", "/sbin"}
+
+func frrDaemonSpecs() []frrDaemonSpec {
+	// FRR 10.x daemon startup order: mgmtd → zebra → staticd → bgpd → bfdd.
+	// bgpd always uses -f to read its config directly — peer-group property
+	// inheritance is unreliable when config is pushed by mgmtd alone.
+	return []frrDaemonSpec{
+		{"mgmtd", []string{"-d", "-A", "127.0.0.1"}, false},
+		{"zebra", []string{"-d", "-A", "127.0.0.1", "-s", "90000000"}, true},
+		{"staticd", []string{"-d", "-A", "127.0.0.1"}, false},
+		{"bgpd", []string{"-d", "-A", "127.0.0.1", "-f", "/etc/frr/frr.conf"}, true},
+		{"bfdd", []string{"-d", "-A", "127.0.0.1"}, true},
+	}
+}
 
 func resolveFRRDaemonPath(name string) (path string, ok bool, err error) {
 	for _, dir := range frrDaemonDirs {
@@ -719,17 +821,7 @@ func resolveFRRDaemons(daemons []frrDaemonSpec) (paths map[string]string, missin
 }
 
 func (m *Manager) startDaemonsDirect(ctx context.Context) error {
-	// FRR 10.x daemon startup order: mgmtd → zebra → staticd → bgpd → bfdd.
-	// bgpd always uses -f to read its config directly — peer-group property
-	// inheritance is unreliable when config is pushed by mgmtd alone.
-	// mgmtd (if present) handles management-plane infrastructure.
-	daemons := []frrDaemonSpec{
-		{"mgmtd", []string{"-d", "-A", "127.0.0.1"}, false},
-		{"zebra", []string{"-d", "-A", "127.0.0.1", "-s", "90000000"}, true},
-		{"staticd", []string{"-d", "-A", "127.0.0.1"}, false},
-		{"bgpd", []string{"-d", "-A", "127.0.0.1", "-f", "/etc/frr/frr.conf"}, true},
-		{"bfdd", []string{"-d", "-A", "127.0.0.1"}, true},
-	}
+	daemons := frrDaemonSpecs()
 	paths, missing, err := resolveFRRDaemons(daemons)
 	if err != nil {
 		return fmt.Errorf("resolve FRR daemons: %w", err)
@@ -743,17 +835,151 @@ func (m *Manager) startDaemonsDirect(ctx context.Context) error {
 			m.log.Debug("Daemon not found, skipping", "daemon", d.name)
 			continue
 		}
-		if err := runDaemonCmd(ctx, path, d.args...); err != nil {
+		if err := runFRRDaemonCommand(ctx, path, d.args...); err != nil {
 			if d.required {
-				return fmt.Errorf("start FRR daemon %s: %w", d.name, err)
+				startErr := fmt.Errorf("start FRR daemon %s: %w", d.name, err)
+				if stopErr := m.stopDaemonsDirect(ctx); stopErr != nil {
+					return errors.Join(startErr, fmt.Errorf("rollback direct FRR daemons: %w", stopErr))
+				}
+				return startErr
 			}
 			m.log.Warn("Failed to start daemon", "daemon", d.name, "error", err)
 		} else {
+			m.trackDirectDaemon(d.name)
 			m.log.Info("Started FRR daemon", "daemon", d.name)
 		}
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(frrDaemonStartDelay)
 	}
+	m.frrStartMethod = frrStartDirect
 	return nil
+}
+
+func (m *Manager) trackDirectDaemon(name string) {
+	for _, existing := range m.directDaemonList {
+		if existing == name {
+			return
+		}
+	}
+	m.directDaemonList = append(m.directDaemonList, name)
+}
+
+func (m *Manager) stopDaemonsDirect(ctx context.Context) error {
+	names := reverseStrings(m.directDaemonList)
+	if len(names) == 0 {
+		return nil
+	}
+	if err := signalDaemons(ctx, names, syscall.SIGTERM); err != nil {
+		return err
+	}
+	if err := waitForDaemonsExit(ctx, names, frrDaemonStopWait); err != nil {
+		m.log.Warn("FRR daemons still running after SIGTERM; sending SIGKILL", "error", err)
+		if killErr := signalDaemons(ctx, names, syscall.SIGKILL); killErr != nil {
+			return errors.Join(err, killErr)
+		}
+		if waitErr := waitForDaemonsExit(ctx, names, frrDaemonKillWait); waitErr != nil {
+			return errors.Join(err, waitErr)
+		}
+	}
+	m.directDaemonList = nil
+	m.frrStartMethod = ""
+	return nil
+}
+
+func reverseStrings(in []string) []string {
+	out := make([]string, 0, len(in))
+	for i := len(in) - 1; i >= 0; i-- {
+		out = append(out, in[i])
+	}
+	return out
+}
+
+func signalDaemons(ctx context.Context, names []string, sig syscall.Signal) error {
+	pids, err := findFRRDaemonPIDs(names)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, name := range names {
+		for _, pid := range pids[name] {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return fmt.Errorf("signal FRR daemons canceled: %w", ctxErr)
+			}
+			if err := signalFRRProcess(pid, sig); err != nil && !errors.Is(err, syscall.ESRCH) {
+				errs = append(errs, fmt.Errorf("signal %s pid %d: %w", name, pid, err))
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func waitForDaemonsExit(ctx context.Context, names []string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		pids, err := findFRRDaemonPIDs(names)
+		if err != nil {
+			return err
+		}
+		if daemonPIDCount(pids) == 0 {
+			return nil
+		}
+		if timeout <= 0 || time.Now().After(deadline) {
+			return fmt.Errorf("frr daemon pids still running: %v", pids)
+		}
+		timer := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return fmt.Errorf("wait for FRR daemon exit canceled: %w", ctx.Err())
+		case <-timer.C:
+		}
+	}
+}
+
+func daemonPIDCount(pids map[string][]int) int {
+	count := 0
+	for _, ids := range pids {
+		count += len(ids)
+	}
+	return count
+}
+
+func findFRRDaemonPIDsFromProc(names []string) (map[string][]int, error) {
+	want := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		want[name] = struct{}{}
+	}
+	pids := make(map[string][]int, len(names))
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil, fmt.Errorf("read /proc: %w", err)
+	}
+	for _, entry := range entries {
+		pid, ok := procPID(entry.Name())
+		if !ok {
+			continue
+		}
+		name, readErr := procComm(pid)
+		if readErr != nil {
+			continue
+		}
+		if _, found := want[name]; found {
+			pids[name] = append(pids[name], pid)
+		}
+	}
+	return pids, nil
+}
+
+func procPID(name string) (int, bool) {
+	pid, err := strconv.Atoi(name)
+	return pid, err == nil
+}
+
+func procComm(pid int) (string, error) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid))
+	if err != nil {
+		return "", fmt.Errorf("read process comm for pid %d: %w", pid, err)
+	}
+	return strings.TrimSpace(string(data)), nil
 }
 
 func (m *Manager) addBGPPeer(ctx context.Context, vrfName string, asn uint32, nic string) error {
@@ -787,7 +1013,7 @@ func waitForHTTPWithFRR(ctx context.Context, target string, timeout time.Duratio
 	client := &http.Client{Timeout: 10 * time.Second}
 	attempt := 0
 	lastRestart := time.Now()
-	const restartInterval = 120 * time.Second
+	restartInterval := frrRestartInterval
 
 	for time.Now().Before(deadline) {
 		attempt++
@@ -809,8 +1035,12 @@ func waitForHTTPWithFRR(ctx context.Context, target string, timeout time.Duratio
 
 		if time.Since(lastRestart) >= restartInterval {
 			log.Info("Restarting FRR daemons for connectivity recovery")
-			if sErr := runDaemonCmd(ctx, "systemctl", "restart", "frr"); sErr != nil {
-				_ = runDaemonCmd(ctx, "/usr/lib/frr/frrinit.sh", "restart")
+			if mgr != nil {
+				if err := mgr.restartFRR(ctx); err != nil {
+					log.Warn("failed to restart FRR daemons", "error", err)
+				}
+			} else if err := restartFRRBestEffort(ctx); err != nil {
+				log.Warn("failed to restart FRR daemons", "error", err)
 			}
 			lastRestart = time.Now()
 		}
