@@ -63,13 +63,13 @@ func (c *Configurator) PrepareOCIPrePulls(ctx context.Context, cfg *config.OCIPr
 	}
 	withDefaults := cfg.WithDefaults()
 	if len(withDefaults.Images) == 0 {
-		slog.Info("OCI pre-pulls enabled with no images")
+		slog.Info("oci pre-pulls enabled with no images")
 		return nil
 	}
 
 	archiveDir, archiveImageDir, err := c.ociPrePullDir(withDefaults.CacheDir, "archives")
 	if err != nil {
-		return fmt.Errorf("OCI pre-pull archive dir: %w", err)
+		return fmt.Errorf("oci pre-pull archive dir: %w", err)
 	}
 	catalog := ociPrePullCatalog{
 		APIVersion:      ociPrePullCatalogAPIVersion,
@@ -81,7 +81,7 @@ func (c *Configurator) PrepareOCIPrePulls(ctx context.Context, cfg *config.OCIPr
 	for i := range withDefaults.Images {
 		image, err := c.prepareOCIPrePullImage(ctx, &withDefaults, &withDefaults.Images[i], archiveDir, archiveImageDir)
 		if err != nil {
-			return fmt.Errorf("OCI pre-pull image %d: %w", i, err)
+			return fmt.Errorf("oci pre-pull image %d: %w", i, err)
 		}
 		catalog.Images = append(catalog.Images, image)
 	}
@@ -119,7 +119,7 @@ func (c *Configurator) prepareOCIPrePullImage(
 	if err := os.Rename(tmpPath, archivePath); err != nil {
 		return ociPrePullCatalogImage{}, fmt.Errorf("install archive %s: %w", archiveName, err)
 	}
-	if err := os.Chmod(archivePath, 0o644); err != nil {
+	if err := os.Chmod(archivePath, 0o600); err != nil {
 		return ociPrePullCatalogImage{}, fmt.Errorf("chmod archive %s: %w", archiveName, err)
 	}
 	if err := syncParentDir(archivePath); err != nil {
@@ -152,20 +152,20 @@ func pullOCIPrePullImageArchive(
 	}
 	ref, err := name.ParseReference(rawRef, parseOpts...)
 	if err != nil {
-		return ociPrePullResult{}, fmt.Errorf("parse OCI reference %q: %w", imageutil.RedactOCIRef(rawRef), err)
+		return ociPrePullResult{}, fmt.Errorf("parse oci reference %q: %w", imageutil.RedactOCIRef(rawRef), err)
 	}
 
-	slog.Info("pulling OCI pre-pull image", "ref", imageutil.RedactOCIRef(rawRef))
+	slog.Info("pulling oci pre-pull image", "ref", imageutil.RedactOCIRef(rawRef))
 	img, err := remote.Image(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain), remote.WithContext(ctx))
 	if err != nil {
-		return ociPrePullResult{}, fmt.Errorf("pull OCI image %q: %w", imageutil.RedactOCIRef(rawRef), err)
+		return ociPrePullResult{}, fmt.Errorf("pull oci image %q: %w", imageutil.RedactOCIRef(rawRef), err)
 	}
 	digest, err := img.Digest()
 	if err != nil {
-		return ociPrePullResult{}, fmt.Errorf("resolve OCI image digest %q: %w", imageutil.RedactOCIRef(rawRef), err)
+		return ociPrePullResult{}, fmt.Errorf("resolve oci image digest %q: %w", imageutil.RedactOCIRef(rawRef), err)
 	}
 	if err := tarball.WriteToFile(archivePath, ref, img); err != nil {
-		return ociPrePullResult{}, fmt.Errorf("write OCI image archive %q: %w", imageutil.RedactOCIRef(rawRef), err)
+		return ociPrePullResult{}, fmt.Errorf("write oci image archive %q: %w", imageutil.RedactOCIRef(rawRef), err)
 	}
 	resolved := ref.Context().Name() + "@" + digest.String()
 	return ociPrePullResult{ResolvedReference: resolved, Digest: digest.String()}, nil
@@ -174,22 +174,22 @@ func pullOCIPrePullImageArchive(
 func (c *Configurator) writeOCIPrePullCatalog(cfg *config.OCIPrePullConfig, catalog *ociPrePullCatalog) error {
 	catalogPath, err := c.ociPrePullTargetPath(path.Join(cfg.CacheDir, "catalog.json"))
 	if err != nil {
-		return fmt.Errorf("OCI pre-pull catalog path: %w", err)
+		return fmt.Errorf("oci pre-pull catalog path: %w", err)
 	}
 	data, err := json.MarshalIndent(catalog, "", "  ")
 	if err != nil {
-		return fmt.Errorf("marshal OCI pre-pull catalog: %w", err)
+		return fmt.Errorf("marshal oci pre-pull catalog: %w", err)
 	}
 	if err := writeFileAtomic(catalogPath, append(data, '\n'), 0o644); err != nil {
-		return fmt.Errorf("write OCI pre-pull catalog: %w", err)
+		return fmt.Errorf("write oci pre-pull catalog: %w", err)
 	}
 
 	listPath, err := c.ociPrePullTargetPath(path.Join(cfg.CacheDir, ociPrePullListName))
 	if err != nil {
-		return fmt.Errorf("OCI pre-pull import list path: %w", err)
+		return fmt.Errorf("oci pre-pull import list path: %w", err)
 	}
 	if err := writeFileAtomic(listPath, []byte(ociPrePullImportList(catalog)), 0o644); err != nil {
-		return fmt.Errorf("write OCI pre-pull import list: %w", err)
+		return fmt.Errorf("write oci pre-pull import list: %w", err)
 	}
 	return nil
 }
@@ -206,18 +206,18 @@ func ociPrePullImportList(catalog *ociPrePullCatalog) string {
 func (c *Configurator) installOCIPrePullImporter(cfg *config.OCIPrePullConfig) error {
 	scriptPath, err := c.ociPrePullTargetPath(ociPrePullImporterPath)
 	if err != nil {
-		return fmt.Errorf("OCI pre-pull importer path: %w", err)
+		return fmt.Errorf("oci pre-pull importer path: %w", err)
 	}
 	if err := writeFileAtomic(scriptPath, []byte(ociPrePullImporterScript), 0o755); err != nil {
-		return fmt.Errorf("write OCI pre-pull importer: %w", err)
+		return fmt.Errorf("write oci pre-pull importer: %w", err)
 	}
 
 	unitPath, err := c.ociPrePullTargetPath(path.Join("/etc/systemd/system", ociPrePullServiceName))
 	if err != nil {
-		return fmt.Errorf("OCI pre-pull systemd unit path: %w", err)
+		return fmt.Errorf("oci pre-pull systemd unit path: %w", err)
 	}
 	if err := writeFileAtomic(unitPath, []byte(ociPrePullSystemdUnit(cfg)), 0o644); err != nil {
-		return fmt.Errorf("write OCI pre-pull systemd unit: %w", err)
+		return fmt.Errorf("write oci pre-pull systemd unit: %w", err)
 	}
 	return c.enableOCIPrePullUnit()
 }
@@ -225,17 +225,17 @@ func (c *Configurator) installOCIPrePullImporter(cfg *config.OCIPrePullConfig) e
 func (c *Configurator) enableOCIPrePullUnit() error {
 	wantsDir, err := c.ociPrePullTargetPath("/etc/systemd/system/multi-user.target.wants")
 	if err != nil {
-		return fmt.Errorf("OCI pre-pull wants dir: %w", err)
+		return fmt.Errorf("oci pre-pull wants dir: %w", err)
 	}
 	if err := os.MkdirAll(wantsDir, 0o755); err != nil {
-		return fmt.Errorf("create OCI pre-pull wants dir: %w", err)
+		return fmt.Errorf("create oci pre-pull wants dir: %w", err)
 	}
 	linkPath := filepath.Join(wantsDir, ociPrePullServiceName)
 	if err := os.Remove(linkPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("replace OCI pre-pull unit symlink: %w", err)
+		return fmt.Errorf("replace oci pre-pull unit symlink: %w", err)
 	}
 	if err := os.Symlink("../"+ociPrePullServiceName, linkPath); err != nil {
-		return fmt.Errorf("enable OCI pre-pull unit: %w", err)
+		return fmt.Errorf("enable oci pre-pull unit: %w", err)
 	}
 	return nil
 }
@@ -246,6 +246,7 @@ func ociPrePullSystemdUnit(cfg *config.OCIPrePullConfig) string {
 	return fmt.Sprintf(`[Unit]
 Description=Import BOOTy pre-pulled OCI image archives
 ConditionPathExists=%s
+Wants=containerd.service crio.service docker.service podman.service
 After=containerd.service crio.service docker.service podman.service
 Before=kubelet.service
 
@@ -333,7 +334,7 @@ import_archive() {
 			docker load -i "$archive"
 			;;
 		*)
-			log "unsupported OCI import runtime: $runtime"
+			log "unsupported oci import runtime: $runtime"
 			return 1
 			;;
 	esac
@@ -347,20 +348,20 @@ import_with_available_runtime() {
 	fi
 	runtimes="$(find_runtime || true)"
 	if [ -z "$runtimes" ]; then
-		log "no supported OCI import runtime found"
+		log "no supported oci import runtime found"
 		return 1
 	fi
 	for runtime in $runtimes; do
 		if import_archive "$runtime" "$archive"; then
 			return 0
 		fi
-		log "OCI import with $runtime failed, trying next runtime if available"
+		log "oci import with $runtime failed, trying next runtime if available"
 	done
 	return 1
 }
 
 if [ ! -f "$LIST" ]; then
-	log "BOOTy OCI pre-pull list not found: $LIST"
+	log "BOOTy oci pre-pull list not found: $LIST"
 	exit 0
 fi
 

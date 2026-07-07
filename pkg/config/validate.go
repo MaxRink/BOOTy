@@ -7,7 +7,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/google/go-containerregistry/pkg/name"
+	ociname "github.com/google/go-containerregistry/pkg/name"
 	imageutil "github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/network"
 )
@@ -73,6 +73,18 @@ func (c *Config) Validate() error {
 			c.Provision.Disk.PartitionLayout = layout
 		}
 	}
+	errs = append(errs, c.validateProvisionFeatures()...)
+
+	if len(errs) > 0 {
+		return fmt.Errorf("config validation: %s", strings.Join(errs, "; "))
+	}
+
+	c.normalize()
+	return nil
+}
+
+func (c *Config) validateProvisionFeatures() []string {
+	var errs []string
 	if err := validateSysextConfig(&c.Provision.Sysext); err != nil {
 		errs = append(errs, err.Error())
 	}
@@ -88,13 +100,7 @@ func (c *Config) Validate() error {
 	if err := validateSecureBootConfig(c.Provision.Image.Mode, &c.Provision.SecureBoot, &c.Provision.AB); err != nil {
 		errs = append(errs, err.Error())
 	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("config validation: %s", strings.Join(errs, "; "))
-	}
-
-	c.normalize()
-	return nil
+	return errs
 }
 
 func (c *Config) validateEnums() []string {
@@ -690,7 +696,7 @@ func validateOCIPrePullImage(enabled bool, index int, image *OCIPrePullImageConf
 		return nil
 	}
 	trimmedRef := imageutil.TrimOCIScheme(ref)
-	if _, err := name.ParseReference(trimmedRef, name.StrictValidation); err != nil {
+	if _, err := ociname.ParseReference(trimmedRef, ociname.StrictValidation); err != nil {
 		redactedRef := imageutil.RedactOCIRef(trimmedRef)
 		redactedErr := imageutil.RedactOCIRef(err.Error())
 		return []string{fmt.Sprintf("%s.reference: invalid OCI reference %q: %s", prefix, redactedRef, redactedErr)}
