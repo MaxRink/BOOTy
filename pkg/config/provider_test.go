@@ -41,6 +41,13 @@ func TestMachineConfigDefaults(t *testing.T) {
 	if DefaultCrashArtifactsUploadTimeoutSec != 120 {
 		t.Errorf("DefaultCrashArtifactsUploadTimeoutSec = %d, want 120", DefaultCrashArtifactsUploadTimeoutSec)
 	}
+	prePulls := cfg.Provision.OCIPrePulls.WithDefaults()
+	if prePulls.CacheDir != DefaultOCIPrePullCacheDir {
+		t.Errorf("OCIPrePulls.CacheDir = %q, want %q", prePulls.CacheDir, DefaultOCIPrePullCacheDir)
+	}
+	if prePulls.ImportNamespace != DefaultOCIPrePullImportNamespace {
+		t.Errorf("OCIPrePulls.ImportNamespace = %q, want %q", prePulls.ImportNamespace, DefaultOCIPrePullImportNamespace)
+	}
 }
 
 func TestParsePartitionLayoutRootInLVM(t *testing.T) {
@@ -471,6 +478,25 @@ func TestValidate(t *testing.T) {
 		{name: "enabled sysext rejects empty oci digest source", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Enabled: true, Layers: []SysextLayerConfig{{Name: "debug", Source: "oci://registry.example.invalid/tcaas/debug@sha256:"}}}}}, wantErr: "sha256: required"},
 		{name: "enabled sysext accepts oci digest source without sha256", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Enabled: true, Layers: []SysextLayerConfig{{Name: "debug", Source: "oci://registry.example.invalid/tcaas/debug@sha256:" + strings.Repeat("a", 64)}}}}}},
 		{name: "enabled sysext accepts uppercase oci digest source without sha256", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{Enabled: true, Layers: []SysextLayerConfig{{Name: "debug", Source: "OCI://registry.example.invalid/tcaas/debug@sha256:" + strings.Repeat("a", 64)}}}}}},
+		{name: "valid oci prepull config", cfg: Config{Provision: ProvisionConfig{OCIPrePulls: OCIPrePullConfig{Enabled: true, Images: []OCIPrePullImageConfig{{Reference: "oci://registry.example.invalid/team/app:v1"}}}}}},
+		{name: "normalizes oci prepull strings", cfg: Config{Provision: ProvisionConfig{OCIPrePulls: OCIPrePullConfig{Enabled: true, CacheDir: " /var/lib/booty/cache ", ImportNamespace: " k8s.io ", Images: []OCIPrePullImageConfig{{Reference: " oci://registry.example.invalid/team/app:v1 "}}}}}, wantNormalized: func(t *testing.T, cfg *Config) {
+			t.Helper()
+			if cfg.Provision.OCIPrePulls.CacheDir != "/var/lib/booty/cache" {
+				t.Fatalf("CacheDir = %q", cfg.Provision.OCIPrePulls.CacheDir)
+			}
+			if cfg.Provision.OCIPrePulls.ImportNamespace != "k8s.io" {
+				t.Fatalf("ImportNamespace = %q", cfg.Provision.OCIPrePulls.ImportNamespace)
+			}
+			if cfg.Provision.OCIPrePulls.Images[0].Reference != "oci://registry.example.invalid/team/app:v1" {
+				t.Fatalf("Reference = %q", cfg.Provision.OCIPrePulls.Images[0].Reference)
+			}
+		}},
+		{name: "enabled oci prepull requires images", cfg: Config{Provision: ProvisionConfig{OCIPrePulls: OCIPrePullConfig{Enabled: true}}}, wantErr: "provision.ociPrePulls.images is required"},
+		{name: "enabled oci prepull image requires reference", cfg: Config{Provision: ProvisionConfig{OCIPrePulls: OCIPrePullConfig{Enabled: true, Images: []OCIPrePullImageConfig{{}}}}}, wantErr: "reference is required"},
+		{name: "oci prepull rejects invalid cache dir", cfg: Config{Provision: ProvisionConfig{OCIPrePulls: OCIPrePullConfig{CacheDir: "var/lib/booty"}}}, wantErr: "provision.ociPrePulls.cacheDir"},
+		{name: "oci prepull rejects whitespace cache dir", cfg: Config{Provision: ProvisionConfig{OCIPrePulls: OCIPrePullConfig{CacheDir: "/var/lib/booty/oci pre pulls"}}}, wantErr: "must not contain whitespace"},
+		{name: "oci prepull rejects invalid namespace", cfg: Config{Provision: ProvisionConfig{OCIPrePulls: OCIPrePullConfig{ImportNamespace: "k8s/io"}}}, wantErr: "provision.ociPrePulls.importNamespace"},
+		{name: "oci prepull rejects malformed reference", cfg: Config{Provision: ProvisionConfig{OCIPrePulls: OCIPrePullConfig{Images: []OCIPrePullImageConfig{{Reference: "oci://registry.example.invalid/%zz"}}}}}, wantErr: "invalid OCI reference"},
 		{name: "valid token algorithm", cfg: Config{Transport: TransportConfig{TokenAlgorithm: "ES256"}}},
 		{name: "invalid token algorithm", cfg: Config{Transport: TransportConfig{TokenAlgorithm: "HS256"}}, wantErr: "invalid transport.tokenAlgorithm"},
 		{

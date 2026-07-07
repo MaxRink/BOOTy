@@ -1355,6 +1355,41 @@ SYSEXT_LAYERS='[{"name":"node-tuning","version":"v1","source":"https://example.i
 	}
 }
 
+func TestParseVarsOCIPrePullConfig(t *testing.T) {
+	input := `OCI_PREPULL_ENABLED="true"
+OCI_PREPULL_IMAGES="oci://registry.example.invalid/tcaas/pause:v1,registry.example.invalid/tcaas/cni:v2"
+OCI_PREPULL_CACHE_DIR="/var/lib/booty/prepulls"
+OCI_PREPULL_IMPORT_NAMESPACE="k8s.io"
+OCI_PREPULL_ALLOW_INSECURE="true"
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	prePulls := cfg.Provision.OCIPrePulls
+	if !prePulls.Enabled {
+		t.Fatal("OCIPrePulls.Enabled should be true")
+	}
+	if len(prePulls.Images) != 2 {
+		t.Fatalf("OCIPrePulls.Images len = %d, want 2", len(prePulls.Images))
+	}
+	if prePulls.Images[0].Reference != "oci://registry.example.invalid/tcaas/pause:v1" {
+		t.Fatalf("first reference = %q", prePulls.Images[0].Reference)
+	}
+	if prePulls.Images[1].Reference != "registry.example.invalid/tcaas/cni:v2" {
+		t.Fatalf("second reference = %q", prePulls.Images[1].Reference)
+	}
+	if prePulls.CacheDir != "/var/lib/booty/prepulls" {
+		t.Fatalf("CacheDir = %q", prePulls.CacheDir)
+	}
+	if prePulls.ImportNamespace != "k8s.io" {
+		t.Fatalf("ImportNamespace = %q", prePulls.ImportNamespace)
+	}
+	if !prePulls.AllowInsecure {
+		t.Fatal("OCIPrePulls.AllowInsecure should be true")
+	}
+}
+
 func TestParseVarsSysextConfigGoQuotedJSON(t *testing.T) {
 	layersJSON := `[
 		{"name":"node-tuning","version":"v1","source":"oci://registry.example.com/tcaas/sysext-node-tuning:v1","fileName":"node-tuning.raw","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","mode":"preload"}

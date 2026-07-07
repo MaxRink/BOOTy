@@ -60,7 +60,7 @@ CAPRF-compatible `/deploy/vars` file.
 - **Filesystem support** — ext2, ext3, ext4, xfs, btrfs mount/resize; vfat mount/format for EFI system partitions
 - **LLDP discovery** — Raw AF_PACKET-based LLDP listener for switch topology discovery
 - **Post-provision hooks** — Execute arbitrary commands in chroot after OS configuration
-- **43-step provisioning pipeline** — provisioning input validation, RAID cleanup, NVMe namespace setup, RAID array setup, disk detection, partition layout, image streaming, shared data mounting, partition growth, LVM, filesystem resize, optional sysext loading, OS configuration, EFI fallback installation, final Secure Boot chain verification, cloud-init injection, EFI boot, Mellanox SR-IOV, post-provision hooks
+- **44-step provisioning pipeline** — provisioning input validation, RAID cleanup, NVMe namespace setup, RAID array setup, disk detection, partition layout, image streaming, shared data mounting, partition growth, LVM, filesystem resize, optional sysext loading, OCI image pre-pulls, OS configuration, EFI fallback installation, final Secure Boot chain verification, cloud-init injection, EFI boot, Mellanox SR-IOV, post-provision hooks
 - **systemd-sysext provisioning** — Optional digest-checked sysext preload or active loading into the provisioned OS image
 - **Kexec support** — Fast reboot into installed kernel without full BIOS POST (auto-disabled after firmware changes)
 - **Remote logging** — Real-time log and debug shipping to CAPRF controller
@@ -350,6 +350,11 @@ root is mounted.
 | `IMAGE_MODE` | `whole-disk` | Image write mode: `whole-disk`, `partition`, or `ab`; with a declarative partition layout, `whole-disk` streams the selected root filesystem into the declared root partition |
 | `IMAGE_SOURCE_ROOT_LABEL` | — | Source-image GPT partition label to stream into a declarative partition layout root |
 | `IMAGE_SOURCE_ROOT_PARTITION` | — | 1-based source-image partition number for declarative partition layout root streaming |
+| `OCI_PREPULL_ENABLED` | `false` | Pull configured OCI images during provisioning and install a first-boot runtime importer |
+| `OCI_PREPULL_IMAGES` | — | Comma- or space-separated OCI image references to cache for first boot; `oci://` prefixes are accepted |
+| `OCI_PREPULL_CACHE_DIR` | `/var/lib/booty/oci-prepulls` | Target-root directory for cached image archives, catalog, import list, and import state |
+| `OCI_PREPULL_IMPORT_NAMESPACE` | `k8s.io` | containerd/nerdctl namespace used by the first-boot importer |
+| `OCI_PREPULL_ALLOW_INSECURE` | `false` | Allow insecure HTTP registry access for controlled local or air-gapped labs |
 | `AB_SCHEME` | `dual-root` | A/B partitioning scheme for `IMAGE_MODE=ab` |
 | `AB_ACTIVE_SLOT` | — | Currently booted A/B slot, `a` or `b` |
 | `AB_TARGET_SLOT` | `inactive` | A/B slot to write: `inactive`, `a`, or `b` |
@@ -612,6 +617,61 @@ For OCI image sources, use digest-pinned references such as
 `oci://registry.example/os-image@sha256:<digest>` and keep `IMAGE_CHECKSUM`
 enabled when the source is not pinned by digest. Runtime Cosign or Notation
 verification for provisioning `oci://` images is not implemented yet.
+
+### OCI Image Pre-Pulls
+
+BOOTy can cache workload/runtime OCI images into the provisioned target root
+during provisioning. This is opt-in and separate from the provisioning
+`IMAGE`, which still describes the OS image to write to disk.
+
+```yaml
+provision:
+  targetOS: linux
+  ociPrePulls:
+    enabled: true
+    cacheDir: /var/lib/booty/oci-prepulls
+    importNamespace: k8s.io
+    images:
+      - reference: oci://registry.example.com/platform/pause@sha256:<digest>
+      - reference: registry.example.com/platform/cni:v1.5.0
+```
+
+Equivalent `/deploy/vars`:
+
+```bash
+export OCI_PREPULL_ENABLED=true
+export OCI_PREPULL_IMAGES="oci://registry.example.com/platform/pause@sha256:<digest>,registry.example.com/platform/cni:v1.5.0"
+export OCI_PREPULL_IMPORT_NAMESPACE="k8s.io"
+```
+
+During provisioning BOOTy pulls each configured image with the default Docker
+keychain, writes a deterministic Docker-compatible archive below
+`OCI_PREPULL_CACHE_DIR/archives`, and records `catalog.json` plus
+`import-list.tsv` in the same cache directory. BOOTy does not import directly
+into containerd from the initramfs because the target runtime daemon and target
+root service state are not guaranteed to be available or safe to mutate there.
+
+Instead, BOOTy installs and enables
+`booty-oci-prepull-import.service` in the target root. On first boot the unit
+runs before kubelet and attempts import with available runtime tools in this
+order until one succeeds: `ctr`, `nerdctl`, `podman`, then `docker`. For containerd and
+nerdctl it imports into `OCI_PREPULL_IMPORT_NAMESPACE` (`k8s.io` by default).
+Successful imports are marked under `OCI_PREPULL_CACHE_DIR/imported`.
+
+Migration notes:
+- Replace ad-hoc `POST_PROVISION_CMDS` runtime pulls with `OCI_PREPULL_IMAGES`
+  when the image can be fetched during BOOTy provisioning.
+- Prefer digest-pinned references. Mutable tags are resolved during
+  provisioning and the resolved digest is written to the catalog, but BOOTy does
+  not perform Cosign or Notation verification for these cached runtime images.
+- Registry credentials must be available to BOOTy during provisioning, for
+  example via the default Docker credential config included in provisioner
+  files. Do not place registry passwords in image references or logs.
+- `OCI_PREPULL_ALLOW_INSECURE=true` is for controlled lab registries only; use
+  TLS registries in production.
+- The first-boot import requires one supported runtime CLI in the target OS. If
+  none is present, the systemd unit fails and can be retried after installing a
+  supported runtime.
 
 ### Release Artifact Verification
 
@@ -1168,7 +1228,7 @@ and the PR process.
 │   │   ├── persist/           # Persist network config into target OS (netplan, NM, systemd-networkd)
 │   │   ├── vrf/               # VRF configuration and validation
 │   │   └── vlan/              # VLAN 802.1Q tagging via netlink
-│   ├── provision/              # Orchestrator (43-step provision, deprovision)
+│   ├── provision/              # Orchestrator (44-step provision, deprovision)
 │   │   └── configurator.go    # OS config: hostname, kubelet, GRUB, DNS, EFI, Mellanox SR-IOV
 │   ├── realm/                  # Device, mount, network, shell operations
 │   ├── rescue/                 # Rescue mode behavior and retry policy

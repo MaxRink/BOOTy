@@ -225,8 +225,29 @@ func TestProvisionStepCount(t *testing.T) {
 
 	// Use the shared provisionSteps() method from orchestrator.go.
 	steps := o.provisionSteps()
-	if len(steps) != 43 {
-		t.Fatalf("expected 43 provisioning steps, got %d", len(steps))
+	if len(steps) != 44 {
+		t.Fatalf("expected 44 provisioning steps, got %d", len(steps))
+	}
+}
+
+func TestProvisionStepsPrepareOCIPrePullsAfterResizeBeforeBootConfig(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	steps := o.provisionSteps()
+
+	resizeIdx := requireStepIndex(t, steps, "resize-filesystem")
+	prePullIdx := requireStepIndex(t, steps, "prepare-oci-prepulls")
+	grubIdx := requireStepIndex(t, steps, "configure-grub")
+	successIdx := requireStepIndex(t, steps, "report-success")
+
+	if resizeIdx >= prePullIdx {
+		t.Fatalf("prepare-oci-prepulls index %d must be after resize-filesystem index %d", prePullIdx, resizeIdx)
+	}
+	if prePullIdx >= grubIdx {
+		t.Fatalf("prepare-oci-prepulls index %d must be before configure-grub index %d", prePullIdx, grubIdx)
+	}
+	if prePullIdx >= successIdx {
+		t.Fatalf("prepare-oci-prepulls index %d must be before report-success index %d", prePullIdx, successIdx)
 	}
 }
 

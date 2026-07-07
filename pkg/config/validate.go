@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/google/go-containerregistry/pkg/name"
 	imageutil "github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/network"
 )
@@ -23,6 +24,7 @@ import (
 //   - Provision.Image.Mode: "whole-disk", "partition", "ab"
 //   - Provision.Image.ChecksumType: "sha256", "sha512"
 //   - Provision.CloudInit.Datasource: "nocloud", "configdrive"
+//   - Provision.OCIPrePulls: valid cache path, import namespace, and image refs
 //   - Provision.ProviderID: no whitespace or control characters
 //   - Provision.FailureDomain and Provision.Region: valid Kubernetes label values
 //   - Provision.Disk.RAID[*]: valid level, unique non-empty name without /dev/ prefix,
@@ -72,6 +74,9 @@ func (c *Config) Validate() error {
 		}
 	}
 	if err := validateSysextConfig(&c.Provision.Sysext); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := validateOCIPrePullConfig(&c.Provision.OCIPrePulls); err != nil {
 		errs = append(errs, err.Error())
 	}
 	if err := validateImageSourceRootSelectors(&c.Provision.Image); err != nil {
@@ -258,6 +263,15 @@ func (c *Config) normalize() {
 	}
 	c.Provision.Disk.RootPartitionLabel = strings.TrimSpace(c.Provision.Disk.RootPartitionLabel)
 	c.Provision.AB.DataPartitions = normalizeABDataPartitions(c.Provision.AB.DataPartitions)
+	c.normalizeOCIPrePulls()
+}
+
+func (c *Config) normalizeOCIPrePulls() {
+	c.Provision.OCIPrePulls.CacheDir = strings.TrimSpace(c.Provision.OCIPrePulls.CacheDir)
+	c.Provision.OCIPrePulls.ImportNamespace = strings.TrimSpace(c.Provision.OCIPrePulls.ImportNamespace)
+	for i := range c.Provision.OCIPrePulls.Images {
+		c.Provision.OCIPrePulls.Images[i].Reference = strings.TrimSpace(c.Provision.OCIPrePulls.Images[i].Reference)
+	}
 }
 
 func validateDiskRootSelectors(cfg *DiskConfig) error {
@@ -614,6 +628,72 @@ func validateSysextConfig(cfg *SysextConfig) error {
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+func validateOCIPrePullConfig(cfg *OCIPrePullConfig) error {
+	withDefaults := cfg.WithDefaults()
+	var errs []string
+
+	if err := validateOCIPrePullCacheDir(withDefaults.CacheDir); err != nil {
+		errs = append(errs, fmt.Sprintf("provision.ociPrePulls.cacheDir: %v", err))
+	}
+	if err := validateOCIPrePullNamespace(withDefaults.ImportNamespace); err != nil {
+		errs = append(errs, fmt.Sprintf("provision.ociPrePulls.importNamespace: %v", err))
+	}
+	if cfg.Enabled && len(cfg.Images) == 0 {
+		errs = append(errs, "provision.ociPrePulls.images is required when provision.ociPrePulls.enabled is true")
+	}
+	for i := range cfg.Images {
+		errs = append(errs, validateOCIPrePullImage(cfg.Enabled, i, &cfg.Images[i])...)
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+func validateOCIPrePullCacheDir(cacheDir string) error {
+	if err := validateSysextTargetDir(cacheDir); err != nil {
+		return err
+	}
+	for _, r := range strings.TrimSpace(cacheDir) {
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
+			return fmt.Errorf("must not contain whitespace or control characters")
+		}
+	}
+	return nil
+}
+
+func validateOCIPrePullNamespace(namespace string) error {
+	namespace = strings.TrimSpace(namespace)
+	if namespace == "" {
+		return fmt.Errorf("must not be empty")
+	}
+	for _, r := range namespace {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			continue
+		}
+		return fmt.Errorf("must contain only letters, digits, dots, underscores, or dashes")
+	}
+	return nil
+}
+
+func validateOCIPrePullImage(enabled bool, index int, image *OCIPrePullImageConfig) []string {
+	prefix := fmt.Sprintf("provision.ociPrePulls.images[%d]", index)
+	ref := strings.TrimSpace(image.Reference)
+	if enabled && ref == "" {
+		return []string{prefix + ".reference is required when provision.ociPrePulls.enabled is true"}
+	}
+	if ref == "" {
+		return nil
+	}
+	trimmedRef := imageutil.TrimOCIScheme(ref)
+	if _, err := name.ParseReference(trimmedRef, name.StrictValidation); err != nil {
+		redactedRef := imageutil.RedactOCIRef(trimmedRef)
+		redactedErr := imageutil.RedactOCIRef(err.Error())
+		return []string{fmt.Sprintf("%s.reference: invalid OCI reference %q: %s", prefix, redactedRef, redactedErr)}
 	}
 	return nil
 }

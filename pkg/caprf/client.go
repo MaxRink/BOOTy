@@ -985,6 +985,9 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 	if applySecureBootDigestVar(cfg, key, value) {
 		return true
 	}
+	if applyOCIPrePullStringVar(cfg, key, value) {
+		return true
+	}
 
 	strFields := map[string]*string{
 		"HOSTNAME":                    &cfg.Hostname,
@@ -1048,6 +1051,18 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		return true
 	}
 	return false
+}
+
+func applyOCIPrePullStringVar(cfg *config.MachineConfig, key, value string) bool {
+	switch key {
+	case "OCI_PREPULL_CACHE_DIR":
+		cfg.Provision.OCIPrePulls.CacheDir = value
+	case "OCI_PREPULL_IMPORT_NAMESPACE":
+		cfg.Provision.OCIPrePulls.ImportNamespace = value
+	default:
+		return false
+	}
+	return true
 }
 
 func applySecureBootDigestVar(cfg *config.MachineConfig, key, value string) bool {
@@ -1140,6 +1155,8 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) error {
 	switch key {
 	case "IMAGE":
 		cfg.Provision.Image.URLs = strings.Fields(strings.ReplaceAll(value, ",", " "))
+	case "OCI_PREPULL_IMAGES":
+		cfg.Provision.OCIPrePulls.Images = parseOCIPrePullImages(value)
 	case "POST_PROVISION_CMDS":
 		cfg.Provision.PostProvisionCmds = strings.Split(value, ";")
 	case "PARTITION_LAYOUT":
@@ -1291,12 +1308,25 @@ func applyCoreBoolVar(cfg *config.MachineConfig, key, value string) bool {
 		cfg.Provision.Sysext.Enabled = parseBoolVar(value)
 	case "SYSEXT_ALLOW_INSECURE_HTTP":
 		cfg.Provision.Sysext.AllowInsecureHTTP = parseBoolVar(value)
+	case "OCI_PREPULL_ENABLED":
+		cfg.Provision.OCIPrePulls.Enabled = parseBoolVar(value)
+	case "OCI_PREPULL_ALLOW_INSECURE":
+		cfg.Provision.OCIPrePulls.AllowInsecure = parseBoolVar(value)
 	case "AB_PRESERVE_EXISTING":
 		cfg.Provision.AB.PreserveExisting = parseBoolVar(value)
 	default:
 		return false
 	}
 	return true
+}
+
+func parseOCIPrePullImages(value string) []config.OCIPrePullImageConfig {
+	refs := strings.Fields(strings.ReplaceAll(value, ",", " "))
+	images := make([]config.OCIPrePullImageConfig, 0, len(refs))
+	for _, ref := range refs {
+		images = append(images, config.OCIPrePullImageConfig{Reference: ref})
+	}
+	return images
 }
 
 func applyProvisionImageBoolVar(cfg *config.MachineConfig, key, value string) bool {

@@ -16,7 +16,7 @@ hardware or corrupt disks.
 - **Wrong disk target**: any code that writes to a disk device without first
   verifying it matches the expected target — writing to the wrong disk
   destroys data permanently
-- **Step ordering violation**: provisioning steps have a defined order (42
+- **Step ordering violation**: provisioning steps have a defined order (44
   steps) — adding or reordering steps without updating the orchestrator can
   leave disks in an inconsistent state
 - **Missing error propagation**: a failed disk or image operation that is

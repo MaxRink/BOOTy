@@ -148,6 +148,7 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"grow-partition", o.growPartition},
 		{"resize-filesystem", o.resizeFilesystem},
 		{"configure-kubelet", o.configureKubelet},
+		{"prepare-oci-prepulls", o.prepareOCIPrePulls},
 		{"configure-grub", o.configureGRUB},
 		{"install-efi-fallback", o.installEFIFallbackLoader},
 		// Validate the final installed boot artifacts after BOOTy has applied
@@ -2645,6 +2646,10 @@ func (o *Orchestrator) runPostProvisionCmds(ctx context.Context) error {
 		return nil
 	}
 	return o.config.RunPostProvisionCmds(ctx, o.cfg.Provision.PostProvisionCmds)
+}
+
+func (o *Orchestrator) prepareOCIPrePulls(ctx context.Context) error {
+	return o.config.PrepareOCIPrePulls(ctx, &o.cfg.Provision.OCIPrePulls)
 }
 
 func (o *Orchestrator) teardownChroot(_ context.Context) error {
