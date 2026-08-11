@@ -776,6 +776,41 @@ func TestProcessRouteUpdateType5RouterMACNeighbor(t *testing.T) {
 		assertType5GatewayDelete(t, mock.dels, 0, "192.168.4.1", "62:db:b8:c1:80:52")
 	})
 
+	t.Run("withdraw without next-hop uses stored gateway ref", func(t *testing.T) {
+		directNLRI, err := anypb.New(&apipb.EVPNIPPrefixRoute{
+			IpPrefix:    "10.100.0.0",
+			IpPrefixLen: 24,
+			GwAddress:   type5DirectGateway,
+		})
+		if err != nil {
+			t.Fatalf("marshal direct type-5 NLRI: %v", err)
+		}
+
+		mock := &mockOverlayNetlinkOps{}
+		overlay := newOverlay(mock)
+		installPath := &apipb.Path{Nlri: directNLRI, Pattrs: []*anypb.Any{mp, extComm}}
+		// MP_UNREACH withdrawals do not carry MP_REACH next-hop information.
+		withdrawPath := &apipb.Path{
+			IsWithdraw: true,
+			Nlri:       directNLRI,
+			Pattrs:     []*anypb.Any{extComm},
+		}
+
+		overlay.processRouteUpdate(installPath)
+		overlay.processRouteUpdate(withdrawPath)
+
+		if len(mock.routeDels) != 1 {
+			t.Fatalf("expected 1 route delete, got %d", len(mock.routeDels))
+		}
+		if got := mock.routeDels[0].Gw.String(); got != "192.168.4.1" {
+			t.Fatalf("withdraw route delete gateway = %s, want 192.168.4.1", got)
+		}
+		if len(mock.dels) != 2 {
+			t.Fatalf("expected gateway neighbor and FDB delete, got %d deletes", len(mock.dels))
+		}
+		assertType5GatewayDelete(t, mock.dels, 0, "192.168.4.1", "62:db:b8:c1:80:52")
+	})
+
 	t.Run("invalid router MAC still installs route without neighbor", func(t *testing.T) {
 		badExtComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
 			Communities: []*anypb.Any{

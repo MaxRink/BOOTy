@@ -787,10 +787,14 @@ func (o *OverlayTier) handleType5RouteWithRouterMACState(
 
 	// Resolve the gateway: prefer the NLRI's GwAddress, fall back to next-hop.
 	gwStr := route.GetGwAddress()
-	if gwStr == "" || gwStr == "0.0.0.0" {
+	if gwStr == "" || gwStr == type5DirectGateway {
 		gwStr = vtep
 	}
 	gw := net.ParseIP(gwStr)
+	vtepIP := net.ParseIP(vtep)
+	if withdraw {
+		gw, vtepIP = o.resolveType5WithdrawGatewayRef(dst.String(), gw, vtepIP)
+	}
 	if gw == nil {
 		o.log.Debug("type-5 route with no valid gateway", "prefix", dst, "gw", gwStr)
 		return
@@ -810,7 +814,7 @@ func (o *OverlayTier) handleType5RouteWithRouterMACState(
 			return
 		}
 		o.log.Info("removed route from type-5 withdraw", "dst", dst, "gw", gw)
-		o.deleteType5GatewayNeighbor(link, dst.String(), gw, net.ParseIP(vtep), routerMAC)
+		o.deleteType5GatewayNeighbor(link, dst.String(), gw, vtepIP, routerMAC)
 		return
 	}
 
@@ -819,15 +823,32 @@ func (o *OverlayTier) handleType5RouteWithRouterMACState(
 	} else {
 		o.log.Info("installed route from type-5", "dst", dst, "gw", gw)
 		if !routerMACValid {
-			o.updateType5GatewayRefWithoutRouterMAC(link, dst.String(), gw, net.ParseIP(vtep))
+			o.updateType5GatewayRefWithoutRouterMAC(link, dst.String(), gw, vtepIP)
 			return
 		}
 		if len(routerMAC) == 0 {
 			o.clearType5GatewayNeighbor(link, dst.String())
 			return
 		}
-		o.setType5GatewayNeighbor(link, dst.String(), gw, net.ParseIP(vtep), routerMAC)
+		o.setType5GatewayNeighbor(link, dst.String(), gw, vtepIP, routerMAC)
 	}
+}
+
+func (o *OverlayTier) resolveType5WithdrawGatewayRef(prefix string, gw, vtep net.IP) (net.IP, net.IP) {
+	if gw != nil && vtep != nil {
+		return gw, vtep
+	}
+	ref, ok := o.loadType5GatewayRef(prefix)
+	if !ok {
+		return gw, vtep
+	}
+	if gw == nil {
+		gw = net.ParseIP(ref.gateway)
+	}
+	if vtep == nil {
+		vtep = net.ParseIP(ref.vtep)
+	}
+	return gw, vtep
 }
 
 func (o *OverlayTier) setType5GatewayNeighbor(
