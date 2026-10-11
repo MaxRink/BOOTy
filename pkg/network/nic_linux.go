@@ -120,7 +120,9 @@ func detectNICsOnce() (nics []string, hasTemp bool, err error) {
 
 	for _, link := range links {
 		name := link.Attrs().Name
-		if isExcluded(name) {
+		// A VRF device has a MAC and any name (for example Vrf_underlay
+		// from netplan), but it is never a NIC.
+		if isExcluded(name) || link.Type() == "vrf" {
 			continue
 		}
 		if len(link.Attrs().HardwareAddr) == 0 {

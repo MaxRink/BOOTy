@@ -446,3 +446,23 @@ func Test_DetectPhysicalNICs_linkListError(t *testing.T) {
 		t.Fatal("expected error from linkList failure")
 	}
 }
+
+func Test_detectNICsOnce_skipsVRF(t *testing.T) {
+	restore := snapshotNICFns()
+	defer restore()
+
+	linkList = func() ([]netlink.Link, error) {
+		return []netlink.Link{
+			fakeLink("eth0", testMAC),
+			&netlink.Vrf{LinkAttrs: netlink.LinkAttrs{Name: "Vrf_underlay", HardwareAddr: testMAC}, Table: 10},
+		}, nil
+	}
+
+	nics, _, err := detectNICsOnce()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(nics) != 1 || nics[0] != "eth0" {
+		t.Fatalf("expected [eth0], got %v", nics)
+	}
+}
