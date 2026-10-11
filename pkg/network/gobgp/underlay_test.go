@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestWaitForNICsContextCancelled(t *testing.T) {
@@ -37,5 +38,19 @@ func TestDiscoverLinkLocalPeerContextCancelled(t *testing.T) {
 	_, err := discoverLinkLocalPeer(ctx, "eth-test0")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("discoverLinkLocalPeer error = %v, want context.Canceled", err)
+	}
+}
+
+func TestTeardownStopsPeriodicRA(t *testing.T) {
+	u := NewUnderlayTier(&Config{})
+	u.startPeriodicRA()
+	if err := u.Teardown(context.Background()); err != nil {
+		t.Fatalf("Teardown() error = %v", err)
+	}
+
+	select {
+	case <-u.raDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("periodic RA goroutine still running after Teardown")
 	}
 }

@@ -66,6 +66,7 @@ type UnderlayTier struct {
 	nics         []string
 	log          *slog.Logger
 	stopRA       chan struct{}                 // signals the periodic RA goroutine to stop
+	raDone       chan struct{}                 // closed when the periodic RA goroutine exits
 	peerCountFn  func(ctx context.Context) int // overridable in tests; nil = use countEstablishedPeers
 	pollInterval time.Duration                 // overridable in tests; zero = use default (1s)
 }
@@ -147,8 +148,7 @@ func (u *UnderlayTier) Setup(ctx context.Context) error {
 	// Start periodic Router Advertisements so FRR's zebra continuously
 	// knows our link-local addresses for BGP unnumbered peering.
 	if u.cfg.PeerMode != network.PeerModeNumbered && len(u.nics) > 0 {
-		u.stopRA = make(chan struct{})
-		go u.sendPeriodicRA()
+		u.startPeriodicRA()
 	}
 
 	return nil
@@ -662,11 +662,22 @@ func sendRouterAdvertisement(iface string) {
 	_, _ = conn.WriteTo(ra, dst)
 }
 
+// startPeriodicRA starts the RA goroutine. The goroutine gets the stop
+// channel as an argument, because Teardown clears the field after closing it.
+func (u *UnderlayTier) startPeriodicRA() {
+	u.stopRA = make(chan struct{})
+	u.raDone = make(chan struct{})
+	go func(stop <-chan struct{}, done chan<- struct{}) {
+		defer close(done)
+		u.sendPeriodicRA(stop)
+	}(u.stopRA, u.raDone)
+}
+
 // sendPeriodicRA sends Router Advertisements on all NICs every 10 seconds
 // until the stop channel is closed. This keeps FRR's zebra informed about
 // our link-local addresses so BGP unnumbered sessions can establish and
 // remain active.
-func (u *UnderlayTier) sendPeriodicRA() {
+func (u *UnderlayTier) sendPeriodicRA(stop <-chan struct{}) {
 	// Send an initial burst so FRR learns us quickly.
 	for _, nic := range u.nics {
 		sendRouterAdvertisement(nic)
@@ -677,7 +688,7 @@ func (u *UnderlayTier) sendPeriodicRA() {
 
 	for {
 		select {
-		case <-u.stopRA:
+		case <-stop:
 			return
 		case <-ticker.C:
 			for _, nic := range u.nics {
