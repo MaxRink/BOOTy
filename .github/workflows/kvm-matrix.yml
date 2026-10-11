@@ -104,6 +104,12 @@ jobs:
             test_tag: e2e
             test_regex: TestKexecSmokeQEMU
             setup: ""
+          - scenario: kexec-persist
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestKexecHandoffPersistsTargetWritesQEMU$"
+            privileged: true
+            setup: ""
           - scenario: ab-sysext-preload
             qemu_extra: ""
             test_tag: e2e
