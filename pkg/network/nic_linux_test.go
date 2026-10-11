@@ -168,7 +168,7 @@ func Test_detectNICsOnce_propagatesLinkListError(t *testing.T) {
 // GetIPMIInfo
 // ---------------------------------------------------------------------------
 
-func Test_GetIPMIInfo_returnsFirstSuitableInterface(t *testing.T) {
+func Test_GetIPMIInfo_returnsInterfaceInIPMISubnet(t *testing.T) {
 	restore := snapshotNICFns()
 	defer restore()
 
@@ -191,7 +191,7 @@ func Test_GetIPMIInfo_returnsFirstSuitableInterface(t *testing.T) {
 		}, nil
 	}
 
-	gotMAC, gotIP, err := GetIPMIInfo()
+	gotMAC, gotIP, err := GetIPMIInfo("10.0.0.0/24")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -231,7 +231,7 @@ func Test_GetIPMIInfo_skipsLoopback(t *testing.T) {
 		return nil, nil
 	}
 
-	_, gotIP, err := GetIPMIInfo()
+	_, gotIP, err := GetIPMIInfo("192.168.1.0/24")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -260,7 +260,7 @@ func Test_GetIPMIInfo_skipsNoMAC(t *testing.T) {
 		}, nil
 	}
 
-	_, gotIP, err := GetIPMIInfo()
+	_, gotIP, err := GetIPMIInfo("172.16.0.0/16")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -282,9 +282,28 @@ func Test_GetIPMIInfo_noSuitableInterface(t *testing.T) {
 		return nil, nil
 	}
 
-	_, _, err := GetIPMIInfo()
+	_, _, err := GetIPMIInfo("")
 	if err == nil {
 		t.Fatal("expected error when no suitable interface found")
+	}
+}
+
+func Test_GetIPMIInfo_noIPMINICWithoutSubnet(t *testing.T) {
+	restore := snapshotNICFns()
+	defer restore()
+
+	listInterfaces = func() ([]net.Interface, error) {
+		return []net.Interface{{Name: "eth0", HardwareAddr: testMAC, Flags: net.FlagUp}}, nil
+	}
+	ifaceAddrs = func(_ net.Interface) ([]net.Addr, error) {
+		return []net.Addr{&net.IPNet{IP: net.ParseIP("172.20.20.2"), Mask: net.CIDRMask(24, 32)}}, nil
+	}
+
+	if mac, _, err := GetIPMIInfo(""); !errors.Is(err, ErrNoIPMIInterface) {
+		t.Fatalf("GetIPMIInfo() = %q, %v, want ErrNoIPMIInterface", mac, err)
+	}
+	if _, _, err := GetIPMIInfo("not-a-cidr"); err == nil || errors.Is(err, ErrNoIPMIInterface) {
+		t.Fatalf("err = %v for an invalid IPMI subnet, want a configuration error", err)
 	}
 }
 
@@ -296,7 +315,7 @@ func Test_GetIPMIInfo_listInterfacesError(t *testing.T) {
 		return nil, errors.New("permission denied")
 	}
 
-	_, _, err := GetIPMIInfo()
+	_, _, err := GetIPMIInfo("")
 	if err == nil {
 		t.Fatal("expected error from listInterfaces failure")
 	}

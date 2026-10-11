@@ -55,7 +55,7 @@ func TestSelectIPMIInterface_BMCNameWins(t *testing.T) {
 		"ipmi0": mockAddr(t, "192.168.2.1/24"),
 	}
 
-	got, err := selectIPMIInterfaceWith(ifaces, addrFor(addrs))
+	got, err := selectIPMIInterfaceWith(ifaces, addrFor(addrs), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestSelectIPMIInterface_BMCBeatsEth(t *testing.T) {
 		"bmc0": mockAddr(t, "10.0.0.2/24"),
 	}
 
-	got, err := selectIPMIInterfaceWith(ifaces, addrFor(addrs))
+	got, err := selectIPMIInterfaceWith(ifaces, addrFor(addrs), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -83,7 +83,9 @@ func TestSelectIPMIInterface_BMCBeatsEth(t *testing.T) {
 	}
 }
 
-func TestSelectIPMIInterface_FallbackToFirstWithWarning(t *testing.T) {
+// A NIC without a BMC name is not an IPMI NIC. Before, the first addressed
+// NIC was used, so a ContainerLab eth0 gave the EVPN router MAC.
+func TestSelectIPMIInterface_NoFallbackToDataNIC(t *testing.T) {
 	ifaces := []net.Interface{
 		makeIface(t, "eth0", "aa:bb:cc:dd:ee:01", net.FlagUp),
 	}
@@ -91,12 +93,32 @@ func TestSelectIPMIInterface_FallbackToFirstWithWarning(t *testing.T) {
 		"eth0": mockAddr(t, "10.0.0.1/24"),
 	}
 
-	got, err := selectIPMIInterfaceWith(ifaces, addrFor(addrs))
+	if _, err := selectIPMIInterfaceWith(ifaces, addrFor(addrs), nil); !errors.Is(err, ErrNoIPMIInterface) {
+		t.Fatalf("err = %v, want ErrNoIPMIInterface", err)
+	}
+	_, other, _ := net.ParseCIDR("172.30.0.0/24")
+	if _, err := selectIPMIInterfaceWith(ifaces, addrFor(addrs), other); !errors.Is(err, ErrNoIPMIInterface) {
+		t.Fatalf("err = %v for a NIC outside the IPMI subnet, want ErrNoIPMIInterface", err)
+	}
+}
+
+func TestSelectIPMIInterface_IPMISubnetMatch(t *testing.T) {
+	ifaces := []net.Interface{
+		makeIface(t, "eth0", "aa:bb:cc:dd:ee:01", net.FlagUp),
+		makeIface(t, "eth1", "aa:bb:cc:dd:ee:02", net.FlagUp),
+	}
+	addrs := map[string][]net.Addr{
+		"eth0": mockAddr(t, "10.0.0.1/24"),
+		"eth1": mockAddr(t, "172.30.0.5/24"),
+	}
+	_, ipmiNet, _ := net.ParseCIDR("172.30.0.0/24")
+
+	got, err := selectIPMIInterfaceWith(ifaces, addrFor(addrs), ipmiNet)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got.Name != "eth0" {
-		t.Errorf("got interface %q, want %q", got.Name, "eth0")
+	if got.Name != "eth1" {
+		t.Errorf("got interface %q, want %q", got.Name, "eth1")
 	}
 }
 
@@ -106,7 +128,7 @@ func TestSelectIPMIInterface_NoAddressesReturnsError(t *testing.T) {
 	}
 	addrs := map[string][]net.Addr{}
 
-	_, err := selectIPMIInterfaceWith(ifaces, addrFor(addrs))
+	_, err := selectIPMIInterfaceWith(ifaces, addrFor(addrs), nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -122,7 +144,7 @@ func TestSelectIPMIInterface_MgmtBeatsEth(t *testing.T) {
 		"mgmt0": mockAddr(t, "10.0.0.2/24"),
 	}
 
-	got, err := selectIPMIInterfaceWith(ifaces, addrFor(addrs))
+	got, err := selectIPMIInterfaceWith(ifaces, addrFor(addrs), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -139,7 +161,7 @@ func TestSelectIPMIInterface_CaseInsensitive(t *testing.T) {
 		"IPMI0": mockAddr(t, "192.168.0.1/24"),
 	}
 
-	got, err := selectIPMIInterfaceWith(ifaces, addrFor(addrs))
+	got, err := selectIPMIInterfaceWith(ifaces, addrFor(addrs), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -158,7 +180,7 @@ func TestSelectIPMIInterface_LoopbackExcluded(t *testing.T) {
 		"ipmi0": mockAddr(t, "192.168.1.1/24"),
 	}
 
-	got, err := selectIPMIInterfaceWith(ifaces, addrFor(addrs))
+	got, err := selectIPMIInterfaceWith(ifaces, addrFor(addrs), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

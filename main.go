@@ -1155,8 +1155,12 @@ func detectIPMI(netCfg *network.Config) {
 	if netCfg.IPMIMAC != "" && netCfg.IPMIIP != "" {
 		return
 	}
-	mac, ip, err := network.GetIPMIInfo()
+	mac, ip, err := network.GetIPMIInfo(netCfg.IPMISubnet)
 	if err != nil {
+		if errors.Is(err, network.ErrNoIPMIInterface) {
+			slog.Info("no IPMI interface found, using the underlay IP rules")
+			return
+		}
 		slog.Warn("failed to detect IPMI info", "error", err)
 		return
 	}

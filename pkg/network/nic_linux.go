@@ -4,6 +4,7 @@ package network
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -151,16 +152,23 @@ var bmcPrefixes = []string{"ipmi", "bmc", "idrac", "ilo", "imm"}
 // mgmtPrefixes are interface name prefixes that suggest a management NIC.
 var mgmtPrefixes = []string{"mgmt", "management"}
 
+// ErrNoIPMIInterface means that no NIC is an IPMI NIC. This is expected on
+// hosts where the BMC NIC is not visible to the host.
+var ErrNoIPMIInterface = errors.New("no IPMI interface found")
+
 // selectIPMIInterface picks the best interface for IPMI info from the provided list.
 // It applies a three-pass ranked selection:
 //  1. BMC-specific name prefixes (ipmi*, bmc*, idrac*, ilo*, imm*)
 //  2. Management name prefixes (mgmt*, management*)
-//  3. First non-loopback interface with a MAC and an IP (fallback, logs a warning)
-func selectIPMIInterface(ifaces []net.Interface) (*net.Interface, error) {
-	return selectIPMIInterfaceWith(ifaces, ifaceAddrs)
+//  3. First interface with an IPv4 address inside ipmiNet, when ipmiNet is set
+//
+// Any other NIC is not an IPMI interface. Then no IPMI info is found, and the
+// callers use the underlay IP rules like the legacy configure-frr.py script.
+func selectIPMIInterface(ifaces []net.Interface, ipmiNet *net.IPNet) (*net.Interface, error) {
+	return selectIPMIInterfaceWith(ifaces, ifaceAddrs, ipmiNet)
 }
 
-func selectIPMIInterfaceWith(ifaces []net.Interface, getAddrs func(net.Interface) ([]net.Addr, error)) (*net.Interface, error) {
+func selectIPMIInterfaceWith(ifaces []net.Interface, getAddrs func(net.Interface) ([]net.Addr, error), ipmiNet *net.IPNet) (*net.Interface, error) {
 	candidates := filterAddressed(ifaces, getAddrs)
 
 	for _, prefix := range bmcPrefixes {
@@ -175,18 +183,16 @@ func selectIPMIInterfaceWith(ifaces []net.Interface, getAddrs func(net.Interface
 		}
 	}
 
-	if len(candidates) > 0 {
-		// Fallback assumption: when no BMC/management-named interface is found,
-		// the first addressed NIC is assumed to be the IPMI interface. This may
-		// mis-select a data-plane NIC if the BMC NIC uses an unrecognized name.
-		// Operators should name the BMC interface with a bmc/ipmi/idrac/ilo/imm
-		// prefix to avoid relying on this heuristic.
-		slog.Warn("ipmi autodetection fell back to first available NIC; consider naming the BMC interface with a bmc/ipmi/idrac/ilo/imm prefix",
-			"interface", candidates[0].Name)
-		return &candidates[0], nil
+	if ipmiNet != nil {
+		for i := range candidates {
+			addrs, err := getAddrs(candidates[i])
+			if err == nil && ipv4In(addrs, ipmiNet) != nil {
+				return &candidates[i], nil
+			}
+		}
 	}
 
-	return nil, fmt.Errorf("no suitable interface found for IPMI info")
+	return nil, ErrNoIPMIInterface
 }
 
 func filterAddressed(ifaces []net.Interface, getAddrs func(net.Interface) ([]net.Addr, error)) []net.Interface {
@@ -204,34 +210,11 @@ func filterAddressed(ifaces []net.Interface, getAddrs func(net.Interface) ([]net
 				"interface", iface.Name, "error", err)
 			continue
 		}
-		if len(addrs) == 0 {
-			continue
-		}
-		if hasValidIP(addrs) {
+		if ipv4In(addrs, nil) != nil {
 			out = append(out, iface)
 		}
 	}
 	return out
-}
-
-// hasValidIP reports whether any address in addrs is a non-link-local,
-// non-loopback IPv4 address assigned via a *net.IPNet.
-func hasValidIP(addrs []net.Addr) bool {
-	for _, addr := range addrs {
-		ipNet, ok := addr.(*net.IPNet)
-		if !ok {
-			continue
-		}
-		ip := ipNet.IP.To4()
-		if ip == nil {
-			continue
-		}
-		if ip.IsLinkLocalUnicast() || ip.IsLoopback() {
-			continue
-		}
-		return true
-	}
-	return false
 }
 
 func firstWithPrefix(ifaces []net.Interface, prefix string) *net.Interface {
@@ -243,26 +226,9 @@ func firstWithPrefix(ifaces []net.Interface, prefix string) *net.Interface {
 	return nil
 }
 
-// GetIPMIInfo reads the IPMI MAC and IP from the system.
-func GetIPMIInfo() (mac, ip string, err error) {
-	ifaces, err := listInterfaces()
-	if err != nil {
-		return "", "", fmt.Errorf("list interfaces: %w", err)
-	}
-
-	iface, err := selectIPMIInterface(ifaces)
-	if err != nil {
-		return "", "", fmt.Errorf("select IPMI interface: %w", err)
-	}
-
-	addrs, err := ifaceAddrs(*iface)
-	if err != nil {
-		return "", "", fmt.Errorf("get addresses for %s: %w", iface.Name, err)
-	}
-	if len(addrs) == 0 {
-		return "", "", fmt.Errorf("no addresses on interface %s", iface.Name)
-	}
-
+// ipv4In returns the first usable IPv4 address in addrs. When subnet is set,
+// the address must be inside it.
+func ipv4In(addrs []net.Addr, subnet *net.IPNet) net.IP {
 	for _, addr := range addrs {
 		ipNet, ok := addr.(*net.IPNet)
 		if !ok {
@@ -272,8 +238,44 @@ func GetIPMIInfo() (mac, ip string, err error) {
 		if v4 == nil || v4.IsLinkLocalUnicast() || v4.IsLoopback() {
 			continue
 		}
-		return iface.HardwareAddr.String(), v4.String(), nil
+		if subnet == nil || subnet.Contains(v4) {
+			return v4
+		}
+	}
+	return nil
+}
+
+// GetIPMIInfo reads the IPMI MAC and IP from the system. ipmiSubnet is the
+// optional IPMI network. It is used to find an IPMI NIC without a BMC name,
+// and to prefer the address inside it.
+func GetIPMIInfo(ipmiSubnet string) (mac, ip string, err error) {
+	var ipmiNet *net.IPNet
+	if ipmiSubnet != "" {
+		if _, ipmiNet, err = net.ParseCIDR(ipmiSubnet); err != nil {
+			return "", "", fmt.Errorf("parse IPMI subnet: %w", err)
+		}
 	}
 
-	return "", "", fmt.Errorf("no valid IPv4 address on interface %s", iface.Name)
+	ifaces, err := listInterfaces()
+	if err != nil {
+		return "", "", fmt.Errorf("list interfaces: %w", err)
+	}
+
+	iface, err := selectIPMIInterface(ifaces, ipmiNet)
+	if err != nil {
+		return "", "", fmt.Errorf("select IPMI interface: %w", err)
+	}
+
+	addrs, err := ifaceAddrs(*iface)
+	if err != nil {
+		return "", "", fmt.Errorf("get addresses for %s: %w", iface.Name, err)
+	}
+	v4 := ipv4In(addrs, ipmiNet)
+	if v4 == nil {
+		v4 = ipv4In(addrs, nil)
+	}
+	if v4 == nil {
+		return "", "", fmt.Errorf("no valid IPv4 address on interface %s", iface.Name)
+	}
+	return iface.HardwareAddr.String(), v4.String(), nil
 }
