@@ -6,11 +6,14 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/gopacket/layers"
 )
 
 func TestDHCPMode_Setup(t *testing.T) {
@@ -162,5 +165,30 @@ func TestDHCPSetup_ContextCancelPropagates(t *testing.T) {
 
 	if elapsed > 700*time.Millisecond {
 		t.Fatalf("Setup took %v — context cancellation did not propagate promptly", elapsed)
+	}
+}
+
+func TestNewDHCPClientRequestsDefaultParams(t *testing.T) {
+	for _, hostname := range []string{"(none)", ""} {
+		client := newDHCPClient(&net.Interface{Name: "eth0"}, hostname, nil)
+
+		var params []byte
+		var gotHostname []byte
+		for _, opt := range client.DHCPOptions {
+			switch opt.Type {
+			case layers.DHCPOptParamsRequest:
+				params = opt.Data
+			case layers.DHCPOptHostname:
+				gotHostname = opt.Data
+			}
+		}
+		for _, want := range []layers.DHCPOpt{layers.DHCPOptSubnetMask, layers.DHCPOptRouter, layers.DHCPOptDNS} {
+			if !bytes.Contains(params, []byte{byte(want)}) {
+				t.Errorf("hostname %q: parameter request list %v misses %s", hostname, params, want)
+			}
+		}
+		if string(gotHostname) != hostname {
+			t.Errorf("hostname option = %q, want %q", gotHostname, hostname)
+		}
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/digineo/go-dhclient"
+	"github.com/google/gopacket/layers"
 	"github.com/vishvananda/netlink"
 )
 
@@ -103,15 +104,8 @@ func (d *DHCPMode) probeNIC(ctx context.Context, iface net.Interface, results ch
 	}
 
 	leased := make(chan struct{}, 1)
-	client := &dhclient.Client{
-		Iface:   &iface,
-		OnBound: d.onBound(link, iface.Name, leased, winner),
-	}
-
 	hostname, _ := os.Hostname()
-	if hostname != "" {
-		client.AddOption(0x0c, []byte(hostname)) // DHCPOptHostname
-	}
+	client := newDHCPClient(&iface, hostname, d.onBound(link, iface.Name, leased, winner))
 	client.Start()
 
 	timer := time.NewTimer(15 * time.Second)
@@ -127,6 +121,21 @@ func (d *DHCPMode) probeNIC(ctx context.Context, iface net.Interface, results ch
 		client.Stop()
 		d.log.Info("DHCP probe canceled", "interface", iface.Name, "error", ctx.Err())
 	}
+}
+
+// newDHCPClient builds a client that requests the default parameters
+// (subnet mask, router, DNS, MTU and more) and sends the hostname.
+// dhclient only adds the parameter request list when no option is set, so
+// adding the hostname alone would drop it.
+func newDHCPClient(iface *net.Interface, hostname string, onBound dhclient.Callback) *dhclient.Client {
+	client := &dhclient.Client{Iface: iface, OnBound: onBound}
+	for _, param := range dhclient.DefaultParamsRequestList {
+		client.AddParamRequest(param)
+	}
+	if hostname != "" {
+		client.AddOption(layers.DHCPOptHostname, []byte(hostname))
+	}
+	return client
 }
 
 // onBound returns a callback that configures the interface address and default route.
