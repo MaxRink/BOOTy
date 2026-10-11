@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -2447,5 +2448,51 @@ func TestDoPostErrorRedactsQueryToken(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), srv.URL+"/status") {
 		t.Fatalf("POST error = %q, want redacted URL context", err.Error())
+	}
+}
+
+func TestParseVarsLegacyCompat(t *testing.T) {
+	for _, tt := range []struct {
+		value string
+		want  bool
+	}{{"true", true}, {"1", true}, {"false", false}, {"", false}} {
+		cfg, err := ParseVars(strings.NewReader("CAPRF_LEGACY_COMPAT=" + tt.value + "\n"))
+		if err != nil {
+			t.Fatalf("ParseVars(%q): %v", tt.value, err)
+		}
+		if cfg.LegacyCompat != tt.want {
+			t.Errorf("CAPRF_LEGACY_COMPAT=%q: LegacyCompat = %v, want %v", tt.value, cfg.LegacyCompat, tt.want)
+		}
+		if cfg.KexecDisabled() != tt.want {
+			t.Errorf("CAPRF_LEGACY_COMPAT=%q: KexecDisabled() = %v, want %v", tt.value, cfg.KexecDisabled(), tt.want)
+		}
+	}
+}
+
+func TestRequestsLegacyCompatWithInvalidVars(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vars")
+	content := "export CAPRF_LEGACY_COMPAT=\"false\"\nexport MODE=\"no-such-mode\"\nexport CAPRF_LEGACY_COMPAT=\"true\"\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(path); err == nil {
+		t.Fatal("New() accepted an invalid mode")
+	}
+	if !RequestsLegacyCompat(path) {
+		t.Fatal("RequestsLegacyCompat() = false, want true")
+	}
+	if RequestsLegacyCompat(filepath.Join(t.TempDir(), "missing")) {
+		t.Fatal("RequestsLegacyCompat() = true for a missing file")
+	}
+}
+
+func TestRequestsLegacyCompatAfterLongLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vars")
+	content := "export SYSEXT_LAYERS=\"" + strings.Repeat("x", 128*1024) + "\"\nexport CAPRF_LEGACY_COMPAT=\"true\""
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !RequestsLegacyCompat(path) {
+		t.Fatal("RequestsLegacyCompat() = false after a 128 KiB line without a final newline")
 	}
 }

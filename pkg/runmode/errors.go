@@ -18,6 +18,12 @@ type RebootRequestedError struct{}
 
 func (e *RebootRequestedError) Error() string { return "reboot requested" }
 
+// PowerOffRequestedError indicates the mode finished and the host must power
+// off instead of rebooting.
+type PowerOffRequestedError struct{}
+
+func (e *PowerOffRequestedError) Error() string { return "power off requested" }
+
 // ProvisionCompleteError indicates a successful provision operation.
 // It is returned by ProvisionMode.Run() on success and by StandbyMode when
 // it executes a provision command. If PowerOff is true, the caller should

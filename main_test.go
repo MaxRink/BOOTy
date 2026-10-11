@@ -1175,3 +1175,61 @@ func TestFlushObservabilityBeforeReboot(t *testing.T) {
 		t.Error("log was not shipped before flush returned")
 	}
 }
+
+type recordingReporter struct{ statuses []config.Status }
+
+func (r *recordingReporter) ReportStatus(_ context.Context, status config.Status, _ string) error {
+	r.statuses = append(r.statuses, status)
+	return nil
+}
+
+func TestFailRunLegacyCompatReportsAndWaits(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	reporter := &recordingReporter{}
+	rebooted := make(chan struct{})
+	go func() {
+		failRun(ctx, &config.MachineConfig{LegacyCompat: true}, reporter, "setup failed", func() { close(rebooted) })
+	}()
+	select {
+	case <-rebooted:
+		t.Fatal("legacy compat rebooted before the context ended")
+	case <-time.After(100 * time.Millisecond):
+	}
+	cancel()
+	select {
+	case <-rebooted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("failRun did not return after the context ended")
+	}
+	if len(reporter.statuses) != 1 || reporter.statuses[0] != config.StatusError {
+		t.Fatalf("statuses = %v, want one error report like the legacy fail()", reporter.statuses)
+	}
+
+	called := false
+	failRun(context.Background(), &config.MachineConfig{}, nil, "x", func() { called = true })
+	if !called {
+		t.Fatal("default mode must reboot right away")
+	}
+}
+
+func TestTokenRenewalFatalLegacyCompatStopsTheTask(t *testing.T) {
+	rebooted, stopped := false, false
+	tokenRenewalFatal(&config.MachineConfig{LegacyCompat: true}, func() { rebooted = true }, func() { stopped = true })
+	if rebooted || !stopped {
+		t.Fatalf("legacy compat: rebooted=%v stopped=%v, want the task stopped without reboot", rebooted, stopped)
+	}
+	rebooted, stopped = false, false
+	tokenRenewalFatal(&config.MachineConfig{}, func() { rebooted = true }, func() { stopped = true })
+	if !rebooted || stopped {
+		t.Fatalf("default: rebooted=%v stopped=%v, want a reboot", rebooted, stopped)
+	}
+}
+
+func TestIsTerminalSuccess(t *testing.T) {
+	if !isTerminalSuccess(&runmode.ProvisionCompleteError{}) || !isTerminalSuccess(&runmode.PowerOffRequestedError{}) {
+		t.Fatal("completed task results must count as success")
+	}
+	if isTerminalSuccess(errors.New("canceled")) || isTerminalSuccess(nil) {
+		t.Fatal("errors and nil are not terminal success")
+	}
+}

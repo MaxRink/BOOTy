@@ -65,6 +65,33 @@ func New(varsPath string) (*Client, error) {
 	return c, nil
 }
 
+// RequestsLegacyCompat reports whether the vars file sets
+// CAPRF_LEGACY_COMPAT to a true value. It reads only that key, so it also
+// works when the rest of the file does not parse.
+func RequestsLegacyCompat(varsPath string) bool {
+	f, err := os.Open(varsPath) //nolint:gosec // trusted path from ISO
+	if err != nil {
+		return false
+	}
+	defer f.Close() //nolint:errcheck // read-only file
+
+	// The last assignment wins, like in ParseVars. bufio.Reader has no line
+	// length limit, so a long earlier entry cannot hide the setting.
+	requested := false
+	reader := bufio.NewReader(f)
+	for {
+		raw, err := reader.ReadString('\n')
+		line := strings.TrimPrefix(strings.TrimSpace(raw), "export ")
+		if key, value, ok := strings.Cut(line, "="); ok && key == "CAPRF_LEGACY_COMPAT" {
+			value, unquoteErr := unquoteVarValue(value)
+			requested = unquoteErr == nil && parseBoolVar(value)
+		}
+		if err != nil {
+			return requested
+		}
+	}
+}
+
 // NewFromConfig creates a CAPRF client from an already-parsed config.
 func NewFromConfig(cfg *config.MachineConfig) *Client {
 	c := &Client{
@@ -1346,6 +1373,8 @@ func applyFeatureToggle(cfg *config.MachineConfig, key, value string) (bool, err
 		cfg.Telemetry.Enabled = parseBoolVar(value)
 	case "PERSIST_NETWORK":
 		cfg.PersistNetwork = parseBoolVar(value)
+	case "CAPRF_LEGACY_COMPAT":
+		cfg.LegacyCompat = parseBoolVar(value)
 	case "SECUREBOOT_REENABLE":
 		cfg.Provision.SecureBoot.ReEnable = parseBoolVar(value)
 	case "RESCUE_TIMEOUT":

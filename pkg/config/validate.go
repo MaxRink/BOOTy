@@ -84,6 +84,7 @@ func (c *Config) Validate() error {
 	if err := validateABConfig(c.Provision.Image.Mode, c.Provision.DisableKexec, &c.Provision.AB); err != nil {
 		errs = append(errs, err.Error())
 	}
+
 	if err := validateSecureBootConfig(c.Provision.Image.Mode, &c.Provision.SecureBoot, &c.Provision.AB); err != nil {
 		errs = append(errs, err.Error())
 	}
@@ -106,6 +107,9 @@ func (c *Config) validateProvisionFeatureConfigs() []string {
 	}
 	if err := validateOCIPrePullConfig(&c.Provision.OCIPrePulls); err != nil {
 		errs = append(errs, err.Error())
+	}
+	if c.LegacyCompat && c.Provision.AB.PreserveExisting {
+		errs = append(errs, "legacyCompat (CAPRF_LEGACY_COMPAT) powers off instead of using kexec and cannot be combined with provision.ab.preserveExisting")
 	}
 	return errs
 }

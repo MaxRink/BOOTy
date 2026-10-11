@@ -61,11 +61,18 @@ func TestProvisionModeInitialState(t *testing.T) {
 }
 
 func TestProvisionCompleteRequestsRebootFallback(t *testing.T) {
-	err := provisionComplete(true)
+	err := provisionComplete(true, false)
 	if !err.FirmwareChanged {
 		t.Error("FirmwareChanged should be preserved")
 	}
 	if err.PowerOff {
 		t.Error("direct provision completion should reboot when kexec is skipped or fails")
+	}
+}
+
+func TestProvisionCompletePowersOffInLegacyCompat(t *testing.T) {
+	err := provisionComplete(false, true)
+	if !err.PowerOff {
+		t.Error("legacy compat provision completion must power off like the legacy CAPRF provisioner")
 	}
 }

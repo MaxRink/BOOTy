@@ -295,6 +295,7 @@ root is mounted.
 | `DRY_RUN` | `false` | When `true`, forces `MODE=dry-run`: validates prerequisites without destructive writes |
 | `BOOTY_RESUME` | `false` | Enable checkpoint resume — skip previously completed steps on restart |
 | `DISABLE_KEXEC` | `false` | Skip kexec, always hard-reboot. Must stay `false` for A/B preserve-existing upgrades |
+| `CAPRF_LEGACY_COMPAT` | `false` | Behave like the CAPRF legacy shell provisioner. See [CAPRF legacy compatibility](#caprf-legacy-compatibility) |
 | `MIN_DISK_SIZE_GB` | `0` | Minimum disk size filter (0 = no minimum) |
 | `BOOTY_ALLOW_REMOVABLE` | `false` | Allow USB/removable media as provisioning target |
 | `MACHINE_EXTRA_KERNEL_PARAMS` | — | Additional kernel cmdline parameters |
@@ -442,6 +443,21 @@ The checked-in `topology-lacp.clab.yml` file is retained for compatibility with
 older `clab-lacp-*` target names. It uses a Linux bridge and validates
 multi-link bond connectivity only; it does not prove 802.3ad/LACP negotiation
 against a LACP-capable switch.
+
+### CAPRF legacy compatibility
+
+CAPRF sets `CAPRF_LEGACY_COMPAT=true` when it runs BOOTy in place of its
+legacy shell provisioner (`internal/provision/files/*.sh` in
+cluster-api-provider-redfish). With the variable set, BOOTy keeps the legacy
+behaviour where the two differ:
+
+- After a successful provision or deprovision, BOOTy powers the host off. It
+  does not kexec or reboot. CAPRF then ejects the ISO and powers the host on.
+- After a failed provision or deprovision, BOOTy reports the error and keeps
+  the ramdisk running, like `RESCUE_MODE=wait`. An explicit `RESCUE_MODE`
+  still wins for provisioning.
+
+Without the variable, BOOTy keeps its own defaults.
 
 ### Debugging
 
@@ -950,7 +966,10 @@ an initial heartbeat, and polls commands once before entering the periodic loop
 return an error immediately. After readiness succeeds, heartbeat and command-poll
 failures are logged and retried on the next tick. `RESCUE_MODE` applies to hot
 provision command failures; deprovision command failures are ACKed as failed
-before BOOTy returns a reboot request.
+before BOOTy reboots. With `CAPRF_LEGACY_COMPAT=true`, a failed hot provision
+defaults to `RESCUE_MODE=wait` (ACKed first), a failed deprovision command is
+ACKed and BOOTy waits instead of rebooting, and successful provision and
+deprovision commands power the host off.
 Only `204 No Content` denotes an empty command queue; a `404 Not Found` or any
 other unexpected response is treated as a polling failure rather than an empty
 queue.

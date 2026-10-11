@@ -140,6 +140,12 @@ jobs:
             test_regex: TestCrashArtifactsStartupUploadBeforeImageDownload
             privileged: true
             setup: ""
+          - scenario: caprf-legacy-compat
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestLegacyCompat"
+            privileged: true
+            setup: ""
           - scenario: network-persistence-static-ip
             qemu_extra: ""
             test_tag: e2e
@@ -226,7 +232,7 @@ jobs:
           # Remove only those optional source snippets so unrelated package installs stay reliable.
           sudo find /etc/apt/sources.list.d -type f \( -iname '*microsoft*' -o -iname '*azure-cli*' \) -delete
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools cpio zstd busybox-static linux-image-generic xorriso isolinux syslinux-common fdisk util-linux e2fsprogs dosfstools parted mdadm lvm2 gdisk
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools cpio zstd busybox-static linux-image-generic xorriso isolinux syslinux-common fdisk util-linux e2fsprogs dosfstools parted mdadm lvm2 gdisk cloud-guest-utils
 
       - name: Scenario-specific setup
         if: matrix.setup != ''

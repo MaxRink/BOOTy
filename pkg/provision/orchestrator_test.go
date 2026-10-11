@@ -2975,6 +2975,26 @@ func TestRescueConfig_DefaultsApplied(t *testing.T) {
 	}
 }
 
+func TestRescueConfig_LegacyCompatWaits(t *testing.T) {
+	cfg := &config.MachineConfig{LegacyCompat: true}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	if rc := o.RescueConfig(); rc.Mode != "wait" {
+		t.Errorf("Mode = %q, want wait like the legacy CAPRF scripts", rc.Mode)
+	}
+
+	cfg.Rescue.Mode = "retry"
+	if rc := o.RescueConfig(); rc.Mode != "retry" {
+		t.Errorf("Mode = %q, explicit rescue mode must win over legacy compat", rc.Mode)
+	}
+}
+
+func TestShouldKeepTargetRootMountedForKexec_LegacyCompat(t *testing.T) {
+	cfg := &config.MachineConfig{LegacyCompat: true}
+	if ShouldKeepTargetRootMountedForKexec(cfg, false) {
+		t.Error("legacy compat powers off, so the target root must not stay mounted for kexec")
+	}
+}
+
 func TestVerifyImageSignature_Skipped(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	// Give it a valid URL so SelectBestSource doesn't fail

@@ -226,3 +226,100 @@ func TestStandbyDeprovisionCommandFailureReturnsErrorWithoutReboot(t *testing.T)
 		t.Fatalf("deprovision calls = %d, want 1", deprovisionCalls)
 	}
 }
+
+func newLegacyCompatStandby(t *testing.T, deprovErr error) *StandbyMode {
+	t.Helper()
+	cfg := standbyConfig()
+	cfg.LegacyCompat = true
+	return &StandbyMode{
+		deps: Deps{Cfg: cfg, Client: &standbyProvider{commands: []config.Command{{ID: "cmd-1", Type: "deprovision"}}}},
+		newDeprovisioner: func() standbyDeprovisioner {
+			return standbyDeprovisionerFunc(func(context.Context) error { return deprovErr })
+		},
+	}
+}
+
+func TestStandbyDeprovisionCommandLegacyCompatPowersOff(t *testing.T) {
+	err := newLegacyCompatStandby(t, nil).Run(context.Background())
+	var powerOff *PowerOffRequestedError
+	if !errors.As(err, &powerOff) {
+		t.Fatalf("Run error = %v, want power off request", err)
+	}
+}
+
+func TestStandbyDeprovisionCommandLegacyCompatFailureWaits(t *testing.T) {
+	deprovisionErr := errors.New("wipe failed")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- newLegacyCompatStandby(t, deprovisionErr).Run(ctx) }()
+
+	select {
+	case err := <-done:
+		t.Fatalf("Run returned %v before the context ended", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, deprovisionErr) {
+			t.Fatalf("Run error = %v, want %v", err, deprovisionErr)
+		}
+		var rebootErr *RebootRequestedError
+		if errors.As(err, &rebootErr) {
+			t.Fatalf("Run error = %v, legacy compat must not reboot", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after the context ended")
+	}
+}
+
+// ackSignalProvider reports each ACK on a channel, so a test can see it
+// while Run is still blocked.
+type ackSignalProvider struct {
+	*standbyProvider
+	acked chan string
+}
+
+func (p *ackSignalProvider) AcknowledgeCommand(_ context.Context, cmdID, status, _ string) error {
+	p.acked <- cmdID + ":" + status
+	return nil
+}
+
+// A failed hot provision is ACKed before the rescue wait starts.
+func TestStandbyProvisionFailureAcksBeforeWait(t *testing.T) {
+	cfg := standbyConfig()
+	cfg.LegacyCompat = true // rescue mode defaults to wait
+	provider := &ackSignalProvider{
+		standbyProvider: &standbyProvider{commands: []config.Command{{ID: "p1", Type: "provision"}}},
+		acked:           make(chan string, 1),
+	}
+	mode := &StandbyMode{deps: Deps{Cfg: cfg, Client: provider}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- mode.Run(ctx) }()
+
+	select {
+	case ack := <-provider.acked:
+		if ack != "p1:failed" {
+			t.Fatalf("ack = %q, want p1:failed", ack)
+		}
+	case err := <-done:
+		t.Fatalf("Run returned %v before the failed provision was ACKed", err)
+	case <-time.After(30 * time.Second):
+		t.Fatal("no ACK while Run waits")
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("Run returned %v after the ACK, want it to wait", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not return after the context ended")
+	}
+}

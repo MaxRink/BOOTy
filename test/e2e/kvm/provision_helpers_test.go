@@ -23,7 +23,8 @@ const testEFIFallbackPayload = "BOOTy KVM e2e EFI fallback\n"
 // requireProvisionTools requires essential provisioning tools.
 func requireProvisionTools(t *testing.T) {
 	t.Helper()
-	for _, tool := range []string{"sgdisk", "sfdisk", "mkfs.ext4", "mkfs.vfat", "qemu-img", "losetup", "dd", "mount", "umount"} {
+	// growpart is copied into the guest: whole-disk provisioning runs it.
+	for _, tool := range []string{"sgdisk", "sfdisk", "mkfs.ext4", "mkfs.vfat", "qemu-img", "losetup", "dd", "mount", "umount", "growpart"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			failOrSkipUnsupportedHost(t, "%s not available for KVM provisioning test", tool)
 		}
@@ -276,6 +277,14 @@ func writeDeployVars(t *testing.T, dir string, vars map[string]string) string {
 // Returns path to the cpio.gz file.
 func buildProvisionInitramfs(t *testing.T, vars map[string]string) string {
 	t.Helper()
+	return buildProvisionInitramfsWithFiles(t, vars, nil)
+}
+
+// buildProvisionInitramfsWithFiles is buildProvisionInitramfs plus extra
+// files, keyed by their path relative to the initramfs root (for example
+// "deploy/machine-commands/commands-0.sh").
+func buildProvisionInitramfsWithFiles(t *testing.T, vars, files map[string]string) string {
+	t.Helper()
 	if vars == nil {
 		vars = map[string]string{}
 	}
@@ -319,6 +328,10 @@ func buildProvisionInitramfs(t *testing.T, vars map[string]string) string {
 		"mknod", "insmod", "modprobe", "setsid", "cttyhack",
 		"chroot", "bash", "ash", "ip", "ifconfig", "udhcpc",
 		"find", "xargs", "grep", "awk", "sed", "mdev",
+		// growpart (cloud-guest-utils) is a shell script that needs these.
+		"mktemp", "tr", "touch", "wc", "head", "tail", "cut", "sort",
+		"uniq", "expr", "basename", "dirname", "readlink", "test", "[",
+		"printf", "stat", "true", "false", "env", "getopt",
 	} {
 		link := filepath.Join(rootDir, "bin", applet)
 		_ = os.Symlink("busybox", link)
@@ -328,7 +341,7 @@ func buildProvisionInitramfs(t *testing.T, vars map[string]string) string {
 	// Copy essential provisioning tools from host with their shared libraries.
 	essentialTools := []string{
 		"partprobe", "sgdisk", "sfdisk", "mkfs.ext4", "mkfs.vfat", "e2fsck", "resize2fs", "wipefs", "mdadm", "lvm",
-		"losetup", "dd",
+		"losetup", "dd", "growpart", "partx", "blockdev", "flock", "lsblk", "blkdiscard",
 	}
 	for _, tool := range essentialTools {
 		toolPath, err := exec.LookPath(tool)
@@ -361,8 +374,13 @@ func buildProvisionInitramfs(t *testing.T, vars map[string]string) string {
 	// Write /deploy/vars.
 	writeDeployVars(t, rootDir, vars)
 
-	// Write /deploy/machine-files if any custom files needed.
-	// (subtest-specific; left empty by default)
+	for rel, content := range files {
+		dest := filepath.Join(rootDir, filepath.Clean("/"+rel))
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			t.Fatalf("mkdir for %s: %v", rel, err)
+		}
+		writeFile(t, dest, content)
+	}
 
 	// Write /init script.
 	initScript := `#!/bin/sh

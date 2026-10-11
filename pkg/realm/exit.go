@@ -26,6 +26,8 @@ func RequestReboot() error {
 // RequestPowerOff asks the kernel to power off and returns only if the request
 // did not take over the machine.
 func RequestPowerOff() error {
+	// reboot(2) does not flush dirty pages. Sync first like shutdown does.
+	syscall.Sync()
 	if err := syscall.Reboot(syscall.LINUX_REBOOT_CMD_POWER_OFF); err != nil {
 		return fmt.Errorf("power off: %w", err)
 	}

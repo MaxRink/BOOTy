@@ -480,7 +480,11 @@ func runCAPRF(ctx context.Context) {
 	if err != nil {
 		slog.Error("failed to create CAPRF client", "error", err)
 		provision.DumpDebugState("caprf-init")
-		reboot()
+		// The vars file did not parse, but it may still ask for legacy
+		// behavior: then keep the ramdisk running instead of rebooting.
+		failRun(ctx, &config.MachineConfig{LegacyCompat: caprf.RequestsLegacyCompat(varsPath)}, nil,
+			"invalid vars file", reboot)
+		return
 	}
 
 	cfg, err := client.GetConfig(ctx)
@@ -510,9 +514,15 @@ func runCAPRF(ctx context.Context) {
 		"image_count", len(cfg.Provision.Image.URLs),
 	)
 
-	netMode, err := setupNetworkAndTokenFlow(ctx, cfg, client)
+	// runCtx stops the active mode when JWT renewal is exhausted in legacy
+	// compat, like fail() stops the legacy task.
+	runCtx, stopRun := context.WithCancel(ctx)
+	defer stopRun()
+
+	netMode, err := setupNetworkAndTokenFlow(ctx, cfg, client, stopRun)
 	if err != nil {
-		reboot()
+		failRun(ctx, cfg, client, fmt.Sprintf("network or token setup failed: %v", err), reboot)
+		return
 	}
 
 	diskMgr := disk.NewManager(nil)
@@ -544,7 +554,11 @@ func runCAPRF(ctx context.Context) {
 	}
 
 	slog.Info("executing mode", "mode", mode.Name())
-	modeErr := mode.Run(ctx)
+	modeErr := mode.Run(runCtx)
+	if cfg.LegacyCompat && runCtx.Err() != nil && ctx.Err() == nil && !isTerminalSuccess(modeErr) {
+		failRun(ctx, cfg, client, "token renewal exhausted, task stopped", reboot)
+		return
+	}
 
 	slog.Info("CAPRF run complete")
 
@@ -552,6 +566,7 @@ func runCAPRF(ctx context.Context) {
 	// so rescue shell SSH access remains available.
 	var rescueErr *runmode.RescueShellError
 	var rebootErr *runmode.RebootRequestedError
+	var powerOffErr *runmode.PowerOffRequestedError
 	var provisionErr *runmode.ProvisionCompleteError
 	switch {
 	case errors.As(modeErr, &rescueErr):
@@ -567,6 +582,14 @@ func runCAPRF(ctx context.Context) {
 			}
 		}
 		reboot()
+		return
+	case errors.As(modeErr, &powerOffErr):
+		// Keep the network up, like the provision handoff, so a failed power
+		// off can still be reported. Do not reboot when the power off fails:
+		// CAPRF has not ejected the ISO yet, so a reboot would run the task
+		// again.
+		requestProvisionHandoff(ctx, client, "power off", provisionHandoff.powerOff, provisionHandoff,
+			"power off handoff failed after deprovisioning success")
 		return
 	case errors.As(modeErr, &provisionErr):
 		kexeced := tryKexec(cfg, provisionErr.FirmwareChanged)
@@ -645,7 +668,7 @@ func reportProvisionHandoffError(ctx context.Context, reporter provisionStatusRe
 	}
 }
 
-func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, client *caprf.Client) (network.Mode, error) {
+func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, client *caprf.Client, stopRun func()) (network.Mode, error) {
 	if cfg.Mode == "dry-run" {
 		slog.Info("dry-run mode: skipping active network setup and token renewal")
 		return noopNetworkMode{}, nil
@@ -684,11 +707,7 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 		}
 	}
 
-	client.SetTokenRenewalFatalHandler(func() {
-		slog.Error("token renewal exhausted, rebooting")
-		provision.DumpDebugState("jwt-renewal-exhausted")
-		reboot()
-	})
+	client.SetTokenRenewalFatalHandler(func() { tokenRenewalFatal(cfg, reboot, stopRun) })
 
 	if err := client.StartTokenRenewal(ctx); err != nil {
 		slog.Error("failed to start token renewal", "error", err)
@@ -699,6 +718,45 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 	}
 
 	return netMode, nil
+}
+
+// failRun ends a run that failed outside a mode. With legacy compat it
+// reports the error like the legacy fail() and keeps the ramdisk running; a
+// reboot would boot the ISO and run the task again.
+func failRun(ctx context.Context, cfg *config.MachineConfig, reporter provisionStatusReporter, message string, rebootFn func()) {
+	if cfg != nil && cfg.LegacyCompat {
+		slog.Error("legacy compat: run failed, keeping the ramdisk running", "error", message)
+		if reporter != nil {
+			reportCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			if err := reporter.ReportStatus(reportCtx, config.StatusError, message); err != nil {
+				slog.Warn("failed to report the run failure", "error", err)
+			}
+			cancel()
+		}
+		<-ctx.Done()
+	}
+	rebootFn()
+}
+
+// isTerminalSuccess reports a mode result that completed its task. Such a
+// result wins over a renewal failure that arrives at the same time.
+func isTerminalSuccess(modeErr error) bool {
+	var provisionErr *runmode.ProvisionCompleteError
+	var powerOffErr *runmode.PowerOffRequestedError
+	return errors.As(modeErr, &provisionErr) || errors.As(modeErr, &powerOffErr)
+}
+
+// tokenRenewalFatal handles exhausted JWT renewal. Legacy compat stops the
+// active task with stopRun and then waits instead of rebooting into the ISO.
+func tokenRenewalFatal(cfg *config.MachineConfig, rebootFn, stopRun func()) {
+	provision.DumpDebugState("jwt-renewal-exhausted")
+	if cfg != nil && cfg.LegacyCompat {
+		slog.Error("token renewal exhausted, stopping the task")
+		stopRun()
+		return
+	}
+	slog.Error("token renewal exhausted, rebooting")
+	rebootFn()
 }
 
 type noopNetworkMode struct{}
@@ -1179,8 +1237,8 @@ func detectIPMI(netCfg *network.Config) {
 // provisioning (e.g. Mellanox SR-IOV), or when Secure Boot must be re-enabled,
 // since those paths require a firmware-enforced reboot.
 func tryKexec(cfg *config.MachineConfig, firmwareChanged bool) bool {
-	if cfg.Provision.DisableKexec {
-		slog.Info("kexec disabled by configuration, skipping")
+	if cfg.KexecDisabled() {
+		slog.Info("kexec disabled by configuration, skipping", "legacyCompat", cfg.LegacyCompat)
 		return false
 	}
 
