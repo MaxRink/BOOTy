@@ -385,7 +385,7 @@ func buildProvisionInitramfsWithFiles(t *testing.T, vars, files map[string]strin
 	// Write /init script.
 	initScript := `#!/bin/sh
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
-for mod in virtio_pci virtio_net e1000 e1000e fat vfat nls_cp437 nls_iso8859-1 nls_ascii nls_utf8; do
+for mod in virtio_pci virtio_net e1000 e1000e virtio_scsi sd_mod fat vfat nls_cp437 nls_iso8859-1 nls_ascii nls_utf8; do
 	modprobe "$mod" 2>/dev/null || true
 done
 exec /booty
@@ -750,6 +750,7 @@ func copyFilesystemModulesForRelease(t *testing.T, rootDir, release string) {
 	for _, module := range []string{
 		"vfat", "fat", "nls_cp437", "nls_iso8859-1", "nls_ascii", "nls_utf8",
 		"virtio_pci", "virtio_net", "e1000", "e1000e",
+		"virtio_scsi", "sd_mod",
 	} {
 		copyKernelModuleWithDependencies(t, rootDir, release, module, copied, map[string]bool{})
 	}

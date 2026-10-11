@@ -526,6 +526,7 @@ func runCAPRF(ctx context.Context) {
 	}
 
 	diskMgr := disk.NewManager(nil)
+	diskMgr.SetLegacyCAPRFSelection(cfg.LegacyCompat)
 	if result, inspectErr := crash.InspectStartup(ctx, cfg, diskMgr, client, crash.InspectOptions{}); inspectErr != nil {
 		slog.Warn("startup crash artifact inspection failed", "error", inspectErr)
 	} else if result != nil && result.Ran {

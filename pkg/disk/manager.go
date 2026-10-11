@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -41,6 +42,17 @@ var (
 type Manager struct {
 	cmd       Commander
 	sysfsRoot string // path to sysfs root, defaults to "/sys"
+	// legacyCAPRFSelection makes DetectDisk pick the disk like the CAPRF
+	// legacy provisioner. See SetLegacyCAPRFSelection.
+	legacyCAPRFSelection bool
+}
+
+// SetLegacyCAPRFSelection makes DetectDisk select the target disk like
+// get_target_disks in the CAPRF legacy common.sh: NVMe (major 259) and
+// virtio (major 253) disks first, then SCSI/SATA disks (major 8), each in
+// lsblk order, and the first disk of at least the minimum size wins.
+func (m *Manager) SetLegacyCAPRFSelection(enabled bool) {
+	m.legacyCAPRFSelection = enabled
 }
 
 // NewManager creates a Manager with the given Commander (nil = ExecCommander).
@@ -345,9 +357,20 @@ func (m *Manager) CreateRAIDArray(ctx context.Context, name string, level int, d
 	return nil
 }
 
-// DetectDisk finds the target disk for provisioning. Prefers NVMe, falls back to SATA/SAS.
-// Removable media (USB drives, SD cards) are rejected unless BOOTY_ALLOW_REMOVABLE=true.
-func (m *Manager) DetectDisk(_ context.Context, minSizeGB int) (string, error) {
+// DetectDisk finds the target disk for provisioning. By default it prefers
+// NVMe, then the largest disk, and rejects removable media (USB drives, SD
+// cards) unless BOOTY_ALLOW_REMOVABLE=true. With SetLegacyCAPRFSelection it
+// takes the first disk in legacy lsblk order instead (NVMe and virtio, then
+// SCSI/SATA) and, like the legacy script, does not skip removable media.
+func (m *Manager) DetectDisk(ctx context.Context, minSizeGB int) (string, error) {
+	if m.legacyCAPRFSelection {
+		return m.detectDiskLegacyCAPRF(ctx, minSizeGB)
+	}
+	return m.detectDiskPreferNVMe(minSizeGB)
+}
+
+// detectDiskPreferNVMe picks an NVMe disk if present, else the largest disk.
+func (m *Manager) detectDiskPreferNVMe(minSizeGB int) (string, error) {
 	slog.Info("detecting target disk", "minSizeGB", minSizeGB)
 	blockDir := m.sysfsRoot + "/block"
 	entries, err := os.ReadDir(blockDir)
@@ -405,6 +428,49 @@ func (m *Manager) DetectDisk(_ context.Context, minSizeGB int) (string, error) {
 
 	slog.Info("selected disk", "device", best.path, "sizeGB", best.sizeGB, "nvme", best.isNVMe)
 	return best.path, nil
+}
+
+// legacyCAPRFDiskMajors are the lsblk --include groups of the CAPRF legacy
+// _discover_disks, in preference order.
+var legacyCAPRFDiskMajors = []string{"259,253", "8"}
+
+func (m *Manager) detectDiskLegacyCAPRF(ctx context.Context, minSizeGB int) (string, error) {
+	const maxMinSizeGB = math.MaxInt64 >> 30
+	if minSizeGB < 0 || int64(minSizeGB) > maxMinSizeGB {
+		return "", fmt.Errorf("minimum disk size %d GB is out of range", minSizeGB)
+	}
+	minBytes := int64(minSizeGB) << 30
+	slog.Info("detecting target disk like the legacy CAPRF provisioner", "minSizeBytes", minBytes)
+	var candidates []string
+	for _, majors := range legacyCAPRFDiskMajors {
+		out, err := m.cmd.Run(ctx, "lsblk", "--nodeps", "--noheadings", "--include", majors,
+			"--output", "PATH,SIZE", "--bytes")
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return "", fmt.Errorf("detect disk: %w", ctxErr)
+			}
+			// The legacy script reads lsblk through process substitution and
+			// ignores its exit status.
+			slog.Warn("lsblk failed", "include", majors, "error", err, "output", string(out))
+		}
+		for _, line := range strings.Split(string(out), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) != 2 {
+				continue
+			}
+			size, err := strconv.ParseInt(fields[1], 10, 64)
+			if err != nil || size < minBytes {
+				continue
+			}
+			slog.Info("disk candidate", "device", fields[0], "sizeBytes", size, "majors", majors)
+			candidates = append(candidates, fields[0])
+		}
+	}
+	if len(candidates) == 0 {
+		return "", fmt.Errorf("no suitable disk found (min %d GB)", minSizeGB)
+	}
+	slog.Info("selected disk", "device", candidates[0])
+	return candidates[0], nil
 }
 
 // FindDiskBySerial finds a non-virtual target disk whose serial or stable

@@ -459,6 +459,12 @@ behaviour where the two differ:
 - After a failed provision or deprovision, BOOTy reports the error and keeps
   the ramdisk running, like `RESCUE_MODE=wait`. An explicit `RESCUE_MODE`
   still wins for provisioning.
+- Without `DISK_DEVICE` or `DISK_SERIAL`, the target disk is the first disk
+  of at least `MIN_DISK_SIZE_GB` in `lsblk` order, NVMe and virtio disks
+  first, then SCSI/SATA disks, like `_select_single_disk`. BOOTy otherwise
+  prefers NVMe and then the largest disk. Like the legacy script, this order
+  does not skip removable media: a USB disk (SCSI major 8) can be selected
+  when no NVMe or virtio disk qualifies, even without `BOOTY_ALLOW_REMOVABLE`.
 
 Without the variable, BOOTy keeps its own defaults.
 
