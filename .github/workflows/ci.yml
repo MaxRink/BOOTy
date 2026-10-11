@@ -1340,7 +1340,7 @@ jobs:
           for i in $(seq 1 120); do
             ESTABLISHED=$(sudo docker exec clab-booty-gobgp-lab-spine01 vtysh -c "show bgp summary json" 2>/dev/null \
               | grep -c '"state":"Established"' || true)
-            if [ "$ESTABLISHED" -ge 5 ]; then
+            if [ "$ESTABLISHED" -ge 6 ]; then
               echo "All BGP sessions established after ${i}s"
               sudo docker exec clab-booty-gobgp-lab-spine01 vtysh -c "show bgp summary"
               break
@@ -1349,7 +1349,7 @@ jobs:
           done
           ESTABLISHED=$(sudo docker exec clab-booty-gobgp-lab-spine01 vtysh -c "show bgp summary json" 2>/dev/null \
             | grep -c '"state":"Established"' || true)
-          if [ "$ESTABLISHED" -lt 5 ]; then
+          if [ "$ESTABLISHED" -lt 6 ]; then
             echo "Not all BGP sessions established in 120s"
             sudo docker exec clab-booty-gobgp-lab-spine01 vtysh -c "show bgp summary" || true
             exit 1
@@ -1383,7 +1383,7 @@ jobs:
           mkdir -p gobgp-logs
 
           # Container logs (stdout/stderr from all nodes).
-          for node in spine01 leaf01 rr01 booty-unnumbered booty-dual booty-numbered client; do
+          for node in spine01 leaf01 rr01 booty-unnumbered booty-dual booty-numbered booty-l2 client; do
             name="clab-booty-gobgp-lab-${node}"
             timeout 30 sudo docker logs "${name}" >> gobgp-logs/${node}.log 2>&1 || echo "(no logs)"
           done
@@ -1410,7 +1410,7 @@ jobs:
           done
 
           # Network + EVPN data plane state from each container.
-          for node in spine01 leaf01 booty-unnumbered booty-dual booty-numbered; do
+          for node in spine01 leaf01 booty-unnumbered booty-dual booty-numbered booty-l2; do
             name="clab-booty-gobgp-lab-${node}"
             {
               echo "=== ip -d link show type vxlan ==="

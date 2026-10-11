@@ -23,6 +23,7 @@ const (
 	gobgpLabUnnumbered  = "clab-booty-gobgp-lab-booty-unnumbered"
 	gobgpLabDual        = "clab-booty-gobgp-lab-booty-dual"
 	gobgpLabNumbered    = "clab-booty-gobgp-lab-booty-numbered"
+	gobgpLabL2          = "clab-booty-gobgp-lab-booty-l2"
 	gobgpLabClient      = "clab-booty-gobgp-lab-client"
 	bgpConvergeTimeout  = 60 * time.Second
 	bgpConvergeInterval = 2 * time.Second
@@ -112,6 +113,7 @@ func dumpDebugState(t *testing.T) {
 		{"booty-unnumbered", gobgpLabUnnumbered},
 		{"booty-dual", gobgpLabDual},
 		{"booty-numbered", gobgpLabNumbered},
+		{"booty-l2", gobgpLabL2},
 	} {
 		for _, cmd := range [][]string{
 			{"ip", "-d", "link", "show", "type", "vxlan"},

@@ -17,6 +17,8 @@ import (
 //   - booty-numbered: advertise-all-vni with the provisioning VNI declared as
 //     the default VRF L3VNI (the CAPRF frr.conf shape), so Type-5 only.
 //   - booty-dual: no FRR config (vars only), so Type-5 only.
+//   - booty-l2: no FRR config, but EVPN_L2_ENABLED=true in vars, so Type-2
+//     and Type-3 routes are originated next to Type-5.
 // The route distinguisher BOOTy uses is <ASN>:<VNI>.
 
 const routeModeObserveWindow = 15 * time.Second
@@ -50,6 +52,23 @@ func TestGoBGPRouteModeL2FromFRRConfig(t *testing.T) {
 	rd := rdLine("65020:100")
 	for _, routeType := range []string{"prefix", "macip", "multicast"} {
 		waitForGobgpCondition(t, bgpConvergeTimeout, "booty-unnumbered "+routeType+" route not on spine", func(context.Context) (bool, string) {
+			out, err := spineEVPNRoutes(t, routeType)
+			return err == nil && strings.Contains(out, rd), out
+		})
+	}
+}
+
+// TestGoBGPRouteModeL2FromVars checks the explicit opt-in. booty-l2 has no
+// FRR config with advertise-all-vni, only EVPN_L2_ENABLED=true in vars.
+func TestGoBGPRouteModeL2FromVars(t *testing.T) {
+	requireGoBGPLab(t)
+	t.Cleanup(func() { dumpDebugState(t) })
+
+	waitForBGPInterface(t, "eth7")
+
+	rd := rdLine("65040:100")
+	for _, routeType := range []string{"prefix", "macip", "multicast"} {
+		waitForGobgpCondition(t, bgpConvergeTimeout, "booty-l2 "+routeType+" route not on spine", func(context.Context) (bool, string) {
 			out, err := spineEVPNRoutes(t, routeType)
 			return err == nil && strings.Contains(out, rd), out
 		})

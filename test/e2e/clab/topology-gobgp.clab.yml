@@ -1,29 +1,27 @@
 # GoBGP e2e topology: tests all three BGP PeerMode scenarios using containerlab.
 #
-# This topology runs three BOOTy instances with GoBGP (no FRR), each exercising
-# a different BGP session mode:
+# This topology runs four BOOTy instances with GoBGP (no FRR). The first three
+# each use a different BGP session mode. booty-l2 reuses the unnumbered mode
+# to test the explicit EVPN_L2_ENABLED setting:
 #
 #   booty-unnumbered  PeerMode=unnumbered  eBGP unnumbered to spine (all AFI/SAFI)
 #   booty-dual        PeerMode=dual        eBGP unnumbered to spine (IPv4) +
 #                                          eBGP numbered to rr01 (L2VPN-EVPN)
 #   booty-numbered    PeerMode=numbered    eBGP numbered to spine (all AFI/SAFI)
+#   booty-l2          PeerMode=unnumbered  eBGP unnumbered to spine, with
+#                                          EVPN_L2_ENABLED=true and no FRR config
 #
-# Network topology:
+# Network topology (spine01 port → peer):
 #
-#   ┌─────────┐         ┌──────────┐
-#   │  rr01   │◄──iBGP──│ spine01  │◄──eBGP──┐ leaf01
-#   │ ASN65000│  eth1-6  │ ASN65000 │  eth1    │ ASN65001
-#   └────┬────┘         │          │         └──────────┘
-#        │ eth2          │ eth3-5   │
-#        │               │          │
-#   ┌────▼────┐    ┌─────▼─────┐   │
-#   │  booty  │    │   booty   │   │ eth5
-#   │  dual   │    │ unnumbered│   │
-#   └─────────┘    └───────────┘   │
-#                            ┌─────▼─────┐
-#                            │   booty   │
-#                            │ numbered  │
-#                            └───────────┘
+#   leaf01 (ASN 65001) ◄─eBGP─ eth1 ┐
+#   client (br100, L2)  ────── eth2 ┤
+#   booty-unnumbered    ◄─eBGP─ eth3 ┤
+#   booty-dual (IPv4)   ◄─eBGP─ eth4 ┼── spine01 (ASN 65000)
+#   booty-numbered      ◄─eBGP─ eth5 ┤
+#   rr01 (ASN 65000)    ◄─iBGP─ eth6 ┤
+#   booty-l2            ◄─eBGP─ eth7 ┘
+#
+#   rr01 eth2 ◄─iBGP (L2VPN-EVPN)─► booty-dual eth2
 #
 # Build the test image first:
 #   docker build -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
@@ -68,6 +66,9 @@ topology:
         # eth6 → rr01 (iBGP numbered, 10.0.1.1/30)
         - ip link set dev eth6 mtu 9000
         - ip link set dev eth6 up
+        # eth7 → booty-l2 (eBGP unnumbered)
+        - ip link set dev eth7 mtu 9000
+        - ip link set dev eth7 up
 
     leaf01:
       kind: linux
@@ -193,6 +194,20 @@ topology:
         - sh -c 'test -b /dev/loop2 || mknod -m 660 /dev/loop2 b 7 2'
         - losetup /dev/loop2 /tmp/disk.img
 
+    # Scenario 4: explicit EVPN_L2_ENABLED=true in vars and no FRR config
+    # file: Type-2/3 + Type-5.
+    booty-l2:
+      kind: linux
+      image: booty-gobgp-test:latest
+      binds:
+        - data/vars-gobgp-l2:/deploy/vars:ro
+      env:
+        BOOTY_NO_REBOOT: "1"
+      exec:
+        - dd if=/dev/zero of=/tmp/disk.img bs=1M count=0 seek=2048
+        - sh -c 'test -b /dev/loop3 || mknod -m 660 /dev/loop3 b 7 3'
+        - losetup /dev/loop3 /tmp/disk.img
+
   links:
     # ── Fabric ──────────────────────────────────────────────────────
     - endpoints: ["spine01:eth1", "leaf01:eth1"]              # eBGP underlay
@@ -218,3 +233,6 @@ topology:
 
     # ── iBGP: rr01 ↔ booty-dual (10.0.3.0/30) ─────────────────────
     - endpoints: ["rr01:eth2", "booty-dual:eth2"]
+
+    # ── BGP unnumbered: booty-l2 → spine ───────────────────────────
+    - endpoints: ["spine01:eth7", "booty-l2:eth1"]
