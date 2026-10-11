@@ -3,7 +3,10 @@
 package image
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -149,6 +152,10 @@ func convertQCOW2ToRaw(ctx context.Context, src, dst string) error {
 		return err
 	}
 
+	if err := rejectQCOW2ExternalFiles(src); err != nil {
+		return err
+	}
+
 	slog.Info("converting qcow2 to raw", "src", src, "dst", dst)
 	cmd := exec.CommandContext(ctx, qemuImg, "convert", "-f", "qcow2", "-O", "raw", src, dst) //nolint:gosec // controlled paths
 	cmd.Stdout = os.Stdout
@@ -158,6 +165,55 @@ func convertQCOW2ToRaw(ctx context.Context, src, dst string) error {
 	}
 
 	slog.Info("qcow2 conversion complete")
+	return nil
+}
+
+// qcow2Magic starts every qcow2 image ("QFI\xfb").
+var qcow2Magic = []byte{0x51, 0x46, 0x49, 0xfb}
+
+// qcow2HeaderLen covers the qcow2 v3 header fields up to
+// incompatible_features.
+const qcow2HeaderLen = 80
+
+// qcow2IncompatExternalData is the incompatible feature bit for an external
+// data file.
+const qcow2IncompatExternalData = 1 << 2
+
+// rejectQCOW2ExternalFiles reads the qcow2 header and fails for an image
+// that names a backing file or an external data file. qemu-img convert, and
+// qemu-img info in the QEMU that BOOTy ships, would open that file from the
+// initramfs or the network and copy it into the raw image. The header is
+// parsed in process, so nothing is opened before the check.
+func rejectQCOW2ExternalFiles(path string) error {
+	f, err := os.Open(path) //nolint:gosec // controlled ramdisk path
+	if err != nil {
+		return fmt.Errorf("open qcow2 image: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	header := make([]byte, qcow2HeaderLen)
+	n, err := io.ReadFull(f, header)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return fmt.Errorf("read qcow2 header: %w", err)
+	}
+	return checkQCOW2Header(header[:n])
+}
+
+func checkQCOW2Header(header []byte) error {
+	if len(header) < 72 || !bytes.Equal(header[:4], qcow2Magic) {
+		return fmt.Errorf("not a valid qcow2 header")
+	}
+	if binary.BigEndian.Uint64(header[8:16]) != 0 {
+		return fmt.Errorf("qcow2 image has a backing file; only self-contained images are supported")
+	}
+	if binary.BigEndian.Uint32(header[4:8]) >= 3 {
+		if len(header) < qcow2HeaderLen {
+			return fmt.Errorf("qcow2 v3 header is truncated")
+		}
+		if binary.BigEndian.Uint64(header[72:80])&qcow2IncompatExternalData != 0 {
+			return fmt.Errorf("qcow2 image has an external data file; only self-contained images are supported")
+		}
+	}
 	return nil
 }
 

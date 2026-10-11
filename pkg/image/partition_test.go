@@ -166,7 +166,9 @@ cp "$src" "$dst"
 	}
 	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
 
-	payload := append([]byte{0x51, 0x46, 0x49, 0xfb}, []byte("qcow2 payload")...)
+	// A v3 qcow2 header without backing or external data file.
+	payload := append([]byte{0x51, 0x46, 0x49, 0xfb, 0, 0, 0, 3}, make([]byte, 96)...)
+	payload = append(payload, []byte("qcow2 payload")...)
 	source := writeRawChecksumFixture(t, payload)
 	converted, err := convertPreparedQCOW2(context.Background(), source)
 	if err != nil {

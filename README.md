@@ -273,6 +273,9 @@ dns_resolver="8.8.8.8"
 (`.gz`, `.lz4`, `.xz`, `.zst`, `.bz2`), a QCOW2 image, or an OCI layer that
 contains a supported image payload. VMware VMDK, OVA, and OVF containers are
 not provisioning inputs; convert them to raw or QCOW2 before publishing.
+A QCOW2 image must be self-contained. BOOTy rejects QCOW2 images that name a
+backing file or an external data file; flatten them first, for example with
+`qemu-img convert -O qcow2 in.qcow2 out.qcow2`.
 
 ### Removed Legacy Server Flow
 
