@@ -10,6 +10,12 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// Test seams for the syscalls in Execute.
+var (
+	syncFilesystems = unix.Sync
+	reboot          = unix.Reboot
+)
+
 // Load loads a kernel for kexec. Call Execute() to boot into it.
 func Load(kernelPath, initrdPath, cmdline string) error {
 	slog.Info("loading kernel for kexec", "kernel", kernelPath, "initrd", initrdPath)
@@ -33,10 +39,13 @@ func Load(kernelPath, initrdPath, cmdline string) error {
 	return nil
 }
 
-// Execute performs the kexec reboot.
+// Execute performs the kexec reboot. The kernel does not flush dirty pages on
+// kexec, so Execute syncs all filesystems first. Without that, files written
+// to the still-mounted target root just before the handoff can be lost.
 func Execute() error {
 	slog.Info("executing kexec")
-	if err := unix.Reboot(unix.LINUX_REBOOT_CMD_KEXEC); err != nil {
+	syncFilesystems()
+	if err := reboot(unix.LINUX_REBOOT_CMD_KEXEC); err != nil {
 		return fmt.Errorf("kexec reboot: %w", err)
 	}
 	return nil
