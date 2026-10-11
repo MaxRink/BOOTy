@@ -402,3 +402,27 @@ func testAddr(t *testing.T, cidr string) netlink.Addr {
 	}
 	return *addr
 }
+
+func TestEnsureVTEPRouteNumberedUsesNeighborEgress(t *testing.T) {
+	routes := &mockGatewayRoutes{
+		routeGet: map[string][]netlink.Route{
+			"10.0.2.1": {{LinkIndex: 7}},
+		},
+	}
+	stack := newGatewayRouteTestStack(network.PeerModeNumbered, routes)
+	stack.cfg.ProvisionGateway = ""
+	stack.cfg.NeighborAddrs = []string{"10.0.2.1"}
+	stack.vtepRoutes = map[string]*netlink.Route{}
+
+	if err := stack.ensureVTEPRoute(net.ParseIP("10.0.0.9")); err != nil {
+		t.Fatalf("ensureVTEPRoute() error = %v", err)
+	}
+
+	route := requireSingleGatewayRoute(t, routes)
+	if got := route.Dst.String(); got != "10.0.0.9/32" {
+		t.Fatalf("route Dst = %s, want 10.0.0.9/32", got)
+	}
+	if route.LinkIndex != 7 || !route.Gw.Equal(net.ParseIP("10.0.2.1")) {
+		t.Fatalf("route = %+v, want via 10.0.2.1 on link 7", route)
+	}
+}

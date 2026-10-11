@@ -243,14 +243,33 @@ func (s *Stack) installGatewayRoute() error {
 }
 
 func (s *Stack) installNumberedGatewayRoute(gwIP net.IP, maskBits int) error {
+	gatewayRoute, addr, err := s.numberedRoute(gwIP, maskBits)
+	if err != nil {
+		return err
+	}
+	if err := s.gatewayRoutes().RouteReplace(gatewayRoute); err != nil {
+		return fmt.Errorf("replace numbered route to %s via %s: %w", s.cfg.ProvisionGateway, addr, err)
+	}
+	s.gateway = gatewayRoute
+	s.log.Info("installed numbered gateway VTEP route",
+		"gateway", s.cfg.ProvisionGateway,
+		"neighbor", addr,
+		"linkIndex", gatewayRoute.LinkIndex,
+	)
+	return nil
+}
+
+// numberedRoute builds a host route to dst through the egress of the first
+// usable numbered BGP neighbor. It returns the route and the neighbor.
+func (s *Stack) numberedRoute(dst net.IP, maskBits int) (*netlink.Route, string, error) {
 	var lastErr error
 	for _, addr := range s.cfg.NeighborAddrs {
 		neighbor := net.ParseIP(addr)
 		if neighbor == nil {
 			continue
 		}
-		if !sameIPFamily(gwIP, neighbor) {
-			lastErr = fmt.Errorf("neighbor %s address family does not match gateway %s", addr, s.cfg.ProvisionGateway)
+		if !sameIPFamily(dst, neighbor) {
+			lastErr = fmt.Errorf("neighbor %s address family does not match gateway %s", addr, dst)
 			continue
 		}
 		egress, err := s.gatewayRoutes().RouteGet(neighbor, s.numberedGatewayRouteGetOptions())
@@ -260,7 +279,7 @@ func (s *Stack) installNumberedGatewayRoute(gwIP net.IP, maskBits int) error {
 		}
 		foundLink := false
 		for i := range egress {
-			gatewayRoute, hasLink, err := s.numberedGatewayRoute(gwIP, maskBits, neighbor, &egress[i])
+			route, hasLink, err := s.numberedGatewayRoute(dst, maskBits, neighbor, &egress[i])
 			if !hasLink {
 				continue
 			}
@@ -269,25 +288,16 @@ func (s *Stack) installNumberedGatewayRoute(gwIP net.IP, maskBits int) error {
 				lastErr = err
 				continue
 			}
-			if err := s.gatewayRoutes().RouteReplace(gatewayRoute); err != nil {
-				return fmt.Errorf("replace numbered route to %s via %s: %w", s.cfg.ProvisionGateway, addr, err)
-			}
-			s.gateway = gatewayRoute
-			s.log.Info("installed numbered gateway VTEP route",
-				"gateway", s.cfg.ProvisionGateway,
-				"neighbor", addr,
-				"linkIndex", gatewayRoute.LinkIndex,
-			)
-			return nil
+			return route, addr, nil
 		}
 		if !foundLink {
 			lastErr = fmt.Errorf("route to neighbor %s has no link index", addr)
 		}
 	}
 	if lastErr != nil {
-		return fmt.Errorf("resolve numbered gateway egress: %w", lastErr)
+		return nil, "", fmt.Errorf("resolve numbered gateway egress: %w", lastErr)
 	}
-	return fmt.Errorf("no usable BGP neighbors for numbered gateway route")
+	return nil, "", fmt.Errorf("no usable BGP neighbors for numbered gateway route")
 }
 
 func (s *Stack) numberedGatewayRouteGetOptions() *netlink.RouteGetOptions {
@@ -313,7 +323,7 @@ func (s *Stack) numberedGatewayRoute(gwIP net.IP, maskBits int, neighbor net.IP,
 	switch {
 	case route.Gw != nil:
 		if !sameIPFamily(gwIP, route.Gw) {
-			return nil, true, fmt.Errorf("egress gateway %s address family does not match gateway %s", route.Gw.String(), s.cfg.ProvisionGateway)
+			return nil, true, fmt.Errorf("egress gateway %s address family does not match gateway %s", route.Gw.String(), gwIP)
 		}
 		gatewayRoute.Gw = route.Gw
 	case neighbor.Equal(gwIP):
@@ -390,6 +400,19 @@ func (s *Stack) ensureVTEPRoute(vtep net.IP) error {
 	s.vtepMu.Lock()
 	defer s.vtepMu.Unlock()
 	if _, ok := s.vtepRoutes[key]; ok {
+		return nil
+	}
+	if s.cfg.PeerMode == network.PeerModeNumbered {
+		// Numbered mode has no fabric NIC list. The VTEP is reached
+		// through the numbered neighbor, like the provision gateway.
+		route, addr, err := s.numberedRoute(vtep, 32)
+		if err != nil {
+			return fmt.Errorf("route to VTEP %s: %w", key, err)
+		}
+		if err := s.gatewayRoutes().RouteReplace(route); err != nil {
+			return fmt.Errorf("replace numbered route to VTEP %s via %s: %w", key, addr, err)
+		}
+		s.vtepRoutes[key] = route
 		return nil
 	}
 	if len(s.underlay.nics) == 0 {
