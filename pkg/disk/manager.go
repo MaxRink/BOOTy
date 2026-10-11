@@ -1090,7 +1090,14 @@ func (m *Manager) CheckFilesystem(ctx context.Context, device string) error {
 
 	out, err := m.cmd.Run(ctx, "e2fsck", "-fy", device)
 	if err != nil {
+		if errors.Is(err, executil.ErrNotFound) {
+			slog.Warn("e2fsck not found, skipping filesystem check", "device", device)
+			return nil
+		}
 		exitCode := exitCodeFromError(err)
+		if exitCode < 0 {
+			return fmt.Errorf("e2fsck did not complete on %s: %w", device, err)
+		}
 		if exitCode >= 4 {
 			return fmt.Errorf("e2fsck: uncorrectable filesystem errors on %s (exit %d): %w", device, exitCode, err)
 		}

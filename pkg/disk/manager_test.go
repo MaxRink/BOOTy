@@ -1203,6 +1203,24 @@ func TestCheckFilesystem(t *testing.T) {
 		}
 	})
 
+	t.Run("killed or canceled run fails", func(t *testing.T) {
+		cmd := newMockCommander()
+		mgr := NewManager(cmd)
+		cmd.setResult("e2fsck -fy", nil, context.Canceled)
+		if err := mgr.CheckFilesystem(context.Background(), "/dev/sda2"); err == nil {
+			t.Fatal("expected error when e2fsck did not complete")
+		}
+	})
+
+	t.Run("missing e2fsck skips the check", func(t *testing.T) {
+		cmd := newMockCommander()
+		mgr := NewManager(cmd)
+		cmd.setResult("e2fsck -fy", nil, &exec.Error{Name: "e2fsck", Err: exec.ErrNotFound})
+		if err := mgr.CheckFilesystem(context.Background(), "/dev/sda2"); err != nil {
+			t.Fatalf("missing e2fsck should skip the check: %v", err)
+		}
+	})
+
 	t.Run("vfat unsupported", func(t *testing.T) {
 		cmd := newMockCommander()
 		mgr := NewManager(cmd)
