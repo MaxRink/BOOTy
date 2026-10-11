@@ -132,32 +132,15 @@ func TestSelectBestSourceAllFailed(t *testing.T) {
 	}
 }
 
-func TestProbeURLTreats405And501AsReachable(t *testing.T) {
-	t.Helper()
-
-	tests := []struct {
-		name   string
-		status int
-	}{
-		{"405 Method Not Allowed", http.StatusMethodNotAllowed},
-		{"501 Not Implemented", http.StatusNotImplemented},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(tc.status)
-			}))
-			defer srv.Close()
-
-			elapsed, err := probeURL(context.Background(), srv.URL+"/image.raw")
-			if err != nil {
-				t.Errorf("probeURL should treat %d as reachable, got error: %v", tc.status, err)
-			}
-			if elapsed <= 0 {
-				t.Error("expected positive elapsed duration")
-			}
-		})
+func TestProbeURLTreatsGETErrorsAsUnreachable(t *testing.T) {
+	for _, status := range []int{http.StatusForbidden, http.StatusMethodNotAllowed, http.StatusNotImplemented} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(status)
+		}))
+		if _, err := probeURL(context.Background(), srv.URL+"/image.raw"); err == nil {
+			t.Errorf("probeURL accepted status %d, the GET download would fail", status)
+		}
+		srv.Close()
 	}
 }
 
@@ -180,5 +163,60 @@ func TestRedactHost(t *testing.T) {
 				t.Errorf("redactHost(%q) = %q, want %q", tc.input, got, tc.want)
 			}
 		})
+	}
+}
+
+// Legacy evidence: provision.sh pick_best_source probes with
+// `curl --range 0-0` (a GET) because presigned URLs bound to GET reject HEAD.
+func TestSelectBestSourceProbesPresignedURLsWithRangedGET(t *testing.T) {
+	var presignedRange string
+	presigned := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		presignedRange = r.Header.Get("Range")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write([]byte("x"))
+	}))
+	defer presigned.Close()
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(300 * time.Millisecond):
+			w.WriteHeader(http.StatusOK)
+		case <-r.Context().Done():
+		}
+	}))
+	defer slow.Close()
+
+	got, err := SelectBestSource(context.Background(), []string{slow.URL + "/img", presigned.URL + "/img?X-Amz-Signature=abc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != presigned.URL+"/img?X-Amz-Signature=abc" {
+		t.Fatalf("SelectBestSource() = %s, want the faster presigned source", got)
+	}
+	if presignedRange != "bytes=0-0" {
+		t.Fatalf("probe Range header = %q, want bytes=0-0", presignedRange)
+	}
+}
+
+func TestProbeURLRejectsStalledBody(t *testing.T) {
+	release := make(chan struct{})
+	stalled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusPartialContent)
+		w.(http.Flusher).Flush()
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer stalled.Close()
+	defer close(release)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	if _, err := probeURL(ctx, stalled.URL+"/image.raw"); err == nil {
+		t.Fatal("probeURL accepted a source that sent headers but no image byte")
 	}
 }

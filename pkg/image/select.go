@@ -2,7 +2,9 @@ package image
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"net/http"
@@ -10,7 +12,7 @@ import (
 	"time"
 )
 
-// SelectBestSource probes multiple image URLs with HEAD requests and returns
+// SelectBestSource probes multiple image URLs with ranged GET requests and returns
 // the one with the lowest response time. If only one URL is provided, it is
 // returned directly. OCI references (oci://) are returned as-is without probing.
 func SelectBestSource(ctx context.Context, urls []string) (string, error) {
@@ -66,15 +68,18 @@ func SelectBestSource(ctx context.Context, urls []string) (string, error) {
 	return httpURLs[0], nil
 }
 
-// probeURL sends a HEAD request to measure connectivity latency.
+// probeURL measures connectivity latency with a GET for the first byte,
+// like the `curl --range 0-0` probe of the CAPRF legacy provisioner.
+// Presigned URLs are often bound to GET and reject HEAD.
 func probeURL(ctx context.Context, rawURL string) (time.Duration, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodHead, rawURL, http.NoBody)
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, rawURL, http.NoBody)
 	if err != nil {
 		return 0, fmt.Errorf("creating probe request: %w", err)
 	}
+	req.Header.Set("Range", "bytes=0-0")
 
 	start := time.Now()
 	resp, err := gpgHTTPClient.Do(req) //nolint:gosec // URL from trusted config
@@ -82,14 +87,19 @@ func probeURL(ctx context.Context, rawURL string) (time.Duration, error) {
 		return 0, fmt.Errorf("probe request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	elapsed := time.Since(start)
 
-	if resp.StatusCode >= 400 &&
-		resp.StatusCode != http.StatusMethodNotAllowed &&
-		resp.StatusCode != http.StatusNotImplemented {
+	// The download uses the same GET, so any error status rules the source
+	// out, like `curl --fail` in the legacy probe.
+	if resp.StatusCode >= 400 {
 		return 0, fmt.Errorf("probe returned status %d", resp.StatusCode)
 	}
-	return elapsed, nil
+	// Measure until the first image byte arrives, like curl's time_total
+	// for --range 0-0, so a source that sends headers and then stalls loses.
+	// An empty body ends with io.EOF, which curl accepts as well.
+	if _, err := io.ReadFull(resp.Body, make([]byte, 1)); err != nil && !errors.Is(err, io.EOF) {
+		return 0, fmt.Errorf("probe read: %w", err)
+	}
+	return time.Since(start), nil
 }
 
 // redactHost extracts only the hostname from a URL for safe logging.
