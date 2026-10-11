@@ -161,6 +161,13 @@ type RemoteHandler struct {
 	cancel   context.CancelFunc
 	dropped  *atomic.Int64 // counts messages dropped due to full buffer
 	reported *atomic.Int64 // counts drops already reported in periodic warnings
+	gate     *sendGate     // shared by derived handlers; stops sends after Close
+}
+
+// sendGate lets Close close buf while derived handlers may still log.
+type sendGate struct {
+	mu     sync.RWMutex
+	closed bool
 }
 
 // NewRemoteHandler creates a handler that sends logs to the CAPRF server.
@@ -181,6 +188,7 @@ func NewRemoteHandler(client *Client, inner slog.Handler, level slog.Leveler, bu
 		cancel:   cancel,
 		dropped:  &atomic.Int64{},
 		reported: &atomic.Int64{},
+		gate:     &sendGate{},
 	}
 	go h.startWorkers(ctx)
 	return h
@@ -273,14 +281,29 @@ func (h *RemoteHandler) Handle(ctx context.Context, r slog.Record) error { //nol
 		return true
 	})
 
-	select {
-	case h.buf <- sb.String():
-	default:
-		total := h.dropped.Add(1)
-		h.maybeWarnDropped(total)
-	}
-
+	h.enqueue(sb.String())
 	return nil
+}
+
+// enqueue queues a line for shipping. After Close it drops the line, so a
+// late log from a derived logger cannot send on the closed buffer.
+func (h *RemoteHandler) enqueue(line string) {
+	h.gate.mu.RLock()
+	closed, sent := h.gate.closed, false
+	if !closed {
+		select {
+		case h.buf <- line:
+			sent = true
+		default:
+		}
+	}
+	h.gate.mu.RUnlock()
+
+	// Warn outside the lock: the inner handler may block, and Close must
+	// still be able to take the write lock.
+	if !closed && !sent {
+		h.maybeWarnDropped(h.dropped.Add(1))
+	}
 }
 
 // maybeWarnDropped emits a periodic warning every dropWarnEvery drops.
@@ -326,6 +349,7 @@ func (h *RemoteHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 		cancel:   h.cancel,
 		dropped:  h.dropped,
 		reported: h.reported,
+		gate:     h.gate,
 	}
 }
 
@@ -343,6 +367,7 @@ func (h *RemoteHandler) WithGroup(name string) slog.Handler {
 		cancel:   h.cancel,
 		dropped:  h.dropped,
 		reported: h.reported,
+		gate:     h.gate,
 	}
 }
 
@@ -359,7 +384,10 @@ func (h *RemoteHandler) Close() {
 			h.warnViaInner("remote log handler: entries were dropped during session",
 				slog.Int64("total_dropped", n))
 		}
+		h.gate.mu.Lock()
+		h.gate.closed = true
 		close(h.buf)
+		h.gate.mu.Unlock()
 		select {
 		case <-h.done:
 		case <-time.After(5 * time.Second): //nolint:mnd // fixed drain timeout

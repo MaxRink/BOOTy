@@ -83,6 +83,7 @@ func TestRemoteHandlerDropsWhenFull(t *testing.T) {
 		once:     &sync.Once{},
 		dropped:  &atomic.Int64{},
 		reported: &atomic.Int64{},
+		gate:     &sendGate{},
 	}
 
 	go func() {
@@ -128,6 +129,7 @@ func TestDropCounterIncrementsOnFullBuffer(t *testing.T) {
 		once:     &sync.Once{},
 		dropped:  &atomic.Int64{},
 		reported: &atomic.Int64{},
+		gate:     &sendGate{},
 	}
 
 	go func() {
@@ -258,6 +260,7 @@ func TestMaybeWarnDroppedCadence(t *testing.T) {
 		inner:    inner,
 		dropped:  &atomic.Int64{},
 		reported: &atomic.Int64{},
+		gate:     &sendGate{},
 	}
 
 	for i := int64(1); i <= dropWarnEvery; i++ {
@@ -296,6 +299,7 @@ func TestDropCounterHighVolume(t *testing.T) {
 		once:     &sync.Once{},
 		dropped:  &atomic.Int64{},
 		reported: &atomic.Int64{},
+		gate:     &sendGate{},
 	}
 
 	go func() {
@@ -585,4 +589,37 @@ func TestHandleRedactsSensitiveAttrsInLocalLog(t *testing.T) {
 	if !strings.Contains(got, "component=provision") {
 		t.Fatalf("local log dropped non-sensitive attr: %s", got)
 	}
+}
+
+func TestRemoteHandlerLogAfterCloseDoesNotPanic(t *testing.T) {
+	var count atomic.Int64
+	inner := &countingHandler{level: slog.LevelInfo, count: &count}
+	root := NewRemoteHandler(NewFromConfig(&config.MachineConfig{}), inner, slog.LevelInfo, 10)
+	logger := slog.New(root).With("tier", "overlay")
+
+	root.Close()
+	logger.Info("late log from a derived logger")
+
+	if got := count.Load(); got != 1 {
+		t.Fatalf("inner handler records = %d, want 1", got)
+	}
+}
+
+func TestRemoteHandlerConcurrentLogAndClose(t *testing.T) {
+	inner := slog.NewTextHandler(io.Discard, nil)
+	root := NewRemoteHandler(NewFromConfig(&config.MachineConfig{}), inner, slog.LevelInfo, 10)
+	logger := slog.New(root).With("tier", "underlay")
+
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 200 {
+				logger.Info("concurrent log")
+			}
+		}()
+	}
+	root.Close()
+	wg.Wait()
 }
