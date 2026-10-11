@@ -1009,6 +1009,10 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	if src.UnderlayIP != "" {
 		dst.UnderlayIP = src.UnderlayIP
 	}
+	// The netplan MAC belongs to one bridge. Only use it for that bridge.
+	if src.BridgeMAC != "" && src.BridgeNameOrDefault() == dst.BridgeNameOrDefault() {
+		dst.BridgeMAC = src.BridgeMAC
+	}
 	if src.ProvisionIP != "" {
 		dst.ProvisionIP = mergeProvisionIP(dst.ProvisionIP, src.ProvisionIP)
 	}

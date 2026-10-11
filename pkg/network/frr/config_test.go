@@ -2,6 +2,7 @@ package frr
 
 import (
 	"fmt"
+	"net"
 	"strings"
 	"testing"
 
@@ -62,14 +63,124 @@ func TestDeriveAddresses_NoUnderlayInfo(t *testing.T) {
 	}
 }
 
-func TestDeriveAddresses_DefaultBridgeMAC(t *testing.T) {
-	cfg := network.Config{UnderlayIP: "10.0.0.1"}
-	_, _, mac, err := DeriveAddresses(&cfg)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestDeriveAddresses_BridgeMACWithoutIPMI(t *testing.T) {
+	tests := []struct {
+		name     string
+		underlay string
+		ipmiMAC  string
+		want     string
+	}{
+		{"ipv4_underlay", "10.0.0.1", "", "02:54:0a:00:00:01"},
+		{"other_ipv4_underlay", "10.0.0.2", "", "02:54:0a:00:00:02"},
+		{"invalid_ipmi_mac", "192.168.4.7", "invalid", "02:54:c0:a8:04:07"},
 	}
-	if mac != "02:54:00:00:00:01" {
-		t.Errorf("mac = %q, want default %q", mac, "02:54:00:00:00:01")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := network.Config{UnderlayIP: tt.underlay, IPMIMAC: tt.ipmiMAC}
+			_, _, mac, err := DeriveAddresses(&cfg)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if mac != tt.want {
+				t.Errorf("mac = %q, want %q", mac, tt.want)
+			}
+		})
+	}
+}
+
+func TestDeriveAddresses_BridgeMACOverride(t *testing.T) {
+	tests := []struct {
+		name      string
+		bridgeMAC string
+		want      string
+		wantErr   bool
+	}{
+		{"netplan_macaddress_wins", "02:AA:BB:CC:DD:EE", "02:aa:bb:cc:dd:ee", false},
+		{"invalid_macaddress", "not-a-mac", "", true},
+		{"eui64_macaddress", "02:00:00:00:00:00:10:01", "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := network.Config{UnderlayIP: "10.0.0.1", IPMIMAC: "aa:bb:cc:dd:ee:ff", BridgeMAC: tt.bridgeMAC}
+			_, _, mac, err := DeriveAddresses(&cfg)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+			if mac != tt.want {
+				t.Errorf("mac = %q, want %q", mac, tt.want)
+			}
+		})
+	}
+}
+
+func TestDeriveAddresses_InvalidUnderlayIPForBridgeMAC(t *testing.T) {
+	tests := []struct {
+		name      string
+		underlay  string
+		ipmiMAC   string
+		bridgeMAC string
+	}{
+		{"not_an_ip", "not-an-ip", "", ""},
+		{"ipv6", "2001:db8::1", "", ""},
+		{"ipv6_with_ipmi_mac", "2001:db8::1", "aa:bb:cc:dd:ee:ff", ""},
+		{"ipv6_with_bridge_mac", "2001:db8::1", "", "02:00:00:00:10:01"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := network.Config{UnderlayIP: tt.underlay, IPMIMAC: tt.ipmiMAC, BridgeMAC: tt.bridgeMAC}
+			if _, _, _, err := DeriveAddresses(&cfg); err == nil {
+				t.Fatal("expected error for a non-IPv4 underlay IP")
+			}
+		})
+	}
+}
+
+// TestBridgeMACUniqueStableLAA checks that hosts get distinct, stable,
+// locally administered unicast MACs.
+func TestBridgeMACUniqueStableLAA(t *testing.T) {
+	tests := []struct {
+		name    string
+		ipmiMAC string
+		ip      string
+	}{
+		{"ipmi_a", "aa:bb:cc:dd:ee:01", ""},
+		{"ipmi_b", "aa:bb:cc:dd:ee:02", ""},
+		{"ip_a", "", "10.0.0.11"},
+		{"ip_b", "", "10.0.0.12"},
+		{"ip_c", "", "10.0.1.11"},
+	}
+	seen := map[string]string{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			derive := func() string {
+				if tt.ipmiMAC != "" {
+					return DeriveBridgeMAC(tt.ipmiMAC)
+				}
+				mac, err := deriveBridgeMACFromIP(tt.ip)
+				if err != nil {
+					t.Fatalf("deriveBridgeMACFromIP: %v", err)
+				}
+				return mac
+			}
+			got := derive()
+			if again := derive(); again != got {
+				t.Errorf("not stable: %q then %q", got, again)
+			}
+			if prev, ok := seen[got]; ok {
+				t.Errorf("mac %q of %s collides with %s", got, tt.name, prev)
+			}
+			seen[got] = tt.name
+			hw, err := net.ParseMAC(got)
+			if err != nil {
+				t.Fatalf("invalid MAC %q: %v", got, err)
+			}
+			if hw[0]&0x02 == 0 {
+				t.Errorf("mac %q: locally administered bit not set", got)
+			}
+			if hw[0]&0x01 != 0 {
+				t.Errorf("mac %q: multicast bit set", got)
+			}
+		})
 	}
 }
 
@@ -134,7 +245,10 @@ func TestDeriveBridgeMAC(t *testing.T) {
 	}{
 		{"standard", "aa:bb:cc:dd:ee:ff", "02:54:cc:dd:ee:ff"},
 		{"dashes", "aa-bb-cc-dd-ee-ff", "02:54:cc:dd:ee:ff"},
-		{"too_short", "aa:bb", "02:54:00:00:00:01"},
+		{"too_short", "aa:bb", ""},
+		{"invalid_hex", "aa:bb:cc:dd:ee:zz", ""},
+		{"empty", "", ""},
+		{"eui64", "aa:bb:cc:dd:ee:ff:00:11", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

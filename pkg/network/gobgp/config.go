@@ -163,7 +163,7 @@ func (c *Config) ApplyDefaults() {
 		c.ConnectRetry = 5
 	}
 	if c.BridgeName == "" {
-		c.BridgeName = "br.provision"
+		c.BridgeName = network.DefaultBridgeName
 	}
 	if c.MTU == 0 {
 		c.MTU = 9000

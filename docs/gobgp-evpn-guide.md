@@ -133,6 +133,19 @@ router-MAC extended communities. This makes them direct Type-5 routes: peers
 install an on-link route through the VTEP and program the router-MAC FDB entry
 without requiring Type-2 MAC/IP resolution.
 
+The router MAC is the provision bridge MAC. BOOTy selects it in this order:
+
+1. The netplan `macaddress` of the provision bridge, used as given. It must
+   be a 48-bit MAC.
+2. `02:54` and the last 4 bytes of the IPMI MAC.
+3. `02:54` and the 4 bytes of the underlay IPv4, like the legacy
+   `configure-frr.py` ramdisk.
+
+The derived MACs are stable, host specific, locally administered unicast
+addresses. The IPv4 underlay MAC is unique because the underlay IP is the
+VTEP address. The IPMI MAC keeps only 4 bytes, so a collision is
+unlikely but possible. Set the netplan `macaddress` if you need a fixed value.
+
 When `EVPN_L2_ENABLED=true`, BOOTy also originates:
 
 | Route Type | Purpose |

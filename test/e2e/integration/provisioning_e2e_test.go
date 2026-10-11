@@ -402,8 +402,8 @@ func TestBridgeMACDerivation(t *testing.T) {
 	}
 
 	mac = frr.DeriveBridgeMAC("invalid")
-	if mac != "02:54:00:00:00:01" {
-		t.Errorf("fallback MAC = %s, want 02:54:00:00:00:01", mac)
+	if mac != "" {
+		t.Errorf("invalid MAC = %s, want empty", mac)
 	}
 	t.Log("Bridge MAC derivation handles all formats")
 }

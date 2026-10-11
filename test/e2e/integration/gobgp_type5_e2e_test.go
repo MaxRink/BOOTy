@@ -323,6 +323,43 @@ func TestType5VM1DirectExportAsType5(t *testing.T) {
 	}
 }
 
+// TestType5RouterMACPerHost checks that each VM advertises its own derived
+// router MAC. Before, hosts without an IPMI MAC all used 02:54:00:00:00:01.
+func TestType5RouterMACPerHost(t *testing.T) {
+	requireType5Lab(t)
+	t.Cleanup(func() { type5DumpDebugState(t) })
+
+	tests := []struct {
+		leaf, prefix, nextHop string
+	}{
+		{type5LabLeaf1, "10.200.0.10", "192.168.4.10"},
+		{type5LabLeaf2, "10.200.0.11", "192.168.4.11"},
+	}
+	var macs []string
+	for _, tt := range tests {
+		type5WaitForBGPInterface(t, tt.leaf, "eth2")
+		deadline := time.Now().Add(type5ConvergeTimeout)
+		for {
+			out, _ := type5VtyshRaw(t, tt.leaf, "show bgp l2vpn evpn route type prefix")
+			mac, ok := type5RouteRouterMACAndNextHop(out, tt.prefix, tt.nextHop)
+			if ok {
+				if !strings.HasPrefix(mac, "02:54:") || mac == "02:54:00:00:00:01" {
+					t.Fatalf("router MAC for %s = %q, want a derived 02:54 MAC", tt.prefix, mac)
+				}
+				macs = append(macs, mac)
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("no router MAC for %s via %s:\n%s", tt.prefix, tt.nextHop, out)
+			}
+			time.Sleep(type5ConvergeInterval)
+		}
+	}
+	if macs[0] == macs[1] {
+		t.Fatalf("both VMs advertise router MAC %s", macs[0])
+	}
+}
+
 func TestType5VM0OverlayAsType5(t *testing.T) {
 	requireType5Lab(t)
 	t.Cleanup(func() { type5DumpDebugState(t) })

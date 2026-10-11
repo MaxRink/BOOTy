@@ -891,6 +891,42 @@ func TestToNetworkConfig_PeerModeDual(t *testing.T) {
 	}
 }
 
+func TestToNetworkConfig_BridgeMAC(t *testing.T) {
+	tunnels := map[string]TunnelConfig{"vx.1000": {Mode: "vxlan", ID: 1000, Local: "192.168.4.10"}}
+	tests := []struct {
+		name    string
+		bridges map[string]BridgeConfig
+		want    string
+	}{
+		{"no_macaddress", map[string]BridgeConfig{
+			"br.provision": {Interfaces: []string{"vx.1000"}},
+		}, ""},
+		{"provision_bridge_without_addresses", map[string]BridgeConfig{
+			"br.provision": {Interfaces: []string{"vx.1000"}, MACAddress: "02:00:00:00:10:01"},
+		}, "02:00:00:00:10:01"},
+		{"other_bridge_ignored", map[string]BridgeConfig{
+			"br.other":     {Interfaces: []string{"eth1"}, MACAddress: "02:00:00:00:10:02"},
+			"br.provision": {Interfaces: []string{"vx.1000"}, Addresses: []string{"10.100.0.20/32"}},
+		}, ""},
+		{"selected_bridge_mac", map[string]BridgeConfig{
+			"br.a": {Interfaces: []string{"vx.1000"}, MACAddress: "02:00:00:00:10:03"},
+			"br.b": {Interfaces: []string{"vx.1000"}, Addresses: []string{"10.100.0.20/32"}, MACAddress: "02:00:00:00:10:04"},
+		}, "02:00:00:00:10:04"},
+		{"addressless_bridge_not_selected", map[string]BridgeConfig{
+			"br.a": {Interfaces: []string{"vx.1000"}, MACAddress: "02:00:00:00:10:03"},
+			"br.b": {Interfaces: []string{"vx.1000"}, Addresses: []string{"10.100.0.20/32"}},
+		}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			np := &Config{Network: NetworkSection{Tunnels: tunnels, Bridges: tt.bridges}}
+			if got := ToNetworkConfig(np, nil).BridgeMAC; got != tt.want {
+				t.Errorf("BridgeMAC = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestHasNetplanFiles(t *testing.T) {
 	tests := []struct {
 		name  string

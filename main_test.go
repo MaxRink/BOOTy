@@ -59,6 +59,30 @@ func TestMergeNetplanConfigPreservesProvisionPrefixForSameHostMask(t *testing.T)
 	}
 }
 
+func TestMergeNetplanConfigBridgeMAC(t *testing.T) {
+	tests := []struct {
+		name      string
+		srcBridge string
+		want      string
+	}{
+		{"default_bridge", "", "02:00:00:00:10:01"},
+		{"same_bridge", "br.provision", "02:00:00:00:10:01"},
+		{"other_bridge", "br_cluster", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dst := &network.Config{}
+			src := &network.Config{BridgeName: tt.srcBridge, BridgeMAC: "02:00:00:00:10:01"}
+
+			mergeNetplanConfig(dst, src)
+
+			if dst.BridgeMAC != tt.want {
+				t.Fatalf("BridgeMAC = %q, want %q", dst.BridgeMAC, tt.want)
+			}
+		})
+	}
+}
+
 func TestNetworkConfigFromMachineConfigWiresType5Only(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Network.EVPN.Type5Only = true
