@@ -332,8 +332,17 @@ func applyFRRParams(frr *FRRParams, cfg *network.Config) {
 	if frr.RouterID != "" && cfg.UnderlayIP == "" {
 		cfg.UnderlayIP = frr.RouterID
 	}
+	cfg.EVPNL3VNIs = frr.L3VNIs
 	if frr.AdvertiseAllVNI {
-		cfg.EVPNL2Enabled = true
+		// advertise-all-vni only yields Type-2/Type-3 routes for L2VNIs. When
+		// the provisioning VNI is an L3VNI the fabric is pure Type-5, as with
+		// the FRR-based legacy deployer, so BOOTy must not originate MAC/IP or
+		// IMET routes for it.
+		if cfg.ProvisionVNI != 0 && slices.Contains(frr.L3VNIs, cfg.ProvisionVNI) {
+			slog.Info("netplan: provision VNI is an FRR L3VNI, using Type-5 only", "vni", cfg.ProvisionVNI)
+		} else {
+			cfg.EVPNL2Enabled = true
+		}
 	}
 	hasUnnumbered := len(frr.UnnumberedPeers) > 0
 	hasNumbered := len(frr.NumberedPeers) > 0

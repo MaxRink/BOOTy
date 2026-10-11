@@ -532,6 +532,93 @@ func TestToNetworkConfig_PureType5DoesNotEnableL2(t *testing.T) {
 	}
 }
 
+// TestToNetworkConfig_EVPNRouteMode pins the EVPN route mode that BOOTy
+// infers from the FRR config. Configs that enabled Type-2/Type-3 before the
+// L3VNI check keep doing so; only a provisioning VNI that FRR maps as an
+// L3VNI stays on Type-5 routes.
+func TestToNetworkConfig_EVPNRouteMode(t *testing.T) {
+	const (
+		bgpHead = "router bgp 65100\n bgp router-id 192.168.4.10\n neighbor eth1 interface remote-as external\n"
+		evpnAF  = " address-family l2vpn evpn\n  neighbor eth1 activate\n"
+		evpnEnd = " exit-address-family\nexit\n"
+	)
+	tests := []struct {
+		name   string
+		vni    int
+		frr    string
+		wantL2 bool
+	}{
+		{
+			name:   "L2VNI with advertise-all-vni (Type-2/3 + Type-5)",
+			vni:    100,
+			frr:    bgpHead + evpnAF + "  advertise-all-vni\n" + evpnEnd,
+			wantL2: true,
+		},
+		{
+			name:   "L2VNI block with explicit RD and RT",
+			vni:    100,
+			frr:    bgpHead + evpnAF + "  advertise-all-vni\n  vni 100\n   rd 192.168.4.10:100\n   route-target both 65100:100\n  exit-vni\n" + evpnEnd,
+			wantL2: true,
+		},
+		{
+			name:   "symmetric IRB: L2VNI provisioning with a tenant L3VNI",
+			vni:    100,
+			frr:    "vrf tenant\n vni 4000\nexit-vrf\n!\n" + bgpHead + evpnAF + "  advertise-all-vni\n" + evpnEnd + "router bgp 65100 vrf tenant\n address-family l2vpn evpn\n  advertise ipv4 unicast\n exit-address-family\nexit\n",
+			wantL2: true,
+		},
+		{
+			name:   "asymmetric IRB: L2VNI only with advertise-default-gw",
+			vni:    100,
+			frr:    bgpHead + evpnAF + "  advertise-all-vni\n  advertise-default-gw\n" + evpnEnd,
+			wantL2: true,
+		},
+		{
+			name:   "pure Type-5 without advertise-all-vni",
+			vni:    1000,
+			frr:    bgpHead + evpnAF + "  advertise ipv4 unicast\n" + evpnEnd,
+			wantL2: false,
+		},
+		{
+			name:   "CAPRF: provisioning VNI is the default VRF L3VNI",
+			vni:    1000,
+			frr:    "frr version 9.1\nfrr defaults datacenter\n!\nvni 1000\n!\n" + bgpHead + evpnAF + "  advertise-all-vni\n  advertise ipv4 unicast\n" + evpnEnd,
+			wantL2: false,
+		},
+		{
+			name:   "provisioning VNI is a VRF L3VNI",
+			vni:    4000,
+			frr:    "vrf provision\n vni 4000 prefix-routes-only\nexit-vrf\n!\n" + bgpHead + evpnAF + "  advertise-all-vni\n" + evpnEnd,
+			wantL2: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			np := &Config{
+				Network: NetworkSection{
+					Ethernets: map[string]EthernetConfig{"eth1": {LinkLocal: []string{"ipv6"}, MTU: 9100}},
+					Tunnels: map[string]TunnelConfig{
+						"vx.prov": {Mode: "vxlan", ID: tt.vni, Local: "192.168.4.10", Port: 4789},
+					},
+					Bridges: map[string]BridgeConfig{
+						"br.provision": {Interfaces: []string{"vx.prov"}, Addresses: []string{"10.200.0.10/32"}},
+					},
+				},
+			}
+			frr, err := ParseFRRConfigBytes([]byte(tt.frr))
+			if err != nil {
+				t.Fatalf("ParseFRRConfigBytes: %v", err)
+			}
+			netCfg := ToNetworkConfig(np, frr)
+			if netCfg.EVPNL2Enabled != tt.wantL2 {
+				t.Fatalf("EVPNL2Enabled = %v, want %v", netCfg.EVPNL2Enabled, tt.wantL2)
+			}
+			if netCfg.EVPNType5Only {
+				t.Fatal("EVPNType5Only must only come from explicit configuration")
+			}
+		})
+	}
+}
+
 func TestToNetworkConfig_ProductionUnderlayVRFOverlayDefault(t *testing.T) {
 	np := &Config{
 		Network: NetworkSection{

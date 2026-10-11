@@ -94,6 +94,9 @@ type Config struct {
 	EVPNL2Enabled bool // Enable L2 overlay route handling
 	// EVPNType5Only selects direct Type-5 routing without an L2 gateway.
 	EVPNType5Only bool
+	// EVPNL3VNIs lists the VNIs that the provisioner FRR config maps to a VRF.
+	// Set from netplan input only; an L3VNI provision VNI keeps Type-5 only.
+	EVPNL3VNIs []uint32
 
 	// VLAN configuration.
 	VLANs []VLANConfig // 802.1Q VLAN interfaces to create before network mode setup

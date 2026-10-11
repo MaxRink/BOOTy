@@ -1,0 +1,14 @@
+# Provisioner file-system overlay for booty-unnumbered. BOOTy reads it from
+# /deploy/file-system and infers the EVPN route mode from the FRR config.
+network:
+  version: 2
+  tunnels:
+    vx100:
+      mode: vxlan
+      id: 100
+      local: 10.0.0.20
+      port: 4789
+  bridges:
+    br100:
+      interfaces: [vx100]
+      addresses: [10.100.0.20/24]

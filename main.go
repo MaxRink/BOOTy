@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1025,9 +1026,7 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	if src.BGPNeighbors != "" {
 		dst.BGPNeighbors = src.BGPNeighbors
 	}
-	if src.EVPNL2Enabled {
-		dst.EVPNL2Enabled = true
-	}
+	mergeInferredEVPNL2(dst, src)
 	if src.BondInterfaces != "" {
 		dst.BondInterfaces = src.BondInterfaces
 	}
@@ -1074,6 +1073,21 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	if len(src.Interfaces) > 0 {
 		dst.Interfaces = src.Interfaces
 	}
+}
+
+// mergeInferredEVPNL2 applies the L2 EVPN mode inferred from the FRR config.
+// An explicit EVPN_TYPE5_ONLY wins, so operators can force Type-5 only
+// routing. The L3VNI check is repeated with the merged provision VNI because
+// the VNI can come from /deploy/vars when the netplan files do not set it.
+func mergeInferredEVPNL2(dst, src *network.Config) {
+	if !src.EVPNL2Enabled || dst.EVPNType5Only {
+		return
+	}
+	if slices.Contains(src.EVPNL3VNIs, dst.ProvisionVNI) {
+		slog.Info("netplan: provision VNI is an FRR L3VNI, using Type-5 only", "vni", dst.ProvisionVNI)
+		return
+	}
+	dst.EVPNL2Enabled = true
 }
 
 func mergeProvisionIP(existing, detected string) string {

@@ -1140,9 +1140,20 @@ and uses the derived network config, with netplan values overriding
 The netplan parser supports ethernets, bonds, bridges, VLANs, tunnels
 (VXLAN/GRE), dummy devices, VRFs, and static routes. When an FRR config
 file is also present, BOOTy extracts BGP parameters (ASN, router-ID,
-peers, EVPN settings) from it. Pure Type-5 configs that use
-`advertise ipv4 unicast` stay L3-only; `advertise-all-vni` is the opt-in
-signal for L2 EVPN Type-2/Type-3 handling.
+peers, EVPN settings) from it, including the GoBGP EVPN route mode:
+
+| Input | EVPN routes BOOTy originates |
+|---|---|
+| `EVPN_L2_ENABLED=true` | Type-2 + Type-3 + Type-5 |
+| FRR `advertise-all-vni`, provisioning VNI is an L2VNI | Type-2 + Type-3 + Type-5 |
+| FRR `advertise-all-vni`, provisioning VNI is an L3VNI (`vni N` at the top level or in a `vrf` block, as in the CAPRF frr.conf) | Type-5 only |
+| FRR config without `advertise-all-vni` (for example only `advertise ipv4 unicast`), or no FRR config | Type-5 only |
+| `EVPN_TYPE5_ONLY=true` | Type-5 only, without an L2 gateway; overrides L2 handling inferred from the FRR config |
+
+The L3VNI rule follows FRR: `advertise-all-vni` creates Type-2/Type-3
+routes for L2VNIs only, so the CAPRF L3VNI setup stays Type-5 only, like
+the FRR-based legacy deployer. `EVPN_L2_ENABLED` and `EVPN_TYPE5_ONLY`
+cannot both be set.
 
 ### Network Persistence
 
