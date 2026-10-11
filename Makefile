@@ -31,6 +31,15 @@ CLEAN_FILES := \
 	initramfs.cpio.zst \
 	initramfs.cpio.zst.sha256
 
+# Keep the version in sync with the golangci-lint step in .github/workflows/ci.yml.
+# CI lints with the Go version from go.mod. golangci-lint and staticcheck can
+# crash with a newer local Go, so build and run the linter with that version.
+GOLANGCI_LINT_VERSION ?= v2.12.2
+LINT_GOTOOLCHAIN ?= go$(shell sed -n 's/^go //p' go.mod)
+LINT_HOSTOS := $(shell go env GOHOSTOS)
+LINT_EXE := $(if $(filter windows,$(LINT_HOSTOS)),.exe)
+GOLANGCI_LINT ?= bin/golangci-lint-$(GOLANGCI_LINT_VERSION)-$(LINT_GOTOOLCHAIN)-$(LINT_HOSTOS)-$(shell go env GOHOSTARCH)$(LINT_EXE)
+
 CLAB_TEST_IMAGE ?= test/e2e/clab/images/test.img.gz
 
 .PHONY: all build build-all clean install uninstall fmt fmt-check lint test docker dockerx86 iso slim micro gobgp gobgp-iso dockerx86slim dockerx86micro dockerx86gobgp arm64 arm64-slim arm64-gobgp test-iso getramdisk getramdisk-arm64 test-kvm test-e2e clab-test-image clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-test-image booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab booty-gobgp-test-image clab-gobgp-up clab-gobgp-down test-e2e-gobgp clab-gobgp-vrnetlab-up clab-gobgp-vrnetlab-down test-e2e-gobgp-vrnetlab clab-type5-up clab-type5-down test-e2e-type5 clab-production-up clab-production-down test-e2e-production test-e2e-production-full booty-dhcpd-test-image clab-dhcp-up clab-dhcp-down test-e2e-dhcp clab-bond-up clab-bond-down test-e2e-bond clab-lacp-up clab-lacp-down test-e2e-lacp clab-static-up clab-static-down test-e2e-static clab-multi-nic-up clab-multi-nic-down test-e2e-multi-nic check check-build-vars check-docker-vars check-oci-vars oci-push oci-push-initramfs oci-push-binary
@@ -96,20 +105,27 @@ uninstall: check-build-vars clean
 	@target_path=$$(command -v -- "$$TARGET" 2>/dev/null || true); \
 	if [ -n "$$target_path" ]; then rm -f -- "$$target_path"; fi
 
-fmt:
-	@gofmt -l -w $(SRC)
-	@golangci-lint fmt
+$(GOLANGCI_LINT):
+	@mkdir -p $(@D)
+	@tmp=$$(mktemp -d) && \
+	GOTOOLCHAIN=$(LINT_GOTOOLCHAIN) GOBIN="$$tmp" go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) && \
+	mv "$$tmp/golangci-lint$(LINT_EXE)" "$@" && rmdir "$$tmp"
 
-fmt-check:
+fmt: $(GOLANGCI_LINT)
+	@gofmt -l -w $(SRC)
+	@GOTOOLCHAIN=$(LINT_GOTOOLCHAIN) $(GOLANGCI_LINT) fmt
+
+fmt-check: $(GOLANGCI_LINT)
 	@files=$$(gofmt -l $(SRC)); \
 	if [ -n "$$files" ]; then \
 		printf '%s\n' "$$files"; \
 		exit 1; \
 	fi
-	@golangci-lint fmt --diff
+	@GOTOOLCHAIN=$(LINT_GOTOOLCHAIN) $(GOLANGCI_LINT) fmt --diff
 
-lint:
-	@golangci-lint run ./...
+# BOOTy runs on Linux only, so lint the Linux build like CI does, also on macOS.
+lint: $(GOLANGCI_LINT)
+	@GOTOOLCHAIN=$(LINT_GOTOOLCHAIN) GOOS=$(TARGETOS) $(GOLANGCI_LINT) run ./...
 
 test:
 	@go test -race -coverprofile=$(COVERAGE_PROFILE) ./...

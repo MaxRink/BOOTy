@@ -119,6 +119,13 @@ make lint
 ```
 
 This runs [golangci-lint](https://golangci-lint.run/) with the configuration in `.golangci.yml`.
+The first run installs the golangci-lint version that CI uses into `bin/`.
+Like CI, it builds and runs the linter with the Go version from `go.mod`. The
+`go` command downloads that toolchain when your local Go is different.
+Do not run the linter with a newer local Go. With Go 1.27, golangci-lint
+v2.12.2 panics in the staticcheck `fact_purity` analyzer, and a golangci-lint
+built with Go 1.26 fails with "file requires newer Go version go1.27".
+The lint always checks the Linux build, also on macOS.
 
 Key lint rules:
 - **cyclop**: Maximum function complexity of 15
