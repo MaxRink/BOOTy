@@ -351,11 +351,13 @@ func applyFRRParams(frr *FRRParams, cfg *network.Config) {
 	case hasUnnumbered && hasNumbered:
 		cfg.BGPPeerMode = network.PeerModeDual
 		cfg.BGPNeighbors = strings.Join(frr.NumberedPeers, ",")
+		cfg.BGPRemoteASN = frr.RemoteASN
 	case hasUnnumbered:
 		cfg.BGPPeerMode = network.PeerModeUnnumbered
 	case hasNumbered:
 		cfg.BGPPeerMode = network.PeerModeNumbered
 		cfg.BGPNeighbors = strings.Join(frr.NumberedPeers, ",")
+		cfg.BGPRemoteASN = frr.RemoteASN
 	}
 }
 

@@ -1280,3 +1280,18 @@ func TestLoadModulesWarnsWhenAModuleNeverLoads(t *testing.T) {
 		t.Fatalf("expected a warning for broken.ko at the default level, got:\n%s", logs.String())
 	}
 }
+
+// The FRR config sets the numbered peers and their remote ASN together.
+// An iBGP peer (remote ASN 0) must not keep an eBGP ASN from the vars.
+func TestMergeNetplanConfigRemoteASNFollowsNeighbors(t *testing.T) {
+	dst := &network.Config{BGPNeighbors: "10.0.0.1", BGPRemoteASN: 65500}
+	mergeNetplanConfig(dst, &network.Config{BGPNeighbors: "192.0.2.1"})
+	if dst.BGPNeighbors != "192.0.2.1" || dst.BGPRemoteASN != 0 {
+		t.Fatalf("merge = %q/%d, want 192.0.2.1 with iBGP (0)", dst.BGPNeighbors, dst.BGPRemoteASN)
+	}
+	dst = &network.Config{BGPNeighbors: "10.0.0.1", BGPRemoteASN: 65500}
+	mergeNetplanConfig(dst, &network.Config{})
+	if dst.BGPRemoteASN != 65500 {
+		t.Fatalf("merge without netplan peers = %d, want the vars value 65500", dst.BGPRemoteASN)
+	}
+}
