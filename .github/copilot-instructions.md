@@ -38,7 +38,6 @@ Lightweight initramfs agent for bare-metal OS provisioning. Boots as PID 1, read
 - `pkg/efi/` — EFI variable operations
 
 - `pkg/executil/` — Shared command execution wrappers
-- `pkg/grubcfg/` — GRUB config file parsing
 - `pkg/secureboot/` — Secure Boot chain setup
 - `pkg/serialconsole/` — Serial console resolution (explicit override, ACPI SPCR, device tree, sysfs, DMI evidence)
 - `pkg/system/` — System-level operations

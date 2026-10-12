@@ -1323,7 +1323,6 @@ and the PR process.
 │   ├── event/                  # Provisioning lifecycle event types + dispatcher
 │   ├── executil/               # Shared command execution helpers
 │   ├── firmware/               # Firmware inventory from sysfs and NIC tooling
-│   ├── grubcfg/                # GRUB configuration parser
 │   ├── health/                 # Pre-provisioning hardware health checks
 │   ├── image/                  # Image streaming (HTTP, OCI, gzip/lz4/xz/zstd auto-detect)
 │   ├── inventory/              # Hardware inventory from sysfs/procfs
