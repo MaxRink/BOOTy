@@ -1589,7 +1589,7 @@ func TestSetupNVMeNamespaces_HappyPathSetsDiskDevice(t *testing.T) {
 	provider := &mockProvider{}
 	o, cmd := newTestOrchestratorWithCommander(t, cfg, provider)
 
-	cmd.setResult("nvme id-ctrl", []byte(`{"nn":32,"tnvmcap":1024000}`), nil)
+	cmd.setResult("nvme id-ctrl", []byte(`{"cntlid":0,"nn":32,"tnvmcap":1024000}`), nil)
 	cmd.setResult("nvme create-ns", []byte("create-ns: Success, created nsid:5\n"), nil)
 
 	if err := o.setupNVMeNamespaces(context.Background()); err != nil {
@@ -1607,7 +1607,7 @@ func TestCheckpointRecordsNVMeTargetDevice(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Provision.Disk.NVMeNamespaces = `[{"controller":"/dev/nvme0","namespaces":[{"label":"os","sizePct":100}]}]`
 	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
-	cmd.setResult("nvme id-ctrl", []byte(`{"nn":32,"tnvmcap":1024000}`), nil)
+	cmd.setResult("nvme id-ctrl", []byte(`{"cntlid":0,"nn":32,"tnvmcap":1024000}`), nil)
 	cmd.setResult("nvme create-ns", []byte("create-ns: Success, created nsid:5\n"), nil)
 
 	cp := &Checkpoint{}

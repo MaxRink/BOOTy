@@ -410,7 +410,7 @@ func TestSetupNVMeNamespacesCommandsCalledE2E(t *testing.T) {
 
 	// id-ctrl: report nn>1 (multi-namespace) and tnvmcap (1 TiB).
 	cmd.set("nvme id-ctrl", []byte(
-		`{"mn":"Mock NVMe","nn":32,"tnvmcap":1000204886016}`,
+		`{"mn":"Mock NVMe","cntlid":1,"nn":32,"tnvmcap":1000204886016}`,
 	), nil)
 	// list-ns: no existing namespaces (clean slate).
 	cmd.set("nvme list-ns", []byte(`{"nsid_list":[]}`), nil)
@@ -436,10 +436,16 @@ func TestSetupNVMeNamespacesCommandsCalledE2E(t *testing.T) {
 			idCtrlCalled = true
 		case "list-ns":
 			listNSCalled = true
+			if !strings.Contains(strings.Join(c.Args, " "), "--all") {
+				t.Errorf("list-ns for the reset must include inactive namespaces: %v", c.Args)
+			}
 		case "create-ns":
 			createNSCalled = true
 		case "attach-ns":
 			attachNSCalled = true
+			if !strings.HasSuffix(strings.Join(c.Args, " "), "-c 1") {
+				t.Errorf("attach-ns must use the controller ID from id-ctrl: %v", c.Args)
+			}
 		}
 	}
 	if !idCtrlCalled {

@@ -243,13 +243,12 @@ Planned (#581): RAID-1 root disk mirroring with `DISK_MIRRORING_MODE`. On
 For each controller, the `setup-nvme-namespaces` step:
 
 1. Reads `nvme id-ctrl`. The controller must support more than one namespace
-   (`nn` greater than 1), or the step fails.
-2. Deletes all existing namespaces.
+   (`nn` greater than 1), and must report a valid controller ID (`cntlid`,
+   0 to 65519), or the step fails before anything is deleted.
+2. Deletes all existing namespaces, including inactive ones
+   (`nvme list-ns --all`).
 3. Creates each namespace with `nvme create-ns` and attaches it with
-   `nvme attach-ns -c 0`.
-
-BOOTy always attaches the namespaces to controller ID 0. Planned (#610): attach
-to the controller ID that the controller reports.
+   `nvme attach-ns -c <cntlid>`, using the controller ID from step 1.
 
 The step fails if it creates no namespace. If `DISK_DEVICE` is empty, BOOTy
 sets the target disk to the first namespace that it created on the first

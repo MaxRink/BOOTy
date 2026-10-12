@@ -4,6 +4,7 @@ package disk
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -338,7 +339,7 @@ func TestNVMeResetNamespaces(t *testing.T) {
 	cmd := newMockCommander()
 	cmd.setResult("nvme list-ns", []byte(`{"nsid_list":[{"nsid":1},{"nsid":2}]}`), nil)
 	cmd.setResult("nvme delete-ns", []byte(""), nil)
-	cmd.setResult("nvme id-ctrl", []byte(`{"tnvmcap":1024000}`), nil)
+	cmd.setResult("nvme id-ctrl", []byte(`{"cntlid":7,"tnvmcap":1024000}`), nil)
 	cmd.setResult("nvme create-ns", []byte("create-ns: Success, created nsid:1\n"), nil)
 	cmd.setResult("nvme attach-ns", []byte(""), nil)
 	mgr := NewManager(cmd)
@@ -346,6 +347,12 @@ func TestNVMeResetNamespaces(t *testing.T) {
 	err := mgr.NVMeResetNamespaces(t.Context(), "/dev/nvme0")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if !hasDiskCommandCall(cmd.calls, "nvme", "list-ns", "/dev/nvme0", "--all", "-o", "json") {
+		t.Errorf("reset must list inactive namespaces too: %#v", cmd.calls)
+	}
+	if !hasDiskCommandCall(cmd.calls, "nvme", "attach-ns", "/dev/nvme0", "-n", "1", "-c", "7") {
+		t.Errorf("reset must attach with the controller ID from id-ctrl: %#v", cmd.calls)
 	}
 }
 
@@ -401,7 +408,7 @@ func TestApplyNVMeNamespaceLayout(t *testing.T) {
 				},
 			}},
 			mocks: map[string]mockResult{
-				"nvme id-ctrl":   {output: []byte(`{"nn":32,"tnvmcap":1024000}`)},
+				"nvme id-ctrl":   {output: []byte(`{"cntlid":0,"nn":32,"tnvmcap":1024000}`)},
 				"nvme list-ns":   {output: []byte(`{"nsid_list":[]}`)},
 				"nvme create-ns": {output: []byte("create-ns: Success, created nsid:1\n")},
 				"nvme attach-ns": {output: []byte("")},
@@ -429,7 +436,7 @@ func TestApplyNVMeNamespaceLayout(t *testing.T) {
 				},
 			}},
 			mocks: map[string]mockResult{
-				"nvme id-ctrl":   {output: []byte(`{"nn":32,"tnvmcap":1024000}`)},
+				"nvme id-ctrl":   {output: []byte(`{"cntlid":0,"nn":32,"tnvmcap":1024000}`)},
 				"nvme list-ns":   {output: []byte(`{"nsid_list":[]}`)},
 				"nvme create-ns": {err: fmt.Errorf("device busy")},
 			},
@@ -444,7 +451,7 @@ func TestApplyNVMeNamespaceLayout(t *testing.T) {
 				},
 			}},
 			mocks: map[string]mockResult{
-				"nvme id-ctrl":   {output: []byte(`{"nn":32,"tnvmcap":1024000}`)},
+				"nvme id-ctrl":   {output: []byte(`{"cntlid":0,"nn":32,"tnvmcap":1024000}`)},
 				"nvme list-ns":   {output: []byte(`{"nsid_list":[{"nsid":1}]}`)},
 				"nvme delete-ns": {output: []byte("")},
 				"nvme create-ns": {output: []byte("create-ns: Success, created nsid:2\n")},
@@ -480,20 +487,24 @@ func TestApplyNVMeNamespaceLayout(t *testing.T) {
 
 func TestNVMeResetNamespaces_DeleteFails(t *testing.T) {
 	cmd := newMockCommander()
+	cmd.setResult("nvme id-ctrl", []byte(`{"cntlid":7,"tnvmcap":1024000}`), nil)
 	cmd.setResult("nvme list-ns", []byte(`{"nsid_list":[{"nsid":1}]}`), nil)
 	cmd.setResult("nvme delete-ns", nil, fmt.Errorf("delete failed"))
 	mgr := NewManager(cmd)
 
 	err := mgr.NVMeResetNamespaces(t.Context(), "/dev/nvme0")
-	if err == nil {
-		t.Fatal("expected error when delete-ns fails")
+	if err == nil || !strings.Contains(err.Error(), "delete failed") {
+		t.Fatalf("error = %v, want the delete-ns error", err)
+	}
+	if !hasDiskCommandCall(cmd.calls, "nvme", "delete-ns", "/dev/nvme0", "-n", "1") {
+		t.Fatalf("delete-ns was not attempted: %#v", cmd.calls)
 	}
 }
 
 func TestNVMeResetNamespaces_CreateFails(t *testing.T) {
 	cmd := newMockCommander()
 	cmd.setResult("nvme list-ns", []byte(`{"nsid_list":[]}`), nil)
-	cmd.setResult("nvme id-ctrl", []byte(`{"tnvmcap":1024000}`), nil)
+	cmd.setResult("nvme id-ctrl", []byte(`{"cntlid":0,"tnvmcap":1024000}`), nil)
 	cmd.setResult("nvme create-ns", nil, fmt.Errorf("create failed"))
 	mgr := NewManager(cmd)
 
@@ -540,6 +551,9 @@ func TestNVMeAttachNamespaceRejectsInvalidInputs(t *testing.T) {
 	if err := mgr.AttachNVMeNamespace(t.Context(), "/dev/nvme0", "abc"); err == nil {
 		t.Fatal("expected error for non-numeric nsid")
 	}
+	if calls := mgr.cmd.(*mockCommander).calls; len(calls) != 0 {
+		t.Fatalf("invalid input must not run nvme commands: %#v", calls)
+	}
 }
 
 func TestNVMeFormatNamespaceRejectsInvalidDevice(t *testing.T) {
@@ -553,5 +567,82 @@ func TestNVMeResetNamespacesRejectsInvalidController(t *testing.T) {
 	mgr := NewManager(newMockCommander())
 	if err := mgr.NVMeResetNamespaces(t.Context(), "/dev/sda"); err == nil {
 		t.Fatal("expected error for invalid controller path")
+	}
+}
+
+func TestApplyNVMeNamespaceLayoutUsesControllerIDAndListsAllNamespaces(t *testing.T) {
+	cmd := newMockCommander()
+	cmd.setResult("nvme id-ctrl", []byte(`{"cntlid":65,"nn":32,"tnvmcap":1024000}`), nil)
+	cmd.setResult("nvme list-ns", []byte(`{"nsid_list":[{"nsid":3}]}`), nil)
+	cmd.setResult("nvme delete-ns", []byte(""), nil)
+	cmd.setResult("nvme create-ns", []byte("create-ns: Success, created nsid:1\n"), nil)
+	cmd.setResult("nvme attach-ns", []byte(""), nil)
+	mgr := NewManager(cmd)
+
+	_, err := mgr.ApplyNVMeNamespaceLayout(t.Context(), []NVMeNamespaceConfig{{
+		Controller: "/dev/nvme0",
+		Namespaces: []NVMeNamespace{{Label: "os", SizePct: 100}},
+	}})
+	if err != nil {
+		t.Fatalf("ApplyNVMeNamespaceLayout() error = %v", err)
+	}
+	if !hasDiskCommandCall(cmd.calls, "nvme", "list-ns", "/dev/nvme0", "--all", "-o", "json") {
+		t.Errorf("namespace reset must list inactive namespaces too: %#v", cmd.calls)
+	}
+	if !hasDiskCommandCall(cmd.calls, "nvme", "attach-ns", "/dev/nvme0", "-n", "1", "-c", "65") {
+		t.Errorf("attach-ns must use the controller ID from id-ctrl: %#v", cmd.calls)
+	}
+}
+
+func TestApplyNVMeNamespaceLayoutChecksControllerIDBeforeDelete(t *testing.T) {
+	for _, info := range []string{`{"nn":32,"tnvmcap":1024000}`, `{"cntlid":70000,"nn":32,"tnvmcap":1024000}`} {
+		cmd := newMockCommander()
+		cmd.setResult("nvme id-ctrl", []byte(info), nil)
+		cmd.setResult("nvme list-ns", []byte(`{"nsid_list":[{"nsid":3}]}`), nil)
+		cmd.setResult("nvme delete-ns", []byte(""), nil)
+		mgr := NewManager(cmd)
+
+		_, err := mgr.ApplyNVMeNamespaceLayout(t.Context(), []NVMeNamespaceConfig{{
+			Controller: "/dev/nvme0",
+			Namespaces: []NVMeNamespace{{Label: "os", SizePct: 100}},
+		}})
+		if err == nil {
+			t.Fatalf("id-ctrl %s: expected controller ID error", info)
+		}
+		if hasDiskCommandCall(cmd.calls, "nvme", "delete-ns", "/dev/nvme0", "-n", "3") {
+			t.Fatalf("id-ctrl %s: namespaces were deleted before the controller ID was known", info)
+		}
+	}
+}
+
+func TestNVMeResetNamespacesChecksControllerIDBeforeDelete(t *testing.T) {
+	cmd := newMockCommander()
+	cmd.setResult("nvme id-ctrl", []byte(`{"tnvmcap":1024000}`), nil)
+	cmd.setResult("nvme list-ns", []byte(`{"nsid_list":[{"nsid":1}]}`), nil)
+	cmd.setResult("nvme delete-ns", []byte(""), nil)
+	mgr := NewManager(cmd)
+
+	if err := mgr.NVMeResetNamespaces(t.Context(), "/dev/nvme0"); err == nil {
+		t.Fatal("expected controller ID error")
+	}
+	if hasDiskCommandCall(cmd.calls, "nvme", "delete-ns", "/dev/nvme0", "-n", "1") {
+		t.Fatal("namespaces were deleted before the controller ID was known")
+	}
+}
+
+func TestNVMeAttachNamespaceUsesControllerID(t *testing.T) {
+	cmd := newMockCommander()
+	cmd.setResult("nvme id-ctrl", []byte(`{"cntlid":12}`), nil)
+	cmd.setResult("nvme attach-ns", []byte(""), nil)
+	mgr := NewManager(cmd)
+
+	if err := mgr.AttachNVMeNamespace(t.Context(), "/dev/nvme0", "3"); err != nil {
+		t.Fatalf("AttachNVMeNamespace() error = %v", err)
+	}
+	if !hasDiskCommandCall(cmd.calls, "nvme", "id-ctrl", "/dev/nvme0", "-o", "json") {
+		t.Errorf("id-ctrl was not called: %#v", cmd.calls)
+	}
+	if !hasDiskCommandCall(cmd.calls, "nvme", "attach-ns", "/dev/nvme0", "-n", "3", "-c", "12") {
+		t.Errorf("attach-ns must use cntlid 12: %#v", cmd.calls)
 	}
 }
