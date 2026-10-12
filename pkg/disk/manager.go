@@ -15,6 +15,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -217,7 +218,7 @@ func (m *Manager) DiscardNVMeDisks(ctx context.Context) {
 		return
 	}
 	for _, entry := range entries {
-		if !strings.HasPrefix(entry.Name(), "nvme") {
+		if !strings.HasPrefix(entry.Name(), "nvme") || nvmePathNodeRE.MatchString(entry.Name()) {
 			continue
 		}
 		dev := "/dev/" + entry.Name()
@@ -637,8 +638,14 @@ func isVirtualDisk(name string) bool {
 	return strings.HasPrefix(name, "loop") || strings.HasPrefix(name, "sr") ||
 		strings.HasPrefix(name, "ram") || strings.HasPrefix(name, "zram") ||
 		strings.HasPrefix(name, "dm-") || strings.HasPrefix(name, "md") ||
-		strings.HasPrefix(name, "zd") || strings.HasPrefix(name, "nbd")
+		strings.HasPrefix(name, "zd") || strings.HasPrefix(name, "nbd") ||
+		nvmePathNodeRE.MatchString(name)
 }
+
+// nvmePathNodeRE matches NVMe multipath path nodes such as nvme0c0n1. With
+// native NVMe multipath they show up in /sys/block next to the head node
+// nvme0n1, but they are hidden and have no /dev node.
+var nvmePathNodeRE = regexp.MustCompile(`^nvme\d+c\d+n\d+$`)
 
 // readDiskSizeGB reads the size of a block device in GB from sysfs.
 func (m *Manager) readDiskSizeGB(name string) (int, error) {

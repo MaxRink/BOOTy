@@ -1289,6 +1289,8 @@ func TestIsVirtualDisk(t *testing.T) {
 		{"nbd0", true},
 		{"sda", false},
 		{"nvme0n1", false},
+		{"nvme0c0n1", true},
+		{"nvme12c3n2", true},
 		{"vda", false},
 	}
 	for _, tt := range tests {

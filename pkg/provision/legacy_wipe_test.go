@@ -41,7 +41,7 @@ func TestWipeDisksLegacyCompatWipesEveryDisk(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			cfg := &config.MachineConfig{Mode: mode, LegacyCompat: true}
 			o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
-			withFixtureDisks(t, o, "nvme0n1", "sda", "sr0")
+			withFixtureDisks(t, o, "nvme0n1", "nvme0c0n1", "sda", "sr0")
 			if mode == "provision" {
 				o.targetDisk = "/dev/sda"
 			}
@@ -58,6 +58,9 @@ func TestWipeDisksLegacyCompatWipesEveryDisk(t *testing.T) {
 				if !hasCall(cmd.calls, want.name, want.args) {
 					t.Errorf("missing %s %s in %v", want.name, want.args, cmd.calls)
 				}
+			}
+			if hasCall(cmd.calls, "blkdiscard", "/dev/nvme0c0n1") || hasCall(cmd.calls, "wipefs", "-af /dev/nvme0c0n1") {
+				t.Errorf("hidden NVMe multipath path node was wiped: %v", cmd.calls)
 			}
 			if hasCall(cmd.calls, "wipefs", "-af /dev/sr0") || hasCall(cmd.calls, "blkdiscard", "/dev/sda") {
 				t.Errorf("unexpected wipe of a CD-ROM or discard of a non-NVMe disk: %v", cmd.calls)
