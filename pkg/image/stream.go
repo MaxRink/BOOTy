@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/v1/types"
@@ -323,13 +324,17 @@ func httpGetWithRetry(ctx context.Context, url string) (io.ReadCloser, error) {
 
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
+		// The request context is canceled by the idle timer of the body.
+		reqCtx, cancel := context.WithCancel(ctx)
+		req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, http.NoBody)
 		if err != nil {
+			cancel()
 			return nil, fmt.Errorf("creating request for %s: %w", redactedURL, &redactedSourceError{rawSource: url, err: err})
 		}
 
 		resp, err := imageHTTPClient.Do(req) //nolint:gosec // URL from trusted config
 		if err != nil {
+			cancel()
 			redactedErr := &redactedSourceError{rawSource: url, err: err}
 			lastErr = fmt.Errorf("fetching image %s (attempt %d/%d): %w", redactedURL, attempt+1, maxRetries, redactedErr)
 			slog.Warn("HTTP request failed, retrying", "attempt", attempt+1, "error", redactedErr, "backoff", backoff)
@@ -345,9 +350,10 @@ func httpGetWithRetry(ctx context.Context, url string) (io.ReadCloser, error) {
 		}
 
 		if resp.StatusCode == http.StatusOK {
-			return resp.Body, nil
+			return newIdleTimeoutBody(resp.Body, cancel, imageIdleReadTimeout), nil
 		}
 		_ = resp.Body.Close()
+		cancel()
 
 		if resp.StatusCode == http.StatusNotFound {
 			return nil, fmt.Errorf("image not found: %s", redactedURL)
@@ -369,6 +375,50 @@ func httpGetWithRetry(ctx context.Context, url string) (io.ReadCloser, error) {
 		return nil, fmt.Errorf("unexpected status %d for %s", resp.StatusCode, redactedURL)
 	}
 	return nil, lastErr
+}
+
+// imageIdleReadTimeout is how long an image download may deliver no data
+// before it is aborted. The total download time stays unlimited.
+var imageIdleReadTimeout = 2 * time.Minute
+
+// idleTimeoutBody cancels the request when one Read of the body blocks for
+// longer than idle, so a server that stops sending without closing the
+// connection cannot hang provisioning. The timer only runs while a Read is
+// in progress, so a slow consumer (device write, decompression) does not
+// count as a stall.
+type idleTimeoutBody struct {
+	io.ReadCloser
+	idle    time.Duration
+	timer   *time.Timer
+	cancel  context.CancelFunc
+	stalled atomic.Bool
+}
+
+func newIdleTimeoutBody(body io.ReadCloser, cancel context.CancelFunc, idle time.Duration) *idleTimeoutBody {
+	b := &idleTimeoutBody{ReadCloser: body, idle: idle, cancel: cancel}
+	b.timer = time.AfterFunc(idle, func() {
+		b.stalled.Store(true)
+		cancel()
+	})
+	b.timer.Stop()
+	return b
+}
+
+func (b *idleTimeoutBody) Read(p []byte) (int, error) {
+	b.timer.Reset(b.idle)
+	n, err := b.ReadCloser.Read(p)
+	b.timer.Stop()
+	if err != nil && b.stalled.Load() {
+		return n, fmt.Errorf("image download stalled: no data for %s", b.idle)
+	}
+	return n, err //nolint:wrapcheck // io.EOF must stay unwrapped
+}
+
+func (b *idleTimeoutBody) Close() error {
+	b.timer.Stop()
+	err := b.ReadCloser.Close()
+	b.cancel()
+	return err //nolint:wrapcheck // plain body close error
 }
 
 // FetchOCILayerWithRetry retries OCI layer fetch with exponential backoff.
