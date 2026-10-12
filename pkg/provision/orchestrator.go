@@ -116,6 +116,7 @@ func NewOrchestrator(cfg *config.MachineConfig, provider config.Provider, diskMg
 func (o *Orchestrator) provisionSteps() []Step {
 	return []Step{
 		{"report-init", o.reportInit},
+		{"release-stale-mounts", o.releaseStaleTargetMounts},
 		{"collect-inventory", o.collectInventory},
 		{"collect-firmware", o.collectFirmware},
 		{"health-checks", o.runHealthChecks},
@@ -208,6 +209,8 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 
 func resumeStateSteps() map[string]struct{} {
 	return map[string]struct{}{
+		// A resumed run can still find mounts from the interrupted attempt.
+		"release-stale-mounts":      {},
 		"validate-provision-inputs": {},
 		"verify-image":              {},
 		"mount-efivarfs":            {},
@@ -2846,6 +2849,34 @@ func (o *Orchestrator) unmountBoot() error {
 	if err := o.disk.Unmount(mountpoint); err != nil {
 		return fmt.Errorf("unmount boot mountpoint %s: %w", mountpoint, err)
 	}
+	return nil
+}
+
+// unmountTargetTree unmounts the target root and everything below it. It is
+// a variable so tests can run without real mounts.
+var unmountTargetTree = func(d *disk.Manager, root string) error {
+	return d.UnmountRecursive(root)
+}
+
+// releaseStaleTargetMounts unmounts what a failed earlier attempt left
+// mounted under the target root, so a rescue retry does not wipe and
+// re-image a disk under a live mount or run fsck on a mounted root. The
+// recursive unmount reads the mount table itself, so a mount table read
+// failure or a stale child mount stops provisioning instead of being
+// missed. It runs as a step right after report-init, so a failure is
+// reported to CAPRF like any other step error. It is a no-op on a first run.
+func (o *Orchestrator) releaseStaleTargetMounts(_ context.Context) error {
+	if isMountPoint(newroot) {
+		o.log.Warn("target root still mounted from an earlier attempt, unmounting", "root", newroot)
+	}
+	if err := o.unmountSharedData(); err != nil {
+		// The recursive unmount below also covers these mounts.
+		o.log.Warn("failed to unmount shared data from earlier attempt", "error", err)
+	}
+	if err := unmountTargetTree(o.disk, newroot); err != nil {
+		return fmt.Errorf("unmounting target root %s left by an earlier attempt: %w", newroot, err)
+	}
+	o.sharedMounts = nil
 	return nil
 }
 

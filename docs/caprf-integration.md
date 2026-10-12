@@ -92,7 +92,7 @@ changed.
 |--------|-----------------|
 | `provision` | Runs the provisioning pipeline: writes the image to the target disk and configures the installed OS. |
 | `deprovision`, `hard` | Wipes the disks and removes the EFI boot entries. Without a disk override it wipes every disk. |
-| `soft-deprovision`, `soft` | Renames `/boot/grub/grub.cfg` to `grub.cfg.bak` on the installed root. The disk is not wiped. |
+| `soft-deprovision`, `soft` | Renames `grub.cfg` to `grub.cfg.bak` in `/boot/grub` and `/boot/grub2` on the installed root. The disk is not wiped. An existing `grub.cfg.bak` counts as done, so a rerun succeeds. If no `grub.cfg` or `grub.cfg.bak` exists, or the root cannot be unmounted after the rename, BOOTy reports an error, not success. |
 | `decommission` | Wipes every disk and removes every EFI boot entry in `BootOrder`. Failures are logged and do not stop the run. CAPRF uses this mode for the `force-clean` annotation. |
 | `standby` | Sends a heartbeat to `HEARTBEAT_URL` every 30 seconds and polls `COMMANDS_URL` every 10 seconds. It runs the `provision`, `deprovision`, `reboot` and `health-check` commands. Both URLs are required. |
 | `dry-run` | Runs read-only checks (configuration, image, disk, EFI, health) and reports the result. It does not set up the network and does not write to disks. `DRY_RUN=true` selects this mode. |
@@ -180,7 +180,7 @@ rejected.
 | `RESCUE_MODE` | What BOOTy does |
 |---------------|-----------------|
 | `reboot` | Reboot. This is the default without `CAPRF_LEGACY_COMPAT`. |
-| `retry` | Run the pipeline again after 30 seconds, up to 3 times, then reboot. |
+| `retry` | Run the pipeline again after 30 seconds, up to 3 times, then reboot. Each run first unmounts what the failed run left under the target root. |
 | `shell` | Open a rescue shell on the console. Reboot when the shell exits. |
 | `wait` | Wait. This is the default with `CAPRF_LEGACY_COMPAT=true`. |
 

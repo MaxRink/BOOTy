@@ -74,7 +74,7 @@ Status values:
 | `/deploy/vars` is a shell script that `source` runs | Parsed as data: no variable expansion, no command substitution | Same | Deliberately different |
 | No target OS check | `TARGET_OS=linux` or `PROVISION_TARGET_OS=linux` required for provisioning | Same | Deliberately different |
 | `MODE=decommission` (`force-clean`): `decommission_wipe`, `remove_all_efi_boot_entries`, power off | Wipe every disk with `sgdisk` and `wipefs`, remove every `BootOrder` entry, log failures and continue, reboot | Same, plus `blkdiscard` on every NVMe disk first, then power off | Merged (#586) |
-| Soft deprovision: rename `grub.cfg` | Rename `/boot/grub/grub.cfg` to `grub.cfg.bak` | Same, the disk is selected like `_select_single_disk` | Merged (#590) |
+| Soft deprovision: rename `grub.cfg` | Rename `grub.cfg` to `grub.cfg.bak` in `/boot/grub` and `/boot/grub2`. An existing `grub.cfg.bak` counts as done. No config at all, or an unmount failure after the rename, is an error. | Same, the disk is selected like `_select_single_disk` | Merged (#590), `/boot/grub2` and errors in #635 |
 
 ### Disks
 

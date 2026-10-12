@@ -1306,12 +1306,13 @@ func TestProvisionStepsContainEFIVars(t *testing.T) {
 		t.Errorf("mount-efivarfs (idx %d) must come before remove-efi-entries (idx %d)", mountIdx, removeIdx)
 	}
 
-	// Verify total step count includes early provisioning input validation,
+	// Verify total step count includes the stale mount cleanup, early
+	// provisioning input validation,
 	// setup-nvme-namespaces, setup-raid, mount-boot, mount-shared-data,
 	// overlayFS config, apply-sysexts, OCI pre-pulls, serial console
 	// resolution, EFI fallback install, and secureboot chain verification.
-	if len(steps) != 46 {
-		t.Errorf("expected 46 provisioning steps, got %d", len(steps))
+	if len(steps) != 47 {
+		t.Errorf("expected 47 provisioning steps, got %d", len(steps))
 	}
 }
 

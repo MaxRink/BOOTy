@@ -4,7 +4,9 @@ package provision
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -174,20 +176,66 @@ func (o *Orchestrator) softDeprovision(ctx context.Context) error {
 	if err := o.disk.MountPartition(ctx, root.Node, newroot); err != nil {
 		return fmt.Errorf("mounting root: %w", err)
 	}
-	defer func() { _ = o.disk.Unmount(newroot) }()
+	return disableGRUBAndUnmount(newroot, o.disk.Unmount)
+}
 
-	// Rename grub.cfg → grub.cfg.bak.
-	grubCfg := filepath.Join(newroot, "boot", "grub", "grub.cfg")
-	grubBak := grubCfg + ".bak"
-	if _, err := os.Stat(grubCfg); err == nil {
-		slog.Info("renaming grub.cfg", "from", grubCfg, "to", grubBak)
-		if err := os.Rename(grubCfg, grubBak); err != nil {
-			return fmt.Errorf("renaming grub.cfg: %w", err)
+// disableGRUBAndUnmount disables GRUB under root and unmounts root. The
+// rename must reach the disk, so an unmount failure is an error too.
+func disableGRUBAndUnmount(root string, unmount func(string) error) error {
+	disableErr := disableGRUBConfig(root)
+	if err := unmount(root); err != nil {
+		return errors.Join(disableErr, fmt.Errorf("unmounting root: %w", err))
+	}
+	return disableErr
+}
+
+// disableGRUBConfig renames the GRUB config under root to grub.cfg.bak so
+// the system does not boot. It checks the Debian and the RHEL path. A
+// config that was already renamed counts as done, so a rerun succeeds. No
+// config at all is an error, because the system would stay bootable while
+// deprovisioning reports success.
+func disableGRUBConfig(root string) error {
+	renamed := false
+	for _, dir := range []string{"grub", "grub2"} {
+		grubDir := filepath.Join(root, "boot", dir)
+		// A symlinked boot or grub directory must not lead the rename out
+		// of the target root.
+		if err := ensureTargetParentWithinRoot(root, grubDir); err != nil {
+			return fmt.Errorf("checking %s: %w", grubDir, err)
 		}
-	} else {
-		slog.Warn("grub.cfg not found", "path", grubCfg)
+		grubCfg := filepath.Join(grubDir, "grub.cfg")
+		grubBak := grubCfg + ".bak"
+		done, err := renameGRUBConfig(grubCfg, grubBak)
+		if err != nil {
+			return err
+		}
+		renamed = renamed || done
+	}
+	if !renamed {
+		return fmt.Errorf("no grub.cfg found under %s/boot/grub or %s/boot/grub2; system would stay bootable", root, root)
 	}
 	return nil
+}
+
+// renameGRUBConfig renames cfg to bak. It reports true when cfg was renamed
+// now or bak already exists. Only ENOENT counts as absence.
+func renameGRUBConfig(cfg, bak string) (bool, error) {
+	if _, err := os.Lstat(cfg); err == nil {
+		slog.Info("renaming grub.cfg", "from", cfg, "to", bak)
+		if err := os.Rename(cfg, bak); err != nil {
+			return false, fmt.Errorf("renaming grub.cfg: %w", err)
+		}
+		return true, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return false, fmt.Errorf("checking %s: %w", cfg, err)
+	}
+	if _, err := os.Lstat(bak); err == nil {
+		slog.Info("grub.cfg already renamed", "path", bak)
+		return true, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return false, fmt.Errorf("checking %s: %w", bak, err)
+	}
+	return false, nil
 }
 
 func (o *Orchestrator) reportDeprovisionSuccess(ctx context.Context) error {

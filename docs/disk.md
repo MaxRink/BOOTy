@@ -40,7 +40,12 @@ See [docs/configuration.md](configuration.md) for each variable:
 
 ## Processing Order
 
-The provisioning pipeline runs the disk steps in this order:
+Before any disk step, `release-stale-mounts` runs right after `report-init`.
+It unmounts the target root and everything below it that a failed earlier
+attempt left mounted, for example before a `RESCUE_MODE=retry` run. If this
+fails, the run stops before any disk is changed and BOOTy reports the error.
+
+The provisioning pipeline then runs the disk steps in this order:
 
 1. `disable-lvm` and `stop-raid`: deactivate LVM volume groups
    (`lvm vgchange -an`) and stop all md arrays (`mdadm --stop --scan`).
@@ -138,7 +143,7 @@ in [Automatic Detection](#automatic-detection). This includes removable media.
 | `provision` with `CAPRF_LEGACY_COMPAT=true` | All disks: `blkdiscard` on each NVMe disk, then a quick wipe of each disk. BOOTy logs failures and continues. `SECURE_ERASE` has no effect. `DISK_DEVICE` does not limit the wipe. |
 | `deprovision` (alias `hard`) | `DISK_DEVICE` set: wipe only that disk. `DISK_DEVICE` empty: quick wipe of all disks. A failed disk fails the run. |
 | `deprovision` with `CAPRF_LEGACY_COMPAT=true` | `DISK_DEVICE` empty: the legacy wipe of all disks (`blkdiscard` on NVMe, quick wipe, failures logged). `DISK_DEVICE` set: wipe only that disk. |
-| `soft-deprovision` (alias `soft`) | No wipe. BOOTy renames `/boot/grub/grub.cfg` to `grub.cfg.bak` on the root partition. |
+| `soft-deprovision` (alias `soft`) | No wipe. BOOTy renames `grub.cfg` to `grub.cfg.bak` in `/boot/grub` (Debian) and `/boot/grub2` (RHEL) on the root partition. A `grub.cfg.bak` that already exists counts as done, so a rerun succeeds. If neither directory has a `grub.cfg` or a `grub.cfg.bak`, or the root cannot be unmounted after the rename, the run fails and BOOTy reports the error to `ERROR_URL`. |
 | `decommission` | Quick wipe of all disks, best effort. BOOTy logs failures and continues. With legacy compat, `blkdiscard` runs on each NVMe disk first. `DISK_DEVICE` and `SECURE_ERASE` have no effect. Then BOOTy removes all EFI boot entries. |
 | `dry-run` (or `DRY_RUN=true`) | No wipe. The dry-run checks do not write to disk. The disk check uses `DISK_DEVICE` or automatic detection and ignores `DISK_SERIAL`. |
 
