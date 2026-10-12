@@ -3962,3 +3962,202 @@ func TestHandleType5RouteKeepsActiveRouteWhenNewRouteReplaceFails(t *testing.T) 
 		t.Fatalf("active path = %q, want A", got)
 	}
 }
+
+// startLocalTestBGP starts an in-process GoBGP server with no peers and no
+// listener, so locally originated paths can be read back with ListPath.
+func startLocalTestBGP(t *testing.T, asn uint32, routerID string) *server.BgpServer {
+	t.Helper()
+	bgp := server.NewBgpServer()
+	go bgp.Serve()
+	t.Cleanup(bgp.Stop)
+	if err := bgp.StartBgp(context.Background(), &apipb.StartBgpRequest{
+		Global: &apipb.Global{Asn: asn, RouterId: routerID, ListenPort: -1},
+	}); err != nil {
+		t.Fatalf("start BGP: %v", err)
+	}
+	return bgp
+}
+
+// listLocalEVPNPaths returns the EVPN paths in the global RIB keyed by NLRI type.
+func listLocalEVPNPaths(t *testing.T, bgp *server.BgpServer) (type2, type3, type5 []*apipb.Path) {
+	t.Helper()
+	err := bgp.ListPath(context.Background(), &apipb.ListPathRequest{
+		TableType: apipb.TableType_GLOBAL,
+		Family:    &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
+	}, func(dst *apipb.Destination) {
+		for _, p := range dst.GetPaths() {
+			msg, err := p.GetNlri().UnmarshalNew()
+			if err != nil {
+				t.Errorf("unmarshal NLRI: %v", err)
+				continue
+			}
+			switch msg.(type) {
+			case *apipb.EVPNMACIPAdvertisementRoute:
+				type2 = append(type2, p)
+			case *apipb.EVPNInclusiveMulticastEthernetTagRoute:
+				type3 = append(type3, p)
+			case *apipb.EVPNIPPrefixRoute:
+				type5 = append(type5, p)
+			default:
+				t.Errorf("unexpected EVPN NLRI %T", msg)
+			}
+		}
+	})
+	if err != nil {
+		t.Fatalf("list paths: %v", err)
+	}
+	return type2, type3, type5
+}
+
+func mustFindPMSITunnel(t *testing.T, path *apipb.Path) *apipb.PmsiTunnelAttribute {
+	t.Helper()
+	for _, attr := range path.GetPattrs() {
+		msg, err := attr.UnmarshalNew()
+		if err != nil {
+			t.Fatalf("unmarshal path attribute: %v", err)
+		}
+		if pmsi, ok := msg.(*apipb.PmsiTunnelAttribute); ok {
+			return pmsi
+		}
+	}
+	t.Fatal("path has no PMSI tunnel attribute")
+	return nil
+}
+
+func l2AdvertiseTestConfig(enableL2 bool) *Config {
+	return &Config{
+		OverlayType:  string(OverlayEVPNVXLAN),
+		ASN:          65100,
+		RouterID:     "192.168.4.10",
+		ProvisionVNI: 1000,
+		ProvisionIP:  "10.200.0.10/24",
+		BridgeMAC:    "62:db:b8:c1:80:52",
+		VPNRT:        "65000:1000",
+		EnableL2:     enableL2,
+	}
+}
+
+func TestAdvertiseType3PublishesIMETWithIngressReplication(t *testing.T) {
+	bgp := startLocalTestBGP(t, 65100, "192.168.4.10")
+	overlay := &OverlayTier{cfg: l2AdvertiseTestConfig(true), log: slog.Default(), bgp: bgp}
+
+	if err := overlay.advertiseType3(context.Background()); err != nil {
+		t.Fatalf("advertise Type-3: %v", err)
+	}
+
+	type2, type3, type5 := listLocalEVPNPaths(t, bgp)
+	if len(type3) != 1 || len(type2) != 0 || len(type5) != 0 {
+		t.Fatalf("paths: type-2=%d type-3=%d type-5=%d, want only one type-3", len(type2), len(type3), len(type5))
+	}
+	path := type3[0]
+	msg, err := path.GetNlri().UnmarshalNew()
+	if err != nil {
+		t.Fatalf("unmarshal NLRI: %v", err)
+	}
+	route := msg.(*apipb.EVPNInclusiveMulticastEthernetTagRoute)
+	if route.GetIpAddress() != "192.168.4.10" || route.GetEthernetTag() != 0 {
+		t.Fatalf("IMET route = ip %s tag %d, want ip 192.168.4.10 tag 0", route.GetIpAddress(), route.GetEthernetTag())
+	}
+	if got := extractNextHop(path); got != "192.168.4.10" {
+		t.Fatalf("type-3 next-hop = %s, want 192.168.4.10", got)
+	}
+
+	pmsi := mustFindPMSITunnel(t, path)
+	if pmsi.GetType() != pmsiTunnelTypeIngressReplication {
+		t.Fatalf("PMSI tunnel type = %d, want %d (ingress replication)", pmsi.GetType(), pmsiTunnelTypeIngressReplication)
+	}
+	if pmsi.GetLabel() != 1000 {
+		t.Fatalf("PMSI label = %d, want VNI 1000", pmsi.GetLabel())
+	}
+	if got := net.IP(pmsi.GetId()); !got.Equal(net.ParseIP("192.168.4.10")) {
+		t.Fatalf("PMSI tunnel ID = %v, want router ID 192.168.4.10", got)
+	}
+
+	if !matchesLocalRT(path, 65000, 1000) {
+		t.Fatal("type-3 path does not carry configured VPNRT 65000:1000")
+	}
+	if matchesLocalRT(path, 65100, 1000) {
+		t.Fatal("type-3 path carries the fallback local RT instead of the configured VPNRT")
+	}
+}
+
+func TestAdvertiseType2PublishesBridgeMACAndIP(t *testing.T) {
+	bgp := startLocalTestBGP(t, 65100, "192.168.4.10")
+	overlay := &OverlayTier{cfg: l2AdvertiseTestConfig(true), log: slog.Default(), bgp: bgp}
+
+	if err := overlay.advertiseType2(context.Background()); err != nil {
+		t.Fatalf("advertise Type-2: %v", err)
+	}
+
+	type2, type3, type5 := listLocalEVPNPaths(t, bgp)
+	if len(type2) != 1 || len(type3) != 0 || len(type5) != 0 {
+		t.Fatalf("paths: type-2=%d type-3=%d type-5=%d, want only one type-2", len(type2), len(type3), len(type5))
+	}
+	path := type2[0]
+	msg, err := path.GetNlri().UnmarshalNew()
+	if err != nil {
+		t.Fatalf("unmarshal NLRI: %v", err)
+	}
+	route := msg.(*apipb.EVPNMACIPAdvertisementRoute)
+	if route.GetMacAddress() != "62:db:b8:c1:80:52" {
+		t.Fatalf("type-2 MAC = %s, want bridge MAC 62:db:b8:c1:80:52", route.GetMacAddress())
+	}
+	if route.GetIpAddress() != "10.200.0.10" {
+		t.Fatalf("type-2 IP = %s, want provision host IP 10.200.0.10", route.GetIpAddress())
+	}
+	if labels := route.GetLabels(); len(labels) != 1 || labels[0] != 1000 {
+		t.Fatalf("type-2 labels = %v, want [1000]", labels)
+	}
+	if got := extractNextHop(path); got != "192.168.4.10" {
+		t.Fatalf("type-2 next-hop = %s, want 192.168.4.10", got)
+	}
+	if !matchesLocalRT(path, 65000, 1000) {
+		t.Fatal("type-2 path does not carry configured VPNRT 65000:1000")
+	}
+	if matchesLocalRT(path, 65100, 1000) {
+		t.Fatal("type-2 path carries the fallback local RT instead of the configured VPNRT")
+	}
+}
+
+func TestOverlaySetupAdvertisesType2And3OnlyWithL2(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		enableL2  bool
+		wantType2 int
+		wantType3 int
+	}{
+		{"type-5 only", false, 0, 0},
+		{"l2 enabled", true, 1, 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			bgp := startLocalTestBGP(t, 65100, "192.168.4.10")
+			overlay := &OverlayTier{
+				cfg: l2AdvertiseTestConfig(tt.enableL2),
+				log: slog.Default(),
+				bgp: bgp,
+				// The route watcher sees our own paths; fail link lookups so
+				// it never touches the host.
+				netlinkOps: &mockOverlayNetlinkOps{linkErr: errors.New("no links in unit test")},
+				hooks: &overlaySetupHooks{
+					createVXLANAndBridge: func() error { return nil },
+					addProvisionIP:       func() error { return nil },
+					// A failed Setup must not run the real host teardown.
+					teardown: func(context.Context) error { return nil },
+				},
+			}
+			if err := overlay.Setup(context.Background()); err != nil {
+				t.Fatalf("Setup: %v", err)
+			}
+			t.Cleanup(overlay.cancel)
+
+			type2, type3, type5 := listLocalEVPNPaths(t, bgp)
+			if len(type5) != 1 {
+				t.Fatalf("type-5 paths = %d, want 1", len(type5))
+			}
+			if len(type2) != tt.wantType2 || len(type3) != tt.wantType3 {
+				t.Fatalf("EnableL2=%v: type-2=%d type-3=%d, want type-2=%d type-3=%d",
+					tt.enableL2, len(type2), len(type3), tt.wantType2, tt.wantType3)
+			}
+		})
+	}
+}
