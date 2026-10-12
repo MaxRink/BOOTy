@@ -42,6 +42,8 @@ var (
 	efiFallbackAssetDirectory    = "/usr/lib/booty/efi"
 	newEFIFallbackHandoffID      = defaultEFIFallbackHandoffID
 	installEFIFallbackWithChroot = true
+	provisionerFilesDir          = "/deploy/file-system"
+	ramdiskRoot                  = "/"
 )
 
 var managedEFIVendors = [...]string{"ubuntu", "debian"}
@@ -758,7 +760,54 @@ func grubEFITarget(arch string) (string, error) {
 
 // CopyProvisionerFiles copies files from /deploy/file-system/ to the root.
 func (c *Configurator) CopyProvisionerFiles(ctx context.Context) error {
-	return c.copyTreeIntoChroot(ctx, "/deploy/file-system", "provisioner files")
+	return c.copyTreeIntoChroot(ctx, provisionerFilesDir, "provisioner files")
+}
+
+// SetProvisionerFilesDirForTest points the provisioner files directory at
+// dir and returns a function that restores it. Tests only.
+func SetProvisionerFilesDirForTest(dir string) func() {
+	old := provisionerFilesDir
+	provisionerFilesDir = dir
+	return func() { provisionerFilesDir = old }
+}
+
+// HasProvisionerResolvConf reports whether the CAPRF provisioner files carry
+// an /etc/resolv.conf for the ramdisk.
+func HasProvisionerResolvConf() bool {
+	info, err := os.Stat(filepath.Join(provisionerFilesDir, "etc", "resolv.conf"))
+	return err == nil && info.Mode().IsRegular()
+}
+
+// ApplyProvisionerFilesToRamdisk copies the CAPRF provisioner files from
+// /deploy/file-system/ into the running ramdisk, like copy_files in the CAPRF
+// legacy common.sh. Netplan files get mode 0600, as in the legacy script.
+func ApplyProvisionerFilesToRamdisk(ctx context.Context) error {
+	if _, err := os.Stat(provisionerFilesDir); os.IsNotExist(err) {
+		slog.Info("no provisioner files to apply to the ramdisk", "path", provisionerFilesDir)
+		return nil
+	}
+	slog.Info("applying provisioner files to the ramdisk", "src", provisionerFilesDir, "dst", ramdiskRoot)
+	if err := copyTree(ctx, provisionerFilesDir, ramdiskRoot); err != nil {
+		return err
+	}
+	netplanSrc := filepath.Join(provisionerFilesDir, "etc", "netplan")
+	entries, err := os.ReadDir(netplanSrc)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read %s: %w", netplanSrc, err)
+	}
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() {
+			continue
+		}
+		dst := filepath.Join(ramdiskRoot, "etc", "netplan", entry.Name())
+		if err := os.Chmod(dst, 0o600); err != nil {
+			return fmt.Errorf("chmod %s: %w", dst, err)
+		}
+	}
+	return nil
 }
 
 // CopyMachineFiles copies files from /deploy/machine-files/ to the root.

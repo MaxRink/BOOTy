@@ -377,7 +377,10 @@ func ensureWithinRoot(root, target string) error {
 	if err != nil {
 		return fmt.Errorf("resolve target: %w", err)
 	}
-	if absTarget != absRoot && !strings.HasPrefix(absTarget, absRoot+string(filepath.Separator)) {
+	// filepath.Rel also handles the root "/", where absRoot plus a
+	// separator would be "//".
+	rel, err := filepath.Rel(absRoot, absTarget)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return fmt.Errorf("target escapes provisioned root: %s", target)
 	}
 	return nil

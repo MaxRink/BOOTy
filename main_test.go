@@ -21,6 +21,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/caprf"
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/network"
+	"github.com/telekom/BOOTy/pkg/provision"
 	"github.com/telekom/BOOTy/pkg/realm"
 	"github.com/telekom/BOOTy/pkg/runmode"
 )
@@ -1231,5 +1232,29 @@ func TestIsTerminalSuccess(t *testing.T) {
 	}
 	if isTerminalSuccess(errors.New("canceled")) || isTerminalSuccess(nil) {
 		t.Fatal("errors and nil are not terminal success")
+	}
+}
+
+// Legacy evidence: copy_files puts the provisioner resolv.conf in place and
+// the legacy scripts never rewrite it, also when netplan names DNS servers.
+func TestKeepProvisionerResolvConfInLegacyCompat(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "etc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "etc", "resolv.conf"), []byte("nameserver 10.0.0.1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	restore := provision.SetProvisionerFilesDirForTest(dir)
+	defer restore()
+
+	netCfg := &network.Config{DNSResolvers: "10.9.9.9"}
+	keepProvisionerResolvConf(&config.MachineConfig{}, netCfg)
+	if netCfg.DNSResolvers != "10.9.9.9" {
+		t.Fatal("default mode must keep the configured resolvers")
+	}
+	keepProvisionerResolvConf(&config.MachineConfig{LegacyCompat: true}, netCfg)
+	if netCfg.DNSResolvers != "" {
+		t.Fatalf("legacy compat would rewrite the provisioner resolv.conf with %q", netCfg.DNSResolvers)
 	}
 }

@@ -478,6 +478,12 @@ behaviour where the two differ:
   `source vars`. Proxy variables such as `https_proxy` from CAPRF
   `additionalVars` apply to the CAPRF callbacks, the connectivity check and
   the image downloads.
+- Files in `/deploy/file-system` (CAPRF `provisionerConfig.files`) are copied
+  into the ramdisk root before the network starts, like `copy_files`. Netplan
+  files get mode `0600`. They are not copied into the installed OS, and BOOTy
+  does not write the installed OS `/etc/resolv.conf`. A provisioner
+  `/etc/resolv.conf` stays in place in the ramdisk; BOOTy does not replace it
+  with resolvers from the vars or netplan.
 
 Without the variable, BOOTy keeps its own defaults.
 
