@@ -3,6 +3,7 @@
 package provision
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"debug/pe"
@@ -10,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -4907,4 +4909,30 @@ func TestValidateProvisionInputsHTTPInsecure(t *testing.T) {
 			t.Errorf("did not expect error about insecure HTTP, got %v", err)
 		}
 	})
+}
+
+// Legacy evidence: provision.sh logs "nic_firmware nic=<nic> version=<v>"
+// for every NIC, also without firmware reporting.
+func TestCollectFirmwareLegacyCompatLogsNICFirmware(t *testing.T) {
+	previousCollect := collectFirmwareFn
+	collectFirmwareFn = func() (*firmware.Report, error) {
+		return &firmware.Report{NICs: []firmware.NICFirmware{{Interface: "ens1f0", Version: "22.39.1002", Driver: "mlx5_core"}}}, nil
+	}
+	t.Cleanup(func() { collectFirmwareFn = previousCollect })
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, &config.MachineConfig{LegacyCompat: true}, provider)
+	if err := o.collectFirmware(context.Background()); err != nil {
+		t.Fatalf("collectFirmware() = %v", err)
+	}
+	if !strings.Contains(logs.String(), "nic=ens1f0 version=22.39.1002") {
+		t.Fatalf("logs = %q, want the NIC firmware line", logs.String())
+	}
+	if len(provider.firmwareReports) != 0 {
+		t.Fatalf("firmware reports = %d, want none without FIRMWARE_REPORT", len(provider.firmwareReports))
+	}
 }

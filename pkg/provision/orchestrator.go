@@ -381,6 +381,9 @@ func (o *Orchestrator) collectInventory(ctx context.Context) error {
 }
 
 func (o *Orchestrator) collectFirmware(ctx context.Context) error {
+	if o.cfg.LegacyCompat {
+		o.logNICFirmware()
+	}
 	if !o.cfg.Provision.Firmware.Enabled {
 		o.log.Info("Firmware reporting disabled, skipping")
 		return nil
@@ -634,6 +637,21 @@ func (o *Orchestrator) setupMellanox(ctx context.Context) error {
 		o.firmwareChanged = true
 	}
 	return nil
+}
+
+// logNICFirmware logs the firmware version of every NIC, like the
+// nic_firmware lines of the CAPRF legacy provision.sh. The log shipping
+// sends the lines to LOG_URL.
+func (o *Orchestrator) logNICFirmware() {
+	o.log.Info("nic_firmware action=check")
+	report, err := collectFirmwareFn()
+	if err != nil {
+		o.log.Warn("nic firmware collection failed", "error", err)
+		return
+	}
+	for _, n := range report.NICs {
+		o.log.Info("nic_firmware", "nic", n.Interface, "version", n.Version, "driver", n.Driver)
+	}
 }
 
 // FirmwareChanged reports whether any provisioning step changed firmware values

@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // Sysfs paths (variables for testability).
@@ -16,7 +18,24 @@ var (
 	sysDMIPath      = "/sys/class/dmi/id"
 	sysNetPath      = "/sys/class/net"
 	sysSCSIHostPath = "/sys/class/scsi_host"
+
+	// nicFirmwareVersion reads the firmware version that `ethtool -i`
+	// prints. Most NIC drivers do not expose it in sysfs.
+	nicFirmwareVersion = ethtoolFirmwareVersion
 )
+
+func ethtoolFirmwareVersion(iface string) string {
+	fd, err := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		return ""
+	}
+	defer unix.Close(fd) //nolint:errcheck // socket only used for the ioctl
+	info, err := unix.IoctlGetEthtoolDrvinfo(fd, iface)
+	if err != nil {
+		return ""
+	}
+	return unix.ByteSliceToString(info.Fw_version[:])
+}
 
 // Collect gathers firmware version data from sysfs.
 func Collect() (*Report, error) {
@@ -68,6 +87,9 @@ func collectNICFirmware() []NICFirmware {
 
 		nic := NICFirmware{Interface: name}
 		nic.Version = readSysFile(filepath.Join(devicePath, "firmware_version"))
+		if nic.Version == "" {
+			nic.Version = nicFirmwareVersion(name)
+		}
 		nic.Driver = readNICDriver(devicePath)
 		nic.PCIAddr = readPCIAddr(devicePath)
 

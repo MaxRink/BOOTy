@@ -56,6 +56,8 @@ func withTestPaths(t *testing.T, tmpDir string) {
 	origDMI := sysDMIPath
 	origNet := sysNetPath
 	origSCSI := sysSCSIHostPath
+	origFW := nicFirmwareVersion
+	nicFirmwareVersion = func(string) string { return "" }
 
 	sysDMIPath = filepath.Join(tmpDir, "dmi", "id")
 	sysNetPath = filepath.Join(tmpDir, "net")
@@ -65,6 +67,7 @@ func withTestPaths(t *testing.T, tmpDir string) {
 		sysDMIPath = origDMI
 		sysNetPath = origNet
 		sysSCSIHostPath = origSCSI
+		nicFirmwareVersion = origFW
 	})
 }
 
@@ -420,6 +423,34 @@ func TestCompareVersions(t *testing.T) {
 		got := compareVersions(tt.a, tt.b)
 		if (tt.want < 0 && got >= 0) || (tt.want > 0 && got <= 0) || (tt.want == 0 && got != 0) {
 			t.Errorf("compareVersions(%q, %q) = %d, want sign %d", tt.a, tt.b, got, tt.want)
+		}
+	}
+}
+
+// Most drivers have no firmware_version in sysfs; the version then comes from
+// the ethtool driver info, like `ethtool -i` in the CAPRF legacy provision.sh.
+func TestCollectNICFirmwareFromEthtool(t *testing.T) {
+	tmpDir := t.TempDir()
+	withTestPaths(t, tmpDir)
+	setupDMI(t, tmpDir, map[string]string{})
+	setupNIC(t, tmpDir, "eth0", map[string]string{})
+	nicFirmwareVersion = func(iface string) string { return iface + "-fw 16.35.2000" }
+
+	report, err := Collect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.NICs) != 1 || report.NICs[0].Version != "eth0-fw 16.35.2000" {
+		t.Fatalf("NICs = %+v, want eth0 with the ethtool version", report.NICs)
+	}
+}
+
+// The real ethtool helper returns "" for NICs without driver info, such as
+// loopback, and for missing NICs. A real NIC is covered by the KVM test.
+func TestEthtoolFirmwareVersionErrorPaths(t *testing.T) {
+	for _, iface := range []string{"lo", "booty-missing0"} {
+		if got := ethtoolFirmwareVersion(iface); got != "" {
+			t.Errorf("ethtoolFirmwareVersion(%q) = %q, want empty", iface, got)
 		}
 	}
 }

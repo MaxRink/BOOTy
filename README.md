@@ -493,6 +493,8 @@ behaviour where the two differ:
   BOOTy wipe rules.
 - For provisioning, the ramdisk takes the machine `HOSTNAME`, like
   `hostname "$HOSTNAME"` in `provision.sh`.
+- BOOTy logs the firmware version of every NIC (`nic_firmware`), like
+  `provision.sh`, also without `FIRMWARE_REPORT`.
 
 Without the variable, BOOTy keeps its own defaults.
 
