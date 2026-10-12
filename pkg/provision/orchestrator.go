@@ -1046,9 +1046,8 @@ func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
 	if err := o.validatePartitionLayoutConfig(); err != nil {
 		return err
 	}
-	if o.isABImageMode() && o.cfg.Provision.AB.PreserveExisting {
-		o.log.Info("A/B preserveExisting enabled, skipping whole-disk wipe")
-		return nil
+	if handled, err := o.wipeWithoutTargetSelection(ctx); handled {
+		return err
 	}
 
 	// In deprovision modes use the deprovision-specific SecureErase setting.
@@ -1080,6 +1079,44 @@ func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
 		return o.disk.SecureEraseDisk(ctx, targetDisk)
 	}
 	return o.disk.WipeDisk(ctx, targetDisk)
+}
+
+// wipeWithoutTargetSelection handles the wipe policies that do not depend on
+// the target disk: A/B preserve-existing skips the wipe, and legacy compat
+// wipes every disk.
+func (o *Orchestrator) wipeWithoutTargetSelection(ctx context.Context) (bool, error) {
+	if o.isABImageMode() && o.cfg.Provision.AB.PreserveExisting {
+		o.log.Info("A/B preserveExisting enabled, skipping whole-disk wipe")
+		return true, nil
+	}
+	if o.usesLegacyWipeAllDisks() {
+		return true, o.wipeAllDisksLegacy(ctx)
+	}
+	return false, nil
+}
+
+// usesLegacyWipeAllDisks reports whether wipe-disks follows wipe_all_disks
+// of the CAPRF legacy scripts: provision and hard deprovision wipe every
+// disk, not only the target disk.
+func (o *Orchestrator) usesLegacyWipeAllDisks() bool {
+	if !o.cfg.LegacyCompat || o.cfg.Mode == "dry-run" || len(o.cfg.Provision.Disk.RAID) > 0 {
+		return false
+	}
+	if config.IsDeprovisionMode(o.cfg.Mode) {
+		return allowsWholeDiskDeprovisionWipe(o.cfg.Mode) && strings.TrimSpace(o.targetDisk) == ""
+	}
+	return true
+}
+
+// wipeAllDisksLegacy discards NVMe disks and clears the signatures of every
+// disk. Like the legacy script it logs failures and never fails the run.
+func (o *Orchestrator) wipeAllDisksLegacy(ctx context.Context) error {
+	o.log.Info("legacy compat: wiping all disks")
+	o.disk.DiscardNVMeDisks(ctx)
+	if err := o.disk.WipeAllDisks(ctx); err != nil {
+		o.log.Warn("legacy compat: disk wipe failed, continuing", "error", err)
+	}
+	return nil
 }
 
 func allowsWholeDiskDeprovisionWipe(mode string) bool {

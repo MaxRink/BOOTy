@@ -207,6 +207,28 @@ func (m *Manager) WipeAllDisks(ctx context.Context) error {
 	return nil
 }
 
+// DiscardNVMeDisks runs blkdiscard on every NVMe disk, like wipe_all_disks
+// in the CAPRF legacy common.sh. Failures are logged and ignored.
+func (m *Manager) DiscardNVMeDisks(ctx context.Context) {
+	blockDir := filepath.Join(m.sysfsRoot, "block")
+	entries, err := os.ReadDir(blockDir)
+	if err != nil {
+		slog.Warn("cannot list disks for discard", "path", blockDir, "error", err)
+		return
+	}
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), "nvme") {
+			continue
+		}
+		dev := "/dev/" + entry.Name()
+		if out, err := m.cmd.Run(ctx, "blkdiscard", dev); err != nil {
+			slog.Info("blkdiscard failed, falling back to signature wipe", "device", dev, "error", err, "output", string(out))
+			continue
+		}
+		slog.Info("blkdiscard complete", "device", dev)
+	}
+}
+
 // SecureEraseAllDisks performs hardware-level secure erase on all disks.
 // For NVMe drives: uses nvme format (User Data Erase).
 // For SATA/SAS drives: uses ATA SECURITY ERASE UNIT via hdparm.

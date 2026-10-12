@@ -81,6 +81,10 @@ func (o *Orchestrator) decommissionWipe(ctx context.Context) error {
 	if err := o.disk.StopRAIDArrays(ctx); err != nil {
 		o.log.Warn("decommission: stopping RAID arrays failed, continuing", "error", err)
 	}
+	if o.cfg.LegacyCompat {
+		// wipe_all_disks discards NVMe disks before the signature wipe.
+		o.disk.DiscardNVMeDisks(ctx)
+	}
 	if err := o.disk.WipeAllDisks(ctx); err != nil {
 		o.log.Warn("decommission: disk wipe failed, continuing", "error", err)
 		return nil
