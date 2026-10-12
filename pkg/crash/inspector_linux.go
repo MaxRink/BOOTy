@@ -34,12 +34,12 @@ func ShouldInspect(cfg *config.MachineConfig) (ok bool, reason string) {
 	if mode == "" {
 		mode = "provision"
 	}
-	switch mode {
-	case "provision", "deprovision", "soft-deprovision", "soft":
+	switch {
+	case mode == "provision" || config.IsDeprovisionMode(mode):
 		return true, ""
-	case "dry-run":
+	case mode == "dry-run":
 		return false, "dry-run"
-	case "standby":
+	case mode == "standby":
 		return false, "standby"
 	default:
 		return false, "unsupported-mode"

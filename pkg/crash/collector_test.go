@@ -343,6 +343,8 @@ func TestShouldInspectModeGuards(t *testing.T) {
 		{name: "disabled", cfg: &config.MachineConfig{}, reason: "disabled"},
 		{name: "default provision", cfg: &config.MachineConfig{Provision: config.ProvisionConfig{CrashArtifacts: config.CrashArtifactsConfig{Enabled: true}}}, wantOK: true},
 		{name: "deprovision", cfg: &config.MachineConfig{Provision: config.ProvisionConfig{CrashArtifacts: config.CrashArtifactsConfig{Enabled: true}}, Mode: "deprovision"}, wantOK: true},
+		{name: "hard", cfg: &config.MachineConfig{Provision: config.ProvisionConfig{CrashArtifacts: config.CrashArtifactsConfig{Enabled: true}}, Mode: "hard"}, wantOK: true},
+		{name: "decommission", cfg: &config.MachineConfig{Provision: config.ProvisionConfig{CrashArtifacts: config.CrashArtifactsConfig{Enabled: true}}, Mode: "decommission"}, wantOK: true},
 		{name: "dry-run", cfg: &config.MachineConfig{Provision: config.ProvisionConfig{CrashArtifacts: config.CrashArtifactsConfig{Enabled: true}}, Mode: "dry-run"}, reason: "dry-run"},
 		{name: "standby", cfg: &config.MachineConfig{Provision: config.ProvisionConfig{CrashArtifacts: config.CrashArtifactsConfig{Enabled: true}}, Mode: "standby"}, reason: "standby"},
 	}

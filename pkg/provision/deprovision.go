@@ -16,6 +16,8 @@ import (
 // Deprovision runs the deprovisioning pipeline.
 // Mode "soft-deprovision" (or "soft") renames grub.cfg to make the system unbootable.
 // Mode "deprovision" or "hard" (default) wipes all disks and removes EFI boot entries.
+// Mode "decommission" wipes all disks and removes all EFI boot entries on a
+// best-effort basis, so defect or missing devices do not stop it.
 func (o *Orchestrator) Deprovision(ctx context.Context) error {
 	mode := o.cfg.Mode
 	if mode == "" {
@@ -48,9 +50,16 @@ func (o *Orchestrator) deprovisionSteps(mode string) []Step {
 		{"configure-dns", o.configureDNS},
 	}
 
-	if mode == "soft" || mode == "soft-deprovision" {
+	switch mode {
+	case "soft", "soft-deprovision":
 		steps = append(steps, Step{"soft-deprovision", o.softDeprovision})
-	} else {
+	case "decommission":
+		steps = append(steps,
+			Step{"decommission-wipe", o.decommissionWipe},
+			Step{"mount-efivarfs", o.mountEFIVars},
+			Step{"remove-all-efi-entries", o.removeAllEFIBootEntries},
+		)
+	default:
 		steps = append(steps,
 			Step{"select-deprovision-disk", o.selectDeprovisionDisk},
 			Step{"disable-lvm", o.disableLVM},
@@ -61,6 +70,28 @@ func (o *Orchestrator) deprovisionSteps(mode string) []Step {
 		)
 	}
 	return append(steps, Step{"report-success", o.reportDeprovisionSuccess})
+}
+
+// decommissionWipe matches decommission_wipe in the CAPRF legacy
+// deprovision.sh: wipe every disk, log failures and continue.
+func (o *Orchestrator) decommissionWipe(ctx context.Context) error {
+	if err := o.disk.DisableLVM(ctx); err != nil {
+		o.log.Warn("decommission: disabling LVM failed, continuing", "error", err)
+	}
+	if err := o.disk.StopRAIDArrays(ctx); err != nil {
+		o.log.Warn("decommission: stopping RAID arrays failed, continuing", "error", err)
+	}
+	if err := o.disk.WipeAllDisks(ctx); err != nil {
+		o.log.Warn("decommission: disk wipe failed, continuing", "error", err)
+		return nil
+	}
+	o.log.Info("decommission: disk wipe complete")
+	return nil
+}
+
+func (o *Orchestrator) removeAllEFIBootEntries(ctx context.Context) error {
+	o.config.RemoveAllEFIBootEntries(ctx)
+	return nil
 }
 
 func (o *Orchestrator) selectDeprovisionDisk(_ context.Context) error {

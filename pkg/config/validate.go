@@ -19,7 +19,7 @@ import (
 //
 // Fields validated:
 //   - Mode: "provision", "deprovision", "soft-deprovision", "soft", "hard",
-//     "standby", "dry-run", "check"
+//     "decommission", "standby", "dry-run", "check"
 //   - Provision.TargetOS: empty or "linux"; non-empty unsupported values are rejected
 //     (an explicit value is required later by provision preflight)
 //   - Provision.Image.Mode: "whole-disk", "partition", "ab"
@@ -117,7 +117,7 @@ func (c *Config) validateProvisionFeatureConfigs() []string {
 func (c *Config) validateEnums() []string {
 	validators := []func() string{
 		func() string {
-			return validateEnum(c.Mode, "mode", "provision", "deprovision", "soft-deprovision", "soft", "hard", "standby", "dry-run", "check")
+			return validateEnum(c.Mode, "mode", "provision", "deprovision", "soft-deprovision", "soft", "hard", "decommission", "standby", "dry-run", "check")
 		},
 		func() string {
 			return validateEnum(c.Provision.Image.Mode, "provision.image.mode", ImageModeWholeDisk, ImageModePartition, ImageModeAB)

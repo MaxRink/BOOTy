@@ -18,7 +18,7 @@ type Config struct {
 	// Mode selects the operating mode. Determines which per-mode config
 	// section is active.
 	// Valid values: "provision", "deprovision", "soft-deprovision",
-	//              "standby", "dry-run", "check"
+	//              "decommission", "standby", "dry-run", "check"
 	// Legacy aliases: "soft" (= soft-deprovision), "hard" (= deprovision)
 	// Default: "provision"
 	Mode string `yaml:"mode" json:"mode"`

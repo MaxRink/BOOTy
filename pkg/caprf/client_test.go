@@ -2513,3 +2513,14 @@ func TestParseVarsExtraKernelParamsKeepsBoth(t *testing.T) {
 		}
 	}
 }
+
+// CAPRF writes MODE=decommission for hosts with the force-clean annotation.
+func TestParseVarsDecommissionMode(t *testing.T) {
+	cfg, err := ParseVars(strings.NewReader("MODE=decommission\n"))
+	if err != nil {
+		t.Fatalf("ParseVars(MODE=decommission): %v", err)
+	}
+	if !config.IsDeprovisionMode(cfg.Mode) {
+		t.Fatalf("mode %q is not a deprovision mode", cfg.Mode)
+	}
+}

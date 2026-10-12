@@ -1075,6 +1075,52 @@ func (c *Configurator) RemoveEFIBootEntries(ctx context.Context) error {
 	return nil
 }
 
+// RemoveAllEFIBootEntries deletes every entry in the EFI BootOrder on a
+// best-effort basis, like remove_all_efi_boot_entries in the CAPRF legacy
+// common.sh. Failures are logged and never returned.
+func (c *Configurator) RemoveAllEFIBootEntries(ctx context.Context) {
+	out, err := hostCommandCombinedOutput(ctx, "efibootmgr")
+	if err != nil {
+		slog.Warn("efibootmgr list failed (non-EFI system?)", "output", string(out), "error", err)
+		return
+	}
+	for _, entry := range efiBootOrder(string(out)) {
+		slog.Info("removing EFI boot entry", "entry", entry)
+		if out, err := hostCommandCombinedOutput(ctx, "efibootmgr", "-b", entry, "-B"); err != nil {
+			slog.Warn("failed to remove EFI entry", "entry", entry, "output", string(out), "error", err)
+		}
+	}
+}
+
+// efiBootOrder returns the entries of the "BootOrder:" line of efibootmgr
+// output. Only four-digit hex entries are returned.
+func efiBootOrder(out string) []string {
+	for _, line := range strings.Split(out, "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "BootOrder:")
+		if !ok {
+			continue
+		}
+		var entries []string
+		for _, entry := range strings.Split(strings.TrimSpace(rest), ",") {
+			entry = strings.TrimSpace(entry)
+			if len(entry) == 4 && isHexString(entry) {
+				entries = append(entries, entry)
+			}
+		}
+		return entries
+	}
+	return nil
+}
+
+func isHexString(s string) bool {
+	for _, r := range s {
+		if !strings.ContainsRune("0123456789abcdefABCDEF", r) {
+			return false
+		}
+	}
+	return true
+}
+
 // CreateEFIBootEntry creates a new EFI boot entry for the installed OS.
 // Skips gracefully when the system is not booted in EFI mode (e.g. BIOS VMs),
 // since efibootmgr requires EFI firmware NVRAM access.

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -164,4 +165,38 @@ func TestLegacyCompatDeprovisionPowersOffQEMU(t *testing.T) {
 
 	caprf.requireStatuses(t, "init", "success")
 	requirePowerOff(t, output)
+}
+
+// Legacy evidence: deprovision.sh decommission_wipe wipes all disks, removes
+// all EFI boot entries, reports success and powers off. CAPRF writes
+// MODE=decommission for hosts with the force-clean annotation.
+func TestLegacyCompatDecommissionWipesAndPowersOffQEMU(t *testing.T) {
+	requireRoot(t)
+	qemuAvailable(t)
+	requireProvisionTools(t)
+	if _, err := exec.LookPath("wipefs"); err != nil {
+		failOrSkipUnsupportedHost(t, "wipefs not available for the decommission test")
+	}
+
+	caprf := startFakeCAPRF(t, "")
+
+	// Start from a disk that carries a GPT and filesystems.
+	rawDisk := createTestDiskImage(t, 256)
+	targetDisk := filepath.Join(t.TempDir(), "legacy-compat-decommission.qcow2")
+	run(t, "convert disk to qcow2", "qemu-img", "convert", "-O", "qcow2", rawDisk, targetDisk)
+
+	initramfs := buildProvisionInitramfs(t, caprf.vars("decommission"))
+
+	output := runQEMUProvision(t, findKernel(t), initramfs, targetDisk, 4*time.Minute)
+	t.Logf("legacy compat decommission output tail:\n%s", tail(output, 3000))
+
+	caprf.requireStatuses(t, "init", "success")
+	requirePowerOff(t, output)
+
+	wiped := filepath.Join(t.TempDir(), "decommissioned.raw")
+	run(t, "convert decommissioned disk to raw", "qemu-img", "convert", "-O", "raw", targetDisk, wiped)
+	signatures := strings.TrimSpace(string(runOutput(t, "list disk signatures", "wipefs", "--noheadings", wiped)))
+	if signatures != "" {
+		t.Fatalf("decommission left disk signatures:\n%s", signatures)
+	}
 }

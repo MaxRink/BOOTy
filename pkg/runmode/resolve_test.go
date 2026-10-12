@@ -19,6 +19,7 @@ func TestResolveProvision(t *testing.T) {
 		{mode: "dry-run", wantName: "dry-run"},
 		{mode: "deprovision", wantName: "deprovision"},
 		{mode: "soft-deprovision", wantName: "deprovision"},
+		{mode: "decommission", wantName: "deprovision"},
 		{mode: "standby", wantName: "standby"},
 		{mode: "check", wantName: "check"},
 		{mode: "invalid-mode", wantErr: true},

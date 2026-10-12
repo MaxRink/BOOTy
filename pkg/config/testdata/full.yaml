@@ -9,7 +9,7 @@
 
 hostname: node-01          # Machine hostname — used for logging and JWT acquisition
 mode: provision            # Operating mode: provision | deprovision | soft-deprovision |
-                           #   standby | dry-run | check (default: provision)
+                           #   decommission | standby | dry-run | check (default: provision)
 dryRun: false              # Override mode to dry-run when true (default: false)
 osFamily: ubuntu           # Target OS family for target-root writers
 

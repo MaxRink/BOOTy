@@ -63,6 +63,12 @@ func NewManager(cmd Commander) *Manager {
 	return &Manager{cmd: cmd, sysfsRoot: "/sys"}
 }
 
+// SetSysfsRoot changes the sysfs root that disk discovery reads, "/sys" by
+// default. Tests use it with a fixture tree.
+func (m *Manager) SetSysfsRoot(root string) {
+	m.sysfsRoot = root
+}
+
 // Run executes a host command through the manager's command runner.
 func (m *Manager) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	return m.cmd.Run(ctx, name, args...)
@@ -161,9 +167,10 @@ func (m *Manager) WipeFilesystemSignatures(ctx context.Context, device string) e
 // without overwriting data.
 func (m *Manager) WipeAllDisks(ctx context.Context) error {
 	slog.Info("wiping all disk signatures (quick erase)")
-	entries, err := os.ReadDir("/sys/block")
+	blockDir := filepath.Join(m.sysfsRoot, "block")
+	entries, err := os.ReadDir(blockDir)
 	if err != nil {
-		return fmt.Errorf("reading /sys/block: %w", err)
+		return fmt.Errorf("reading %s: %w", blockDir, err)
 	}
 	var (
 		wiped int
@@ -206,9 +213,10 @@ func (m *Manager) WipeAllDisks(ctx context.Context) error {
 // Falls back to quick erase (wipefs) if secure erase is not supported.
 func (m *Manager) SecureEraseAllDisks(ctx context.Context) error {
 	slog.Info("performing secure erase on all disks")
-	entries, err := os.ReadDir("/sys/block")
+	blockDir := filepath.Join(m.sysfsRoot, "block")
+	entries, err := os.ReadDir(blockDir)
 	if err != nil {
-		return fmt.Errorf("reading /sys/block: %w", err)
+		return fmt.Errorf("reading %s: %w", blockDir, err)
 	}
 	var errs []error
 	for _, entry := range entries {
