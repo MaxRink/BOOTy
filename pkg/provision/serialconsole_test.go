@@ -559,3 +559,43 @@ func TestValidateConsoleKernelParamPreservesParseError(t *testing.T) {
 		t.Fatalf("console validation error %v must preserve parse error %v", err, parseErr)
 	}
 }
+
+func TestPruneSerialGettyUnitsRejectsAncestorSymlinkOutOfRoot(t *testing.T) {
+	c := newTestConfigurator(t, newMockCommander())
+	outside := t.TempDir()
+	wants := filepath.Join(outside, "system", "getty.target.wants")
+	if err := os.MkdirAll(wants, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(wants, "serial-getty@ttyS1.service")
+	if err := os.Symlink("/lib/systemd/system/serial-getty@.service", link); err != nil {
+		t.Fatal(err)
+	}
+	dropIn := filepath.Join(outside, "system", "serial-getty@ttyS1.service.d", serialConsoleDropInName)
+	if err := os.MkdirAll(filepath.Dir(dropIn), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dropIn, []byte("[Service]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A kept machine-file symlink: etc/systemd points out of the root.
+	if err := os.MkdirAll(filepath.Join(c.rootDir, "etc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(c.rootDir, "etc", "systemd")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.pruneSerialGettyLinks(""); err == nil {
+		t.Fatal("pruneSerialGettyLinks() = nil, want error for an ancestor outside the root")
+	}
+	if err := c.pruneSerialGettyDropIns(""); err == nil {
+		t.Fatal("pruneSerialGettyDropIns() = nil, want error for an ancestor outside the root")
+	}
+	if _, err := os.Lstat(link); err != nil {
+		t.Fatalf("getty link outside the root was removed: %v", err)
+	}
+	if _, err := os.Lstat(dropIn); err != nil {
+		t.Fatalf("drop-in outside the root was removed: %v", err)
+	}
+}

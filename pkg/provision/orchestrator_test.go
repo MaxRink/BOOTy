@@ -4936,3 +4936,68 @@ func TestCollectFirmwareLegacyCompatLogsNICFirmware(t *testing.T) {
 		t.Fatalf("firmware reports = %d, want none without FIRMWARE_REPORT", len(provider.firmwareReports))
 	}
 }
+
+// Machine files keep symlinks, so no step after copy-machine-files may write
+// into the target root from the host. Steps that only run commands in the
+// chroot or touch firmware are fine.
+func TestNoHostWriterRunsAfterCopyMachineFiles(t *testing.T) {
+	o := newTestOrchestrator(t, &config.MachineConfig{}, &mockProvider{})
+	steps := o.provisionSteps()
+	allowed := map[string]bool{
+		"run-machine-commands":    true,
+		"run-post-provision-cmds": true,
+		"create-efi-boot-entry":   true,
+		// Disk mirroring (#581): copies the ESP at block level and remounts
+		// /boot/efi through mountBoot, which refuses a mountpoint that
+		// resolves outside the target root.
+		"create-mirror-efi-boot-entry": true,
+		"teardown-chroot":              true,
+		"report-success":               true,
+	}
+	for _, step := range steps[requireStepIndex(t, steps, "copy-machine-files")+1:] {
+		if !allowed[step.Name] {
+			t.Errorf("step %s runs after copy-machine-files; check that it does not write into the target root from the host", step.Name)
+		}
+	}
+}
+
+func TestEnsureMountpointWithinRoot(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "boot", "efi"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureMountpointWithinRoot(root, filepath.Join(root, "boot", "efi")); err != nil {
+		t.Fatalf("plain directory: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "boot", "esp")); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureMountpointWithinRoot(root, filepath.Join(root, "boot", "esp")); err == nil {
+		t.Fatal("symlinked mountpoint outside the root was accepted")
+	}
+	if err := os.Symlink("efi", filepath.Join(root, "boot", "inroot")); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureMountpointWithinRoot(root, filepath.Join(root, "boot", "inroot")); err == nil {
+		t.Fatal("symlinked mountpoint inside the root was accepted; mount tracking compares literal paths")
+	}
+	if err := ensureMountpointWithinRoot(root, filepath.Join(root, "boot", "missing")); err != nil {
+		t.Fatalf("missing mountpoint with a safe parent: %v", err)
+	}
+	// A machine-file link as the parent of a missing mountpoint, like
+	// /srv -> /host on resume.
+	if err := os.Symlink(outside, filepath.Join(root, "srv")); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureMountpointWithinRoot(root, filepath.Join(root, "srv", "data")); err == nil {
+		t.Fatal("mountpoint below a symlinked parent outside the root was accepted")
+	}
+	// Absolute and relative links that escape are both refused.
+	if err := os.Symlink("../../..", filepath.Join(root, "run")); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureMountpointWithinRoot(root, filepath.Join(root, "run")); err == nil {
+		t.Fatal("relative symlink escaping the root was accepted")
+	}
+}

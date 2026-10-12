@@ -1628,3 +1628,103 @@ func TestRescueAction_RetryExhausted(t *testing.T) {
 		t.Errorf("exhausted retry should reboot, got %q", action.Type)
 	}
 }
+
+func TestCopyTreeWithKeptSymlinksRecreatesLinks(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+
+	// A systemd unit enabled through a relative .wants link.
+	unitDir := filepath.Join(src, "etc", "systemd", "system")
+	wantsDir := filepath.Join(unitDir, "multi-user.target.wants")
+	if err := os.MkdirAll(wantsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(unitDir, "foo.service"), []byte("[Unit]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../foo.service", filepath.Join(wantsDir, "foo.service")); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(outside, []byte("escape"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(src, "escape")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := copyTreeWith(context.Background(), src, dst, true); err != nil {
+		t.Fatalf("copyTreeWith() unexpected error: %v", err)
+	}
+
+	link := filepath.Join(dst, "etc", "systemd", "system", "multi-user.target.wants", "foo.service")
+	if target, err := os.Readlink(link); err != nil || target != "../foo.service" {
+		t.Fatalf("Readlink(.wants link) = %q, %v; want ../foo.service", target, err)
+	}
+	// The outside link is recreated as a link; its content is not copied.
+	info, err := os.Lstat(filepath.Join(dst, "escape"))
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("expected escape to stay a symlink, got %v (err %v)", info, err)
+	}
+}
+
+func TestCopyTreeWithKeptSymlinksRejectsDirectoryCollision(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+	if err := os.Symlink("/etc/other", filepath.Join(src, "conf.d")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dst, "conf.d"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyTreeWith(context.Background(), src, dst, true); err == nil {
+		t.Fatal("copyTreeWith() = nil, want an error when a link would replace a directory")
+	}
+}
+
+func TestCopyTreeWithKeptSymlinksSkipsChrootBindDirs(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(src, "dev"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/tmp/evil", filepath.Join(src, "dev", "null")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "run.txt"), []byte("ok"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyTreeWith(context.Background(), src, dst, true); err != nil {
+		t.Fatalf("copyTreeWith() = %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(dst, "dev", "null")); !os.IsNotExist(err) {
+		t.Fatalf("machine file below dev/ was copied: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "run.txt")); err != nil {
+		t.Fatalf("regular top-level file was not copied: %v", err)
+	}
+}
+
+func TestCopyTreeWithKeptSymlinksSkipsBindDirAlias(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(src, "alias"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "alias", "null"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dst, "dev"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The image links alias to dev, which is a live bind mount during the copy.
+	if err := os.Symlink("dev", filepath.Join(dst, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyTreeWith(context.Background(), src, dst, true); err != nil {
+		t.Fatalf("copyTreeWith() = %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(dst, "dev", "null")); !os.IsNotExist(err) {
+		t.Fatalf("machine file was written through alias into dev/: %v", err)
+	}
+}

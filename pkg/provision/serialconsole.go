@@ -246,6 +246,11 @@ func (c *Configurator) pruneSerialGettyUnits(keepUnit string) error {
 
 func (c *Configurator) pruneSerialGettyLinks(keepUnit string) error {
 	wantsDir := filepath.Join(c.rootDir, strings.TrimPrefix(gettyWantsDir, "/"))
+	// Machine files may keep symlinks, so an ancestor such as etc/systemd
+	// can point out of the target root on a resumed run.
+	if err := ensureTargetParentWithinRoot(c.rootDir, wantsDir); err != nil {
+		return fmt.Errorf("check serial getty wants dir: %w", err)
+	}
 	if info, err := os.Lstat(wantsDir); err == nil && info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("refusing to traverse symlinked serial getty wants dir: %s", wantsDir)
 	}
@@ -283,6 +288,9 @@ func (c *Configurator) pruneSerialGettyLinks(keepUnit string) error {
 //nolint:cyclop // bounded filesystem cleanup with explicit symlink safety checks
 func (c *Configurator) pruneSerialGettyDropIns(keepUnit string) error {
 	unitDir := filepath.Join(c.rootDir, strings.TrimPrefix(systemdUnitDir, "/"))
+	if err := ensureTargetParentWithinRoot(c.rootDir, unitDir); err != nil {
+		return fmt.Errorf("check systemd unit dir: %w", err)
+	}
 	if info, err := os.Lstat(unitDir); err == nil && info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("refusing to traverse symlinked systemd unit dir: %s", unitDir)
 	}

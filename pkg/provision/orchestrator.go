@@ -157,6 +157,8 @@ func (o *Orchestrator) provisionSteps() []Step {
 		// GRUB and EFI fallback mutations, before firmware boot entries point to them.
 		{"verify-secureboot-chain", o.verifySecureBootChain},
 		{"inject-cloudinit", o.injectCloudInit},
+		// copy-machine-files keeps symlinks, so it must stay after every
+		// host-side writer into the target root (TestNoHostWriterRunsAfterCopyMachineFiles).
 		{"copy-machine-files", o.copyMachineFiles},
 		{"run-machine-commands", o.runMachineCommands},
 		{"run-post-provision-cmds", o.runPostProvisionCmds},
@@ -2119,6 +2121,41 @@ func sameMountSource(actual, expected string) bool {
 	return actualErr == nil && expectedErr == nil && actualResolved == expectedResolved
 }
 
+// ensureMountpointWithinRoot refuses a mountpoint below root that has a
+// symlink in any existing path component. mount(2) follows such links, and
+// the later mount-table checks compare the literal path, so only plain
+// directories are accepted.
+func ensureMountpointWithinRoot(root, mountpoint string) error {
+	if _, err := os.Lstat(root); os.IsNotExist(err) {
+		return nil // nothing to escape from; the mount itself will fail
+	}
+	if err := ensureWithinRoot(root, mountpoint); err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(root, mountpoint)
+	if err != nil {
+		return fmt.Errorf("resolve mountpoint %s: %w", mountpoint, err)
+	}
+	current := root
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		if part == "." || part == "" {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if os.IsNotExist(err) {
+			return nil // the rest is created as plain directories
+		}
+		if err != nil {
+			return fmt.Errorf("inspect mountpoint %s: %w", current, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("mountpoint %s has a symlink at %s", mountpoint, current)
+		}
+	}
+	return nil
+}
+
 func bootEFIMountPoint() string {
 	return filepath.Join(newroot, "boot", "efi")
 }
@@ -2136,6 +2173,11 @@ func (o *Orchestrator) mountBoot(ctx context.Context) error {
 		}
 		o.log.Info("boot partition already mounted", "mountpoint", mountpoint, "source", source)
 		return nil
+	}
+	// mount(2) follows symlinks in the mountpoint. Refuse one that leaves the
+	// target root, for example a link left by an earlier run.
+	if err := ensureMountpointWithinRoot(newroot, mountpoint); err != nil {
+		return fmt.Errorf("boot partition mountpoint: %w", err)
 	}
 	if err := mountBootPart(ctx, o.disk, o.bootPartition, mountpoint); err != nil {
 		if isUnsupportedBootFilesystemError(err) {
@@ -2207,6 +2249,11 @@ func (o *Orchestrator) mountSharedData(ctx context.Context) error {
 			o.log.Info("shared data partition already mounted", "label", m.label, "mountpoint", target, "source", source)
 			o.recordSharedMount(target)
 			continue
+		}
+		// The mountpoint may be a link left by an earlier run (checkpoint
+		// resume). Seeding reads it and mount(2) follows it, so check first.
+		if err := ensureMountpointWithinRoot(newroot, target); err != nil {
+			return fmt.Errorf("shared data mountpoint %s: %w", m.mountpoint, err)
 		}
 		if !o.cfg.Provision.AB.PreserveExisting {
 			if err := o.seedSharedDataPartition(ctx, m.device, target); err != nil {
@@ -2572,6 +2619,13 @@ func (o *Orchestrator) applySysexts(ctx context.Context) error {
 }
 
 func (o *Orchestrator) setupChrootBinds(_ context.Context) error {
+	// mount(2) follows symlinks; refuse bind targets that leave the root,
+	// for example links left by an earlier run before a resume.
+	for _, rel := range []string{"dev", "proc", "sys", "run"} {
+		if err := ensureMountpointWithinRoot(newroot, filepath.Join(newroot, rel)); err != nil {
+			return fmt.Errorf("chroot bind target %s: %w", rel, err)
+		}
+	}
 	return o.disk.SetupChrootBindMounts(newroot)
 }
 
