@@ -141,6 +141,10 @@ func TestLegacyCompatProvisionPowersOffQEMU(t *testing.T) {
 	assertProvisionSucceeded(t, output)
 	caprf.requireStatuses(t, "init", "success")
 	requirePowerOff(t, output)
+	// Legacy provision.sh runs `hostname "$HOSTNAME"` first.
+	if !strings.Contains(string(output), "ramdisk hostname set") {
+		t.Fatalf("legacy compat did not set the ramdisk hostname. tail:\n%s", tail(output, 4000))
+	}
 	if strings.Contains(string(output), "attempting kexec") {
 		t.Fatalf("legacy compat must not kexec into the installed kernel. tail:\n%s", tail(output, 4000))
 	}

@@ -510,6 +510,7 @@ func runCAPRF(ctx context.Context) {
 			reboot()
 			return
 		}
+		setLegacyRamdiskHostname(cfg, syscall.Sethostname)
 	}
 
 	// DRY_RUN=true overrides mode before logging.
@@ -755,6 +756,20 @@ func failRun(ctx context.Context, cfg *config.MachineConfig, reporter provisionS
 		<-ctx.Done()
 	}
 	rebootFn()
+}
+
+// setLegacyRamdiskHostname names the ramdisk after the machine, like
+// `hostname "$HOSTNAME"` at the start of the CAPRF legacy provision.sh, so
+// FRR, syslog and DHCP use the machine name. A failure is only logged.
+func setLegacyRamdiskHostname(cfg *config.MachineConfig, sethostname func([]byte) error) {
+	if cfg.DryRun || (cfg.Mode != "provision" && cfg.Mode != "") || cfg.Hostname == "" {
+		return
+	}
+	if err := sethostname([]byte(cfg.Hostname)); err != nil {
+		slog.Warn("setting the ramdisk hostname failed", "hostname", cfg.Hostname, "error", err)
+		return
+	}
+	slog.Info("ramdisk hostname set", "hostname", cfg.Hostname)
 }
 
 // isTerminalSuccess reports a mode result that completed its task. Such a

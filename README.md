@@ -491,6 +491,8 @@ behaviour where the two differ:
   does not apply to dry-run, A/B preserve-existing upgrades, explicit RAID
   configs or a deprovision disk override (`DISK_DEVICE`); those keep the
   BOOTy wipe rules.
+- For provisioning, the ramdisk takes the machine `HOSTNAME`, like
+  `hostname "$HOSTNAME"` in `provision.sh`.
 
 Without the variable, BOOTy keeps its own defaults.
 
