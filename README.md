@@ -302,6 +302,7 @@ root is mounted.
 | `MIN_DISK_SIZE_GB` | `0` | Minimum disk size filter (0 = no minimum) |
 | `BOOTY_ALLOW_REMOVABLE` | `false` | Allow USB/removable media as provisioning target |
 | `MACHINE_EXTRA_KERNEL_PARAMS` | — | Additional kernel cmdline parameters |
+| `EXTRA_KERNEL_PARAMS` | — | Additional kernel cmdline parameters, read by the CAPRF legacy provisioner. Appended to `MACHINE_EXTRA_KERNEL_PARAMS` |
 | `MACHINE_SERIAL_CONSOLE` | — | Pin the serial console of the provisioned system (e.g. `ttyS1,115200n8`), or `none` to disable it. Overrides ACPI SPCR / device-tree / sysfs evidence. Alias: `SERIAL_CONSOLE` |
 | `INIT_URL` | — | CAPRF init status endpoint |
 | `SUCCESS_URL` | — | CAPRF success status endpoint |
@@ -465,6 +466,11 @@ behaviour where the two differ:
   prefers NVMe and then the largest disk. Like the legacy script, this order
   does not skip removable media: a USB disk (SCSI major 8) can be selected
   when no NVMe or virtio disk qualifies, even without `BOOTY_ALLOW_REMOVABLE`.
+- GRUB gets `GRUB_CMDLINE_LINUX="$GRUB_CMDLINE_LINUX ds=nocloud
+  console=ttyS0,115200n8 <extra>"` in `10-caprf-kernel-params.cfg`, with
+  `ttyS1` on Lenovo hosts, and `update-grub` runs only when the image has it.
+  BOOTy does not resolve the console from firmware and does not write getty
+  units in this mode.
 
 Without the variable, BOOTy keeps its own defaults.
 

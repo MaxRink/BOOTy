@@ -395,11 +395,20 @@ func formatKubeletExtraArgs(args []string) string {
 
 // ConfigureGRUB writes GRUB kernel parameters and runs update-grub via chroot.
 //
+// With CAPRF_LEGACY_COMPAT it follows the legacy provisioner instead: it
+// appends "ds=nocloud console=ttyS0,115200n8" (ttyS1 on Lenovo) and the
+// extra parameters verbatim, so several console= tokens can appear, and it
+// skips update-grub when the image has none. The rest of this comment
+// describes the default mode.
+//
 // The console parameter comes from the shared serial console resolver, which
 // replaces the former vendor heuristic ("Lenovo means ttyS1"). Exactly one
 // console= parameter is emitted: operator-supplied console tokens are folded
 // into the resolution instead of being appended a second time.
 func (c *Configurator) ConfigureGRUB(ctx context.Context, cfg *config.MachineConfig) error {
+	if cfg != nil && cfg.LegacyCompat {
+		return c.configureGRUBLegacy(ctx, cfg)
+	}
 	grubDir := filepath.Join(c.rootDir, "etc", "default", "grub.d")
 	if err := os.MkdirAll(grubDir, 0o755); err != nil {
 		return fmt.Errorf("creating grub.d dir: %w", err)

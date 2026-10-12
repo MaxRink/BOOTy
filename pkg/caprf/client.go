@@ -842,6 +842,10 @@ func (c *Client) doPostJSON(ctx context.Context, url string, data []byte) error 
 func ParseVars(r io.Reader) (*config.MachineConfig, error) {
 	cfg := &config.MachineConfig{}
 	scanner := bufio.NewScanner(r)
+	// The legacy provision.sh reads EXTRA_KERNEL_PARAMS, which operators set
+	// through additionalVars. It goes after MACHINE_EXTRA_KERNEL_PARAMS,
+	// whatever the line order.
+	legacyExtraKernelParams := ""
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -863,6 +867,10 @@ func ParseVars(r io.Reader) (*config.MachineConfig, error) {
 			return nil, fmt.Errorf("parse var %s: %w", key, err)
 		}
 
+		if key == "EXTRA_KERNEL_PARAMS" {
+			legacyExtraKernelParams = strings.TrimSpace(value)
+			continue
+		}
 		if err := applyVar(cfg, key, value); err != nil {
 			return nil, fmt.Errorf("parse var %s: %w", key, err)
 		}
@@ -871,6 +879,7 @@ func ParseVars(r io.Reader) (*config.MachineConfig, error) {
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("scan vars: %w", err)
 	}
+	cfg.Provision.ExtraKernelParams = strings.TrimSpace(cfg.Provision.ExtraKernelParams + " " + legacyExtraKernelParams)
 
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -941,10 +950,10 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 
 	strFields := map[string]*string{
 		"HOSTNAME":                    &cfg.Hostname,
+		"MACHINE_EXTRA_KERNEL_PARAMS": &cfg.Provision.ExtraKernelParams,
 		"PROVISION_TARGET_OS":         &cfg.Provision.TargetOS,
 		"TARGET_OS":                   &cfg.Provision.TargetOS,
 		"TOKEN":                       &cfg.Transport.Token,
-		"MACHINE_EXTRA_KERNEL_PARAMS": &cfg.Provision.ExtraKernelParams,
 		"MACHINE_SERIAL_CONSOLE":      &cfg.Provision.SerialConsole,
 		"SERIAL_CONSOLE":              &cfg.Provision.SerialConsole,
 		"FAILURE_DOMAIN":              &cfg.Provision.FailureDomain,

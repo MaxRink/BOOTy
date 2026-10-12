@@ -2496,3 +2496,20 @@ func TestRequestsLegacyCompatAfterLongLine(t *testing.T) {
 		t.Fatal("RequestsLegacyCompat() = false after a 128 KiB line without a final newline")
 	}
 }
+
+// The legacy provision.sh reads EXTRA_KERNEL_PARAMS (set through CAPRF
+// additionalVars); CAPRF itself writes MACHINE_EXTRA_KERNEL_PARAMS.
+func TestParseVarsExtraKernelParamsKeepsBoth(t *testing.T) {
+	for _, vars := range []string{
+		"MACHINE_EXTRA_KERNEL_PARAMS=\"foo=machine\"\nEXTRA_KERNEL_PARAMS=\"foo=legacy\"\n",
+		"EXTRA_KERNEL_PARAMS=\"foo=legacy\"\nMACHINE_EXTRA_KERNEL_PARAMS=\"foo=machine\"\n",
+	} {
+		cfg, err := ParseVars(strings.NewReader(vars))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Provision.ExtraKernelParams != "foo=machine foo=legacy" {
+			t.Fatalf("ExtraKernelParams = %q, want the machine params, then EXTRA_KERNEL_PARAMS", cfg.Provision.ExtraKernelParams)
+		}
+	}
+}
