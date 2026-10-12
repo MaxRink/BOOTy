@@ -436,6 +436,63 @@ func TestConfigDriveNetworkDataIPv6AndVLAN(t *testing.T) {
 	}
 }
 
+func TestInjectConfigDriveBondNetworkData(t *testing.T) {
+	root := t.TempDir()
+	nc := &NetworkConfig{
+		Version: 2,
+		Ethernets: map[string]EthConfig{
+			"eth0": {Match: &MatchConfig{MACAddress: "aa:bb:cc:00:00:01"}},
+			"eth1": {Match: &MatchConfig{MACAddress: "aa:bb:cc:00:00:02"}},
+		},
+		Bonds: map[string]BondConfig{
+			"bond0": {
+				Interfaces: []string{"eth0", "eth1"},
+				Parameters: &BondParams{Mode: "802.3ad"},
+				Addresses:  []string{"10.10.0.5/24"},
+				Gateway4:   "10.10.0.1",
+			},
+		},
+	}
+	if err := InjectConfigDrive(root, &UserData{}, &MetaData{InstanceID: "bond-test"}, nc); err != nil {
+		t.Fatalf("InjectConfigDrive: %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(root, "var", "lib", "cloud", "seed", "config_drive", "openstack", "latest", "network_data.json"))
+	if err != nil {
+		t.Fatalf("read network_data.json: %v", err)
+	}
+	var networkData openStackNetworkData
+	if err := json.Unmarshal(raw, &networkData); err != nil {
+		t.Fatalf("unmarshal network_data.json: %v", err)
+	}
+
+	if len(networkData.Links) != 3 {
+		t.Fatalf("links = %+v, want eth0, eth1 and bond0 once each", networkData.Links)
+	}
+	for id, mac := range map[string]string{"eth0": "aa:bb:cc:00:00:01", "eth1": "aa:bb:cc:00:00:02"} {
+		link := findOpenStackLink(networkData.Links, id)
+		if link == nil || link.Type != "phy" || link.EthernetMACAddress != mac {
+			t.Fatalf("member link %s = %+v, want phy link with MAC %s", id, link, mac)
+		}
+	}
+	bond := findOpenStackLink(networkData.Links, "bond0")
+	if bond == nil {
+		t.Fatalf("missing bond0 link: %+v", networkData.Links)
+	}
+	if bond.Type != "bond" || bond.BondMode != "802.3ad" || strings.Join(bond.BondLinks, ",") != "eth0,eth1" {
+		t.Fatalf("bond0 link = %+v, want type bond, mode 802.3ad, bond_links [eth0 eth1]", *bond)
+	}
+
+	if len(networkData.Networks) != 1 {
+		t.Fatalf("networks = %+v, want one static network on bond0", networkData.Networks)
+	}
+	network := networkData.Networks[0]
+	if network.Link != "bond0" || network.Type != "ipv4" || network.IPAddress != "10.10.0.5" ||
+		network.Netmask != "255.255.255.0" || network.Gateway != "10.10.0.1" {
+		t.Fatalf("bond0 network = %+v, want ipv4 10.10.0.5/255.255.255.0 via 10.10.0.1 on bond0", network)
+	}
+}
+
 func assertConfigDriveMetadata(t *testing.T, path string) {
 	t.Helper()
 	data, err := os.ReadFile(path)
