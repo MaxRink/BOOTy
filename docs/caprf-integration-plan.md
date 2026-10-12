@@ -1,12 +1,17 @@
 # CAPRF Provisioning Integration into BOOTy
 
+> **Historical plan.** This page is the original implementation plan for the
+> CAPRF integration. The code sketches, step lists and file names show the
+> plan, not the current code. For current behaviour, see
+> [CAPRF integration](caprf-integration.md) and
+> [Migration from the CAPRF legacy ramdisk](caprf-legacy-migration.md).
+
 ## Status: Implemented
 
-All phases below are complete. Current CI truth lives in `.github/workflows/ci.yml`
-and includes lint, unit tests, build and artifact checks, ContainerLab E2E,
-vrnetlab EVPN boot validation, KVM boot validation, UEFI ISO boot validation,
-and privileged Linux E2E. Use the current default-branch workflow run as status
-truth rather than historical job counts or the original integration branch name.
+The integration is in place. The implementation differs from this plan in
+many details. Current CI truth lives in `.github/workflows/ci.yml`. Use the
+current default-branch workflow run as status truth rather than historical
+job counts or the original integration branch name.
 
 ## Overview
 
@@ -756,89 +761,10 @@ Phases 4 and 5 can run in parallel after Phase 3.
 
 ## Feature Parity Checklist
 
-Every feature from CAPRF provision.sh, deployer-base-image autorun.sh, and
-debirf-ironic-ramdisk scripts mapped to BOOTy implementation:
-
-### Provisioning Pipeline (from CAPRF provision.sh)
-
-| # | Feature | Source | BOOTy Location |
-|---|---------|--------|----------------|
-| 1 | Load vars from /deploy/vars | common.sh load_vars() | pkg/caprf/types.go ParseVars() |
-| 2 | Set hostname | provision.sh | pkg/provision/configurator.go |
-| 3 | Mount efivarfs | common.sh mount_efi_vars() | pkg/provision/configurator.go |
-| 4 | Copy provisioner files | common.sh copy_files() | pkg/provision/orchestrator.go |
-| 5 | Configure DNS fallback | common.sh configure_dns_fallback() | pkg/provision/configurator.go |
-| 6 | Error handler / error reporting | common.sh fail() + setup_error_handler() | pkg/config/provider.go ReportStatus() |
-| 7 | Wait for network | common.sh wait_for_network() | pkg/network/mode.go WaitForConnectivity() |
-| 8 | POST status init | common.sh status_init() | pkg/config/provider.go ReportStatus(StatusInit) |
-| 9 | Stop RAID arrays | provision.sh mdadm --stop | pkg/disk/manager.go StopRAIDArrays() |
-| 10 | Remove EFI boot entries | common.sh remove_efi_boot_entries() | pkg/provision/configurator.go |
-| 11 | Setup Mellanox NICs | common.sh setup_mellanox_num_of_vfs() | pkg/provision/configurator.go |
-| 12 | NIC firmware version logging | provision.sh ethtool | pkg/provision/orchestrator.go |
-| 13 | Wipe all disks | common.sh wipe_all_disks() | pkg/disk/manager.go WipeAllDisks() |
-| 14 | Detect target disk (NVMe/SATA) | provision.sh lsblk | pkg/disk/manager.go DetectDisk() |
-| 15 | Min disk size validation | provision.sh MIN_DISK_SIZE_GB | pkg/disk/manager.go DetectDisk() |
-| 16 | Pick best image source | common.sh pick_best_source() | pkg/image/image.go SelectBestSource() |
-| 17 | Compression detection (gz/lz4/raw) | provision.sh | pkg/image/image.go Stream() |
-| 18 | Image streaming (curl → dd) | provision.sh | pkg/image/image.go Stream() |
-| 19 | Progress reporting | provision.sh debug() | pkg/image/image.go ProgressFn |
-| 20 | Partition table parsing (sfdisk) | provision.sh | pkg/disk/manager.go ParsePartitions() |
-| 21 | EFI partition detection | provision.sh GUID match | pkg/disk/manager.go FindBootPartition() |
-| 22 | Root partition detection | provision.sh GUID match | pkg/disk/manager.go FindRootPartition() |
-| 23 | Filesystem check (e2fsck) | provision.sh | pkg/disk/manager.go CheckFilesystem() |
-| 24 | Mount root | provision.sh | pkg/disk/manager.go MountPartition() |
-| 25 | Grow partition (growpart) | provision.sh | pkg/disk/manager.go GrowPartition() |
-| 26 | Resize filesystem (resize2fs) | provision.sh | pkg/disk/manager.go ResizeFilesystem() |
-| 27 | Kubelet configuration | provision.sh | pkg/provision/configurator.go |
-| 28 | DMI/hardware detection | provision.sh dmidecode | pkg/provision/configurator.go |
-| 29 | GRUB kernel params | provision.sh | pkg/provision/configurator.go |
-| 30 | Custom machine commands | provision.sh machine-commands/ | pkg/provision/configurator.go |
-| 31 | Custom machine files | provision.sh machine-files/ | pkg/provision/configurator.go |
-| 32 | Cloud-init setup | provision.sh | pkg/provision/configurator.go |
-| 33 | Bind mounts for chroot | provision.sh | pkg/provision/configurator.go |
-| 34 | POST status success | common.sh status_success() | pkg/config/provider.go ReportStatus(StatusSuccess) |
-| 35 | Shutdown | provision.sh | main.go (or kexec) |
-
-### Deprovisioning (from CAPRF deprovision.sh)
-
-| # | Feature | BOOTy Location |
-|---|---------|----------------|
-| 36 | Soft deprovision (rename grub.cfg) | pkg/provision/deprovision.go |
-| 37 | Hard deprovision (wipefs all) | pkg/provision/deprovision.go |
-| 38 | EFI boot entry removal | pkg/provision/deprovision.go |
-
-### Networking (from debirf-ironic-ramdisk)
-
-| # | Feature | BOOTy Location |
-|---|---------|----------------|
-| 39 | VRF creation (Vrf_underlay) | pkg/network/frr/manager.go |
-| 40 | VXLAN interface creation | pkg/network/frr/manager.go |
-| 41 | Bridge creation (br.provision) | pkg/network/frr/manager.go |
-| 42 | IP derivation from IPMI | pkg/network/frr/manager.go |
-| 43 | FRR config generation | pkg/network/frr/manager.go |
-| 44 | Per-NIC BGP peering | pkg/network/frr/manager.go |
-| 45 | BFD configuration | pkg/network/frr/manager.go |
-| 46 | MTU 9000 setup | pkg/network/frr/manager.go |
-
-### Additional Features
-
-| # | Feature | BOOTy Location |
-|---|---------|----------------|
-| 47 | Kexec into installed OS | pkg/kexec/ |
-| 48 | Remote log shipping | pkg/caprf/loghandler.go |
-| 49 | ISO generation (BIOS+UEFI) | cmd/geniso/ or Makefile |
-| 50 | OCI image packaging | Dockerfile.oci |
-
-### Deliberately NOT implemented
-
-| Feature | Reason |
-|---------|--------|
-| QCOW2 conversion (qemu-img) | Not used by CAPRF provision.sh; raw/gz/lz4 only |
-| aria2c multi-source download | Replaced by Go HTTP client with source selection |
-| journalbeat | Replaced by native slog + CAPRF /log endpoint |
-| netplan | Replaced by direct FRR config / netlink |
-| SSH server in ramdisk | Security concern; not needed with remote logging |
-| SR-IOV persistence (mstconfig reboot) | Handled separately by host provisioning |
+The parity matrix in
+[Migration from the CAPRF legacy ramdisk](caprf-legacy-migration.md#parity-matrix)
+replaces this checklist. It covers every row of the former checklist and
+shows the current status.
 
 ---
 
@@ -852,8 +778,10 @@ and graceful drain.
 
 ### BOOTy Side (Already Scaffolded)
 
-The `Provider` interface includes `Heartbeat(ctx)` and `FetchCommands(ctx)` methods which are
-no-op stubs in the current implementation. Future agent mode activates these:
+The `Provider` interface includes `Heartbeat(ctx)` and `FetchCommands(ctx)`. This plan
+described them as no-op stubs. Today `MODE=standby` uses them: it sends heartbeats to
+`HEARTBEAT_URL` and polls `COMMANDS_URL` (see [CAPRF integration](caprf-integration.md#modes)).
+The planned agent loop:
 
 ```go
 // Agent mode main loop (future implementation)
@@ -1236,6 +1164,10 @@ booty.network=dhcp     → Simple DHCP on eth0
 booty.network=static   → Static IP configuration
 ```
 
+The implementation does not use a kernel parameter. `NETWORK_MODE=gobgp` in
+`/deploy/vars` selects GoBGP. Otherwise the network variables select FRR,
+static or DHCP. See [Stack selection](networking.md#stack-selection).
+
 **Estimated effort**: ~2,500–3,500 LOC (excluding tests). Majority in `dataplane.go`
 (netlink programming) and `watcher.go` (EVPN route translation).
 
@@ -1280,5 +1212,7 @@ Week 5-6:  Phase 4 (Kexec) + Phase 5 (ISO/OCI) [parallel]
 Week 6-7:  Phase 6 (CAPRF Integration) + Phase 7 (Docs/Hardening)
 ```
 
-Agent Mode (Addendum A) and GoBGP (Addendum B) are research/documentation only.
-Implementation deferred to a future cycle.
+When this plan was written, Agent Mode (Addendum A) and GoBGP (Addendum B) were
+research only. Since then, BOOTy implements `MODE=standby` and the GoBGP stack
+(`NETWORK_MODE=gobgp`, see [Networking](networking.md)). The CAPRF side of Addendum A is
+not part of this repository.

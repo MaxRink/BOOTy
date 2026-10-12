@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -43,6 +44,45 @@ func TestREADMEClarifiesBondLabDoesNotProveLACP(t *testing.T) {
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("README missing %q", want)
+		}
+	}
+}
+
+// varsKeyPattern matches the vars keys that pkg/caprf/client.go accepts: map
+// entries such as `"KEY": &cfg...` or `"KEY": "shim"`, single-key `case "KEY":`
+// lines and `key == "KEY"` comparisons.
+var varsKeyPattern = regexp.MustCompile(`(?m)^\s*(?:case "([A-Za-z0-9_]+)":|"([A-Za-z_][A-Za-z0-9_]*)":\s+(?:&cfg|")|.*key == "([A-Za-z0-9_]+)")`)
+
+func TestConfigurationDocListsEveryVarsKey(t *testing.T) {
+	src, err := os.ReadFile("pkg/caprf/client.go")
+	if err != nil {
+		t.Fatalf("read vars parser: %v", err)
+	}
+	doc, err := os.ReadFile("docs/configuration.md")
+	if err != nil {
+		t.Fatalf("read configuration reference: %v", err)
+	}
+	// Only table rows count, so a key named in prose or in the Planned list
+	// does not satisfy the check.
+	var rows strings.Builder
+	for line := range strings.Lines(string(doc)) {
+		if strings.HasPrefix(line, "| ") {
+			rows.WriteString(line)
+		}
+	}
+	keys := map[string]struct{}{}
+	for _, m := range varsKeyPattern.FindAllStringSubmatch(string(src), -1) {
+		keys[m[1]+m[2]+m[3]] = struct{}{}
+	}
+	// One key per parser handler, so a regexp that misses a handler fails.
+	for _, sentinel := range []string{"IMAGE", "OCI_PREPULL_CACHE_DIR", "SECUREBOOT_SHIM_SHA256", "EXTRA_KERNEL_PARAMS", "RESCUE_TIMEOUT", "vrf_table_id", "asn_server"} {
+		if _, ok := keys[sentinel]; !ok {
+			t.Fatalf("varsKeyPattern does not find %q in pkg/caprf/client.go; update the pattern", sentinel)
+		}
+	}
+	for key := range keys {
+		if !strings.Contains(rows.String(), "`"+key+"`") {
+			t.Errorf("docs/configuration.md has no table row for vars key %q", key)
 		}
 	}
 }

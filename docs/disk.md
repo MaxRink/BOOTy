@@ -1,0 +1,397 @@
+# Disk Handling
+
+This guide describes how BOOTy selects the target disk, wipes disks, builds
+RAID arrays and NVMe namespaces, applies partition layouts, finds the root
+partition, and grows the root filesystem. It describes the behaviour on `main`.
+
+[docs/configuration.md](configuration.md) is the reference for all variables,
+defaults and accepted values. This guide links to it and does not repeat the
+tables. [docs/ab-partitioning.md](ab-partitioning.md) describes A/B image mode.
+[docs/caprf-legacy-migration.md](caprf-legacy-migration.md) compares BOOTy with
+the CAPRF legacy scripts.
+
+## Configuration Sources
+
+BOOTy reads the vars file `/deploy/vars` and its process environment. It does
+not read YAML or JSON files (see
+[Configuration sources](configuration.md#configuration-sources)). Some disk
+settings exist only as `pkg/config` fields, and the vars file has no key for
+them. So BOOTy does not use them at runtime today:
+
+- `provision.disk.raid` (software RAID)
+- `deprovision.device` and `deprovision.secureErase`
+
+`BOOTY_ALLOW_REMOVABLE` is not a vars file key. BOOTy reads it from the process
+environment (see [Process environment](configuration.md#process-environment)).
+A vars file entry works only with `CAPRF_LEGACY_COMPAT=true`.
+
+### Variables Used
+
+See [docs/configuration.md](configuration.md) for each variable:
+
+- Target disk: `DISK_DEVICE`, `DISK_SERIAL`, `DISK_SERIAL_NUMBER`,
+  `MIN_DISK_SIZE_GB`, `BOOTY_ALLOW_REMOVABLE`
+- Wipe: `MODE`, `SECURE_ERASE`, `DRY_RUN`, `CAPRF_LEGACY_COMPAT`
+- Layout: `PARTITION_LAYOUT`, `IMAGE_MODE`, `IMAGE_SOURCE_ROOT_LABEL`,
+  `IMAGE_SOURCE_ROOT_PARTITION`
+- Root partition: `ROOT_PARTITION_LABEL`, `ROOT_PARTITION_NUMBER`
+- NVMe: `NVME_NAMESPACES`
+- A/B: `AB_*` (see [docs/ab-partitioning.md](ab-partitioning.md))
+
+## Processing Order
+
+The provisioning pipeline runs the disk steps in this order:
+
+1. `disable-lvm` and `stop-raid`: deactivate LVM volume groups
+   (`lvm vgchange -an`) and stop all md arrays (`mdadm --stop --scan`).
+2. `setup-nvme-namespaces`: apply `NVME_NAMESPACES`.
+3. `setup-raid`: wipe the RAID member disks and create the arrays.
+4. `detect-disk`: select the target disk.
+5. `wipe-disks`: wipe the target disk or all disks.
+6. `apply-partition-layout`: create the declared GPT layout and LVM volumes.
+7. `stream-image`: write the image.
+8. `partprobe`, `parse-partitions`: read the new partition table and find the
+   boot and root partitions.
+9. `check-filesystem`, `enable-lvm`, `mount-root`, `mount-boot`.
+10. `grow-partition` and `resize-filesystem`, after the target root is mounted.
+
+## Target Disk Selection
+
+The `detect-disk` step uses the first rule that applies:
+
+1. `device` in `PARTITION_LAYOUT`.
+2. `DISK_DEVICE`. The path must exist and must be a block device.
+3. `DISK_SERIAL` or `DISK_SERIAL_NUMBER` (see [Serial Lookup](#serial-lookup)).
+4. Automatic detection (see below).
+
+If `PARTITION_LAYOUT` sets `device` and `DISK_DEVICE` has a different value,
+BOOTy stops with a `disk device conflict` error before it wipes a disk.
+
+`NVME_NAMESPACES` and RAID can set the disk device before this step. See
+[NVMe Namespaces](#nvme-namespaces) and [Software RAID](#software-raid).
+
+### Automatic Detection
+
+BOOTy reads `/sys/block` and skips virtual devices: `loop*`, `sr*`, `ram*`,
+`zram*`, `dm-*`, `md*`, `zd*` and `nbd*`. It also skips removable media unless
+`BOOTY_ALLOW_REMOVABLE=true`. If BOOTy cannot read the `removable` attribute,
+it treats the device as removable. It skips disks smaller than
+`MIN_DISK_SIZE_GB`. BOOTy measures sizes in GiB (2^30 bytes) and rounds down.
+
+From the remaining disks, BOOTy prefers an NVMe disk. Among disks of the same
+kind (NVMe or not NVMe), it takes the largest disk.
+
+Planned (#632): skip hidden NVMe multipath path nodes during disk discovery.
+
+### Legacy Compat Detection
+
+With `CAPRF_LEGACY_COMPAT=true`, automatic detection follows the CAPRF legacy
+scripts:
+
+1. BOOTy runs `lsblk --nodeps --include 259,253` (NVMe and virtio disks), then
+   `lsblk --nodeps --include 8` (SCSI and SATA disks).
+2. It keeps the disks of at least `MIN_DISK_SIZE_GB` GiB, in `lsblk` order.
+3. It takes the first disk.
+
+This order does not skip removable media. A USB disk (major 8) can become the
+target when no NVMe or virtio disk qualifies, also without
+`BOOTY_ALLOW_REMOVABLE`. `DISK_DEVICE`, the serial lookup and
+`PARTITION_LAYOUT.device` keep their normal precedence.
+
+### Serial Lookup
+
+`DISK_SERIAL` and `DISK_SERIAL_NUMBER` are aliases. Both set
+`provision.disk.serialNumber`. If the vars file sets both, the last line wins.
+BOOTy uses the serial only when `DISK_DEVICE` is empty.
+
+For each non-virtual disk, BOOTy reads the first identifier that it finds in
+this order:
+
+1. `/sys/block/<disk>/device/serial`
+2. `/sys/block/<disk>/serial`
+3. `/sys/block/<disk>/device/wwid`
+4. `/sys/block/<disk>/device/vpd_pg80` (unit serial number)
+5. `/sys/block/<disk>/device/vpd_pg83` (device identification)
+
+The match is exact after BOOTy trims white space. If no disk matches in sysfs,
+BOOTy compares the `SERIAL` column of `lsblk --nodeps --paths`. The serial
+lookup skips removable media unless `BOOTY_ALLOW_REMOVABLE=true`, also in legacy
+compat.
+
+The lookup fails when:
+
+- no disk matches (the error lists the observed serials),
+- more than one disk matches,
+- the matching disk is smaller than `MIN_DISK_SIZE_GB`.
+
+## Wipe Behaviour
+
+A quick wipe runs `sgdisk --zap-all` and then `wipefs -af` on a device. It
+removes partition tables and filesystem signatures. It does not overwrite data.
+
+"All disks" means every entry in `/sys/block` except the virtual devices listed
+in [Automatic Detection](#automatic-detection). This includes removable media.
+
+| Mode | Wipe behaviour |
+| --- | --- |
+| `provision` | Quick wipe of the target disk. With `SECURE_ERASE=true`, a hardware erase of the target disk. |
+| `provision` with `CAPRF_LEGACY_COMPAT=true` | All disks: `blkdiscard` on each NVMe disk, then a quick wipe of each disk. BOOTy logs failures and continues. `SECURE_ERASE` has no effect. `DISK_DEVICE` does not limit the wipe. |
+| `deprovision` (alias `hard`) | `DISK_DEVICE` set: wipe only that disk. `DISK_DEVICE` empty: quick wipe of all disks. A failed disk fails the run. |
+| `deprovision` with `CAPRF_LEGACY_COMPAT=true` | `DISK_DEVICE` empty: the legacy wipe of all disks (`blkdiscard` on NVMe, quick wipe, failures logged). `DISK_DEVICE` set: wipe only that disk. |
+| `soft-deprovision` (alias `soft`) | No wipe. BOOTy renames `/boot/grub/grub.cfg` to `grub.cfg.bak` on the root partition. |
+| `decommission` | Quick wipe of all disks, best effort. BOOTy logs failures and continues. With legacy compat, `blkdiscard` runs on each NVMe disk first. `DISK_DEVICE` and `SECURE_ERASE` have no effect. Then BOOTy removes all EFI boot entries. |
+| `dry-run` (or `DRY_RUN=true`) | No wipe. The dry-run checks do not write to disk. The disk check uses `DISK_DEVICE` or automatic detection and ignores `DISK_SERIAL`. |
+
+Exceptions in the `wipe-disks` step:
+
+- `IMAGE_MODE=ab` with `AB_PRESERVE_EXISTING=true` skips the wipe. BOOTy clears
+  only the filesystem signatures of the target root slot before it streams the
+  image. See [docs/ab-partitioning.md](ab-partitioning.md).
+- A RAID config disables the legacy compat wipe of all disks. BOOTy wipes the
+  RAID member disks in `setup-raid` and then quick-wipes the array device.
+- In deprovision modes, `DISK_DEVICE` must be an absolute `/dev/` path to a
+  block device. `soft-deprovision` uses `DISK_DEVICE` or automatic detection to
+  find the disk. It ignores `DISK_SERIAL`.
+
+`IMAGE_MODE=partition` quick-wipes the target disk again before it writes the
+partitions.
+
+### Secure Erase
+
+`SECURE_ERASE=true` sets `provision.disk.secureErase`. BOOTy uses it only in
+`provision` mode, for the target disk and for RAID member disks. Deprovision
+modes read `deprovision.secureErase`, which the vars file cannot set (see
+[Configuration Sources](#configuration-sources)).
+
+| Drive | Erase method | Fallback |
+| --- | --- | --- |
+| NVMe | `nvme format <dev> --ses=1 --force` (User Data Erase) | `wipefs -af` if the format fails |
+| SATA/SAS | ATA Security Erase with `hdparm` and a temporary password | `wipefs -af` if the drive has no ATA security feature set or is frozen |
+
+A missing `nvme` or `hdparm` tool is fatal. A failed ATA erase command is also
+fatal. BOOTy then tries to clear the temporary password.
+
+### Failed Image Writes
+
+When a whole-disk or QCOW2 write fails, or the checksum does not match, BOOTy
+writes zeros to the first 1 MiB of the target disk. This removes the partition
+table, so the machine cannot boot a partial image. When BOOTy writes into
+partitions (A/B mode or `PARTITION_LAYOUT`), it writes zeros to the first 1 MiB
+of each target partition that it changed.
+
+## Software RAID
+
+`provision.disk.raid` is a list of md arrays. The vars file has no RAID key
+(see [Configuration Sources](#configuration-sources)).
+
+| Field | Rule |
+| --- | --- |
+| `name` | `mdN` (for example `md0`) or `md/<name>`. No `/dev/` prefix. Names must be unique. |
+| `level` | `0`, `1`, `5`, `6` or `10` |
+| `devices` | Member block devices. BOOTy removes duplicates. A device must not be in two arrays. |
+
+Minimum number of unique member devices:
+
+| Level | Minimum devices |
+| --- | --- |
+| 0, 1 | 2 |
+| 5 | 3 |
+| 6, 10 | 4 |
+
+Config validation and `setup-raid` both check these rules. `setup-raid` checks
+them before it changes a disk.
+
+The `setup-raid` step:
+
+1. Selects the target device. If `DISK_DEVICE` is set, it must name one of the
+   array devices. With one array and no `DISK_DEVICE`, the target is
+   `/dev/<name>`. With more than one array, `DISK_DEVICE` is required.
+2. Wipes each member disk (quick wipe, or hardware erase with
+   `provision.disk.secureErase`).
+3. Creates each array with
+   `mdadm --create /dev/<name> --level <level> --raid-devices <n> --run --force --metadata 1.2 <devices>`.
+
+## Disk Mirroring
+
+Planned (#581): RAID-1 root disk mirroring with `DISK_MIRRORING_MODE`. On
+`main`, BOOTy ignores `DISK_MIRRORING_MODE`.
+
+## NVMe Namespaces
+
+`NVME_NAMESPACES` is a JSON list with one entry per NVMe controller:
+
+```json
+[
+  {
+    "controller": "/dev/nvme0",
+    "namespaces": [
+      {"label": "os", "sizePct": 20},
+      {"label": "data", "sizePct": 80, "blockSize": 4096}
+    ]
+  }
+]
+```
+
+| Field | Rule |
+| --- | --- |
+| `controller` | Controller character device, `/dev/nvmeN`. Each controller can occur only once. |
+| `namespaces` | At least one entry. The sum of `sizePct` must not exceed 100. |
+| `label` | Required. BOOTy uses it only in log messages. |
+| `sizePct` | `1` to `100`, a percentage of the controller capacity (`tnvmcap`). |
+| `blockSize` | `512` (default) or `4096`. |
+
+For each controller, the `setup-nvme-namespaces` step:
+
+1. Reads `nvme id-ctrl`. The controller must support more than one namespace
+   (`nn` greater than 1), or the step fails.
+2. Deletes all existing namespaces.
+3. Creates each namespace with `nvme create-ns` and attaches it with
+   `nvme attach-ns -c 0`.
+
+BOOTy always attaches the namespaces to controller ID 0. Planned (#610): attach
+to the controller ID that the controller reports.
+
+The step fails if it creates no namespace. If `DISK_DEVICE` is empty, BOOTy
+sets the target disk to the first namespace that it created on the first
+controller, for example `/dev/nvme0n1`. BOOTy does not reset namespaces during
+deprovisioning.
+
+## Partition Layout
+
+`PARTITION_LAYOUT` is a JSON object that declares a GPT layout. BOOTy creates
+the layout on the target disk and then streams the root filesystem of the
+source image into the partition or logical volume with mountpoint `/`.
+
+```sh
+export PARTITION_LAYOUT='{"partitions":[{"label":"EFI","sizeMB":512,"filesystem":"vfat","mountpoint":"/boot/efi"},{"label":"root","filesystem":"ext4","mountpoint":"/"}]}'
+```
+
+Layout rules (`config.ParsePartitionLayout`):
+
+- `table` must be `gpt` or empty. `device` must be an absolute, clean path.
+- 1 to 128 partitions. Labels are required, unique, at most 36 characters, and
+  use only letters, digits, space, `-`, `_` and `.`.
+- `sizeMB` is in MiB. `0` or no value fills the remaining space. Only the last
+  partition can do this.
+- `filesystem` is `vfat`, `ext4`, `xfs`, `swap` or empty.
+- A `mountpoint` needs a `filesystem`. A swap partition has no `mountpoint`.
+  Mountpoints are unique, and exactly one is `/`.
+- `mountOptions` is one fstab options token without white space, for example
+  `defaults,noatime`.
+- `typeGUID` must be a UUID. Without it, BOOTy sets the type from the
+  filesystem: EFI system partition for `vfat`, Linux swap for `swap`, Linux
+  filesystem for all others. The LVM physical volume partition gets the Linux
+  LVM type.
+- BOOTy rejects unknown JSON fields and trailing content.
+
+Runtime rules for layouts outside A/B mode:
+
+- `IMAGE_MODE` must be `whole-disk` or empty.
+- Only the mountpoints `/` and `/boot/efi` are supported. A logical volume
+  cannot use `/boot/efi`.
+
+`IMAGE_SOURCE_ROOT_LABEL` or `IMAGE_SOURCE_ROOT_PARTITION` selects the source
+image partition to copy. They are mutually exclusive. Without them, BOOTy uses
+the source root selection rules of
+[docs/ab-partitioning.md](ab-partitioning.md#source-root-selection).
+
+After `mount-root`, BOOTy writes `/etc/fstab` in the target root. Each entry
+uses `PARTLABEL=<label>`. BOOTy reads the root filesystem type of the streamed
+image with `blkid`. Default options are `defaults`, and `umask=0077` for
+`/boot/efi`. `mountOptions` replaces the default.
+
+In A/B mode, BOOTy generates the layout from the `AB_*` variables and ignores
+`PARTITION_LAYOUT`.
+
+### LVM
+
+The `lvm` object adds one volume group on one layout partition:
+
+```sh
+export PARTITION_LAYOUT='{"partitions":[{"label":"EFI","sizeMB":512,"filesystem":"vfat","mountpoint":"/boot/efi"},{"label":"lvm"}],"lvm":{"volumeGroup":"sysvg","pvPartition":2,"volumes":[{"name":"swap","sizeMB":4096,"filesystem":"swap"},{"name":"root","filesystem":"ext4","mountpoint":"/"}]}}'
+```
+
+- `pvPartition` is the 1-based index of the physical volume partition. That
+  partition has no `filesystem` and no `mountpoint`.
+- Each volume has a unique `name`. Its size is `sizeMB` (`lvcreate -L`) or
+  `extents` (`lvcreate -l`, for example `50%VG`), not both. A volume without
+  both uses `100%FREE` and must be the last volume.
+- The root volume is `/dev/<volumeGroup>/<name>`.
+
+BOOTy checks for the `lvm` tool before `wipe-disks`. Then it runs
+`lvm pvcreate -f`, `lvm vgcreate` (skipped if the volume group exists) and
+`lvm lvcreate`, and formats each volume.
+
+## Root Partition Detection
+
+The `parse-partitions` step finds the root partition with the first rule that
+applies:
+
+1. `PARTITION_LAYOUT` or A/B mode: the partition or logical volume with
+   mountpoint `/`.
+2. `ROOT_PARTITION_LABEL`: the partition with this GPT partition name. The match
+   ignores case. The partition must have the Linux filesystem type. BOOTy fails
+   if the label matches more than one partition or no partition.
+3. `ROOT_PARTITION_NUMBER`: the partition with this 1-based number. It must
+   have the Linux filesystem type.
+4. Automatic detection.
+
+`ROOT_PARTITION_LABEL` and `ROOT_PARTITION_NUMBER` are mutually exclusive.
+
+Automatic detection uses only partitions with the Linux filesystem type (GPT
+`0FC63DAF-8483-4772-8E79-3D69D8477DE4` or MBR `83`):
+
+1. If exactly one candidate is named `root` or `/` (case is ignored), BOOTy
+   uses it. If more than one has these names, BOOTy fails.
+2. If there is only one candidate, BOOTy uses it.
+3. If there is more than one candidate, BOOTy checks their content. It mounts
+   each candidate read-only without journal replay, in partition table order.
+   It selects the first candidate that has a regular file `/etc/os-release`, or
+   both an `/etc` and a `/usr` directory. If no candidate matches, BOOTy fails.
+
+`soft-deprovision` uses only rules 1 and 2 of automatic detection.
+
+## Boot Partition and Separate /boot
+
+BOOTy uses the first EFI system partition of the written image as the boot
+partition. With `PARTITION_LAYOUT`, it uses the partition with mountpoint
+`/boot/efi`. The `mount-boot` step mounts it at `/boot/efi` in the target root.
+Without an EFI system partition, BOOTy logs a warning and skips the mount.
+
+BOOTy does not read the `/etc/fstab` of the image. If the image keeps `/boot` on
+a separate partition, BOOTy does not mount it. Steps that use `/boot`, such as
+the GRUB configuration and kexec, then see the `/boot` directory of the root
+filesystem.
+
+Planned (#595): mount a separate `/boot` from the image fstab.
+
+## Filesystem Check, Partition Growth and Resize
+
+`check-filesystem` checks the root partition before BOOTy mounts it:
+
+| Filesystem | Command | Result |
+| --- | --- | --- |
+| ext2/3/4 (and unknown types) | `e2fsck -fy` | Exit codes 1 to 3: BOOTy logs a warning and continues. Exit code 4 or higher, or an interrupted run: BOOTy fails. Without `e2fsck`, BOOTy skips the check. |
+| XFS | `xfs_repair -n` | Any error fails the step. |
+| Btrfs | `btrfs check --readonly` | Any error fails the step. |
+| vfat | none | BOOTy fails. vfat is supported only for the EFI system partition. |
+
+`grow-partition` runs `growpart --update on <disk> <root partition number>`.
+`NOCHANGE` (the partition already fills the space) is not an error. BOOTy grows
+only the root partition. If the root partition is not the last partition, it
+usually cannot grow. With `PARTITION_LAYOUT` or in A/B mode, BOOTy skips this
+step.
+
+Planned (#625): grow the last Linux partition in CAPRF legacy compat.
+
+`resize-filesystem` grows the root filesystem. It tries `resize2fs <device>`,
+then `xfs_growfs <mountpoint>`, then `btrfs filesystem resize max <mountpoint>`.
+It fails for vfat.
+
+## Image Formats
+
+BOOTy writes raw images, compressed raw images (gzip, zstd, lz4, xz, bzip2) and
+QCOW2 images. It converts a QCOW2 image to raw with `qemu-img` in a tmpfs
+ramdisk before it writes the disk. A QCOW2 image must be self-contained: BOOTy
+rejects images with a backing file or an external data file. See
+[README.md](../README.md#caprf-mode) for the image source rules.

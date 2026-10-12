@@ -1,43 +1,31 @@
-# GoBGP EVPN Configuration Guide
+# GoBGP EVPN Guide
 
-This guide covers configuring BOOTy's pure-Go BGP stack for EVPN/VXLAN
-overlay networking in bare-metal provisioning environments.
+This guide shows how to run BOOTy with the in-process GoBGP stack. For the
+behaviour (stack selection, peer modes, EVPN route modes, router MAC,
+connectivity check), see [networking.md](networking.md). For the variable
+reference, see [configuration.md](configuration.md).
 
 ## Overview
 
-BOOTy's GoBGP mode replaces FRR with an in-process BGP stack using a
-three-tier architecture:
+GoBGP mode runs BGP inside the BOOTy process. It needs no FRR daemons, so it
+works in every image flavor. The stack has two tiers (`pkg/network/gobgp`):
 
-```
-┌──────────────────────────────────────────────────┐
-│ BOOTy (PID 1 in initramfs)                       │
-│                                                  │
-│  ┌──────────────────────────────────────────────┐│
-│  │ Tier 1: Underlay                             ││
-│  │  • eBGP peering with leaf/spine switches     ││
-│  │  • Advertises local VTEP /32 (router-id)     ││
-│  │  • Discovers peers via IPv6 link-local NDP   ││
-│  └──────────────────────────────────────────────┘│
-│  ┌──────────────────────────────────────────────┐│
-│  │ Tier 2: Overlay (EVPN)                       ││
-│  │  • Advertises Type-5 (IP Prefix) routes      ││
-│  │  • Optional Type-2/3 L2 control plane        ││
-│  │  • VXLAN + bridge for provisioning network   ││
-│  │  • Gateway VTEP route for baseline reach     ││
-│  └──────────────────────────────────────────────┘│
-│  ┌──────────────────────────────────────────────┐│
-│  │ Tier 3: IPMI (optional, planned)             ││
-│  │  • L3 path to BMC                            ││
-│  └──────────────────────────────────────────────┘│
-└──────────────────────────────────────────────────┘
-```
+| Tier | Function |
+|---|---|
+| Underlay | BGP sessions to the fabric. Advertises the router ID `/32` in IPv4 unicast. Unnumbered peers are found through IPv6 NDP. |
+| Overlay | VXLAN device and provision bridge. Advertises and processes EVPN routes. Installs the gateway or VTEP routes and the FDB entries. |
 
-## Quick Start
+An IPMI tier is not implemented.
 
-Add these variables to your `/deploy/vars` file:
+GoBGP does not support BFD. Use FRR mode for BFD. See
+[FRR and GoBGP compared](networking.md#frr-and-gobgp-compared).
+
+## Quick start
+
+Type-5 with a gateway VTEP (the default route mode). Put this in
+`/deploy/vars`:
 
 ```bash
-# Required for GoBGP mode
 export NETWORK_MODE="gobgp"
 export BGP_PEER_MODE="unnumbered"
 export underlay_ip="10.0.0.20"
@@ -48,70 +36,47 @@ export provision_gateway="10.0.0.1"
 export dns_resolver="8.8.8.8"
 ```
 
-## Configuration Reference
+Direct Type-5 without a gateway VTEP (as in the `topology-type5.clab.yml`
+lab):
 
-### Core Variables
+```bash
+export NETWORK_MODE="gobgp"
+export BGP_PEER_MODE="unnumbered"
+export EVPN_TYPE5_ONLY="true"
+export underlay_ip="192.168.4.10"
+export asn_server="65010"
+export provision_vni="1000"
+export provision_ip="10.200.0.10/32"
+export vpn_rt="65000:1000"
+export dns_resolver="8.8.8.8"
+```
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `NETWORK_MODE` | Yes | — | Must be `gobgp` to activate GoBGP stack |
-| `BGP_PEER_MODE` | No | `unnumbered` | Peering mode (see below) |
-| `BGP_INTERFACES` | No | — | Comma-separated interface allowlist for unnumbered/dual peers; empty uses all detected physical NICs |
-| `underlay_ip` | Yes | — | Local VTEP IP / BGP router-id (e.g. `10.0.0.20`) |
-| `asn_server` | Yes | — | Local BGP AS number |
-| `provision_vni` | Yes | — | VXLAN VNI for provisioning network. With `asn_server > 65535`, values above 65535 are rejected because 4-octet ASN RD/RT local-admin values are 16-bit. |
-| `provision_ip` | Yes | — | Overlay IP in CIDR notation (e.g. `10.100.0.20/24`) |
-| `provision_gateway` | L2 only | — | Remote VTEP IP for gateway route + BUM FDB; optional for direct Type-5 |
-| `dns_resolver` | No | — | DNS resolver IP |
-| `overlay_subnet` | No | — | IPv6 overlay subnet (optional) |
-| `EVPN_L2_ENABLED` | No | `false` | Enable Type-2/3 EVPN route origination and handling |
-| `EVPN_TYPE5_ONLY` | No | `false` | Explicitly select direct Type-5 routing; mutually exclusive with `EVPN_L2_ENABLED` |
+Add `EVPN_L2_ENABLED="true"` to the first example to also originate and
+process Type-2 and Type-3 routes. Do not set `EVPN_L2_ENABLED` and
+`EVPN_TYPE5_ONLY` together. See
+[EVPN route modes](networking.md#evpn-route-modes-gobgp).
 
-GoBGP currently does not implement BFD. `BFD_TRANSMIT_MS` and
-`BFD_RECEIVE_MS` are consumed by the FRR backend; GoBGP relies on keepalive and
-hold timers for failure detection.
+## Peer mode examples
 
-### Peering Mode Variables
+The peer modes are described in
+[GoBGP peer modes](networking.md#gobgp-peer-modes).
 
-| Variable | Modes | Description |
-|----------|-------|-------------|
-| `BGP_INTERFACES` | `unnumbered`, `dual` | Restrict interface peering to listed NICs, useful when management or bootstrap NICs are present |
-| `BGP_NEIGHBORS` | `dual`, `numbered` | Comma-separated peer IPs |
-| `BGP_REMOTE_ASN` | `numbered` | Remote ASN (0 = iBGP) |
-
-## Peering Modes
-
-### Unnumbered (Default)
-
-Best for leaf-spine topologies with IPv6 link-local peering:
+Unnumbered, restricted to two fabric NICs:
 
 ```bash
 export BGP_PEER_MODE="unnumbered"
-export BGP_INTERFACES="eth1,eth2"  # optional; omit to use all physical NICs
+export BGP_INTERFACES="eth1,eth2"
 ```
 
-- Discovers peers automatically via IPv6 NDP on all physical NICs
-- Restricts discovery to `BGP_INTERFACES` when set, avoiding peering on management or provisioning-only NICs
-- Carries both IPv4 unicast and L2VPN-EVPN on the same sessions
-- No explicit neighbor configuration needed
-
-### Dual
-
-Separate underlay and overlay peering — underlay on link-local, overlay
-on numbered sessions to route reflectors:
+Dual: unnumbered IPv4 underlay plus numbered EVPN sessions to route
+reflectors:
 
 ```bash
 export BGP_PEER_MODE="dual"
 export BGP_NEIGHBORS="10.0.0.1,10.0.0.2"
 ```
 
-- Underlay: unnumbered eBGP (IPv4 unicast only)
-- Overlay: numbered eBGP to `BGP_NEIGHBORS` (L2VPN-EVPN)
-
-### Numbered
-
-Traditional IP-based peering — requires the machine to already have
-underlay connectivity (e.g. via DHCP or static IP):
+Numbered, eBGP to AS 65000. The host must already reach the neighbor:
 
 ```bash
 export BGP_PEER_MODE="numbered"
@@ -119,166 +84,76 @@ export BGP_NEIGHBORS="10.0.0.1"
 export BGP_REMOTE_ASN="65000"
 ```
 
-## EVPN Data Plane
+With `BGP_REMOTE_ASN` unset or `0`, the numbered sessions are iBGP.
 
-### What BOOTy Advertises
+## Network interfaces created
 
-BOOTy advertises **Type-5 (IP Prefix)** routes for provisioning host
-reachability. Set `EVPN_TYPE5_ONLY=true` to use direct Type-5 forwarding
-without a configured gateway VTEP.
+| Interface | Content |
+|---|---|
+| `dummy.underlay` | Router ID (underlay IP) `/32`. A netplan dummy device name replaces the default name. |
+| `lo` | Overlay IP `/32` or `/128`. Without `overlay_subnet`, this is the router ID. |
+| `vx<VNI>` | VXLAN device, for example `vx100`. UDP port 4789, MAC learning off, MTU = NIC MTU minus 50. Bound to the netplan VXLAN `link`, or to the underlay dummy when `VRF_NAME` is set. |
+| `br.provision` | Bridge with `vx<VNI>` as member. Carries `provision_ip` and the router MAC. A netplan bridge name replaces the default name. |
+| `VRF_NAME` | Only when `VRF_NAME` is set. Table `VRF_TABLE_ID`. Contains the underlay dummy and the fabric NICs, and the provision bridge unless netplan puts the bridge in another VRF. |
 
-Type-5-only advertisements use a `0.0.0.0` EVPN gateway address and retain
-the VTEP as the BGP next hop. They include the VXLAN tunnel-encapsulation and
-router-MAC extended communities. This makes them direct Type-5 routes: peers
-install an on-link route through the VTEP and program the router-MAC FDB entry
-without requiring Type-2 MAC/IP resolution.
+## Lab topology
 
-The router MAC is the provision bridge MAC. BOOTy selects it in this order:
+`test/e2e/clab/topology-gobgp.clab.yml` runs four GoBGP BOOTy containers
+against an FRR fabric:
 
-1. The netplan `macaddress` of the provision bridge, used as given. It must
-   be a 48-bit MAC.
-2. `02:54` and the last 4 bytes of the IPMI MAC.
-3. `02:54` and the 4 bytes of the underlay IPv4, like the legacy
-   `configure-frr.py` ramdisk.
+| Node | ASN | Role |
+|---|---|---|
+| `spine01` | 65000 | FRR. Loopback `10.0.0.1`. VXLAN gateway for VNI 100 (`br100`, `10.100.0.1/24`). |
+| `leaf01` | 65001 | FRR leaf |
+| `rr01` | 65000 | FRR route reflector for the `booty-dual` numbered EVPN session |
+| `booty-unnumbered` | 65020 | Unnumbered. FRR config with `advertise-all-vni`, so L2 mode is auto-detected |
+| `booty-dual` | 65010 | Dual. No FRR config, so Type-5 with gateway |
+| `booty-numbered` | 65030 | Numbered. Provision VNI is an FRR L3VNI, so Type-5 with gateway |
+| `booty-l2` | 65040 | Unnumbered. `EVPN_L2_ENABLED=true` without FRR config |
 
-The derived MACs are stable, host specific, locally administered unicast
-addresses. The IPv4 underlay MAC is unique because the underlay IP is the
-VTEP address. The IPMI MAC keeps only 4 bytes, so a collision is
-unlikely but possible. Set the netplan `macaddress` if you need a fixed value.
-
-When `EVPN_L2_ENABLED=true`, BOOTy also originates:
-
-| Route Type | Purpose |
-|------------|---------|
-| **Type-2** (MAC/IP) | Advertise the local bridge MAC and provisioning IP |
-| **Type-3** (Inclusive Multicast) | Advertise this VTEP as a BUM flooding target |
-
-### What BOOTy Receives
-
-The `watchRoutes()` function monitors GoBGP's route stream and processes
-incoming EVPN routes from the fabric. Type-5 routes are always handled. Type-2
-and Type-3 handling is enabled only when `EVPN_L2_ENABLED=true`.
-
-| Route Type | Action | Purpose |
-|------------|--------|---------|
-| **Type-5** (IP Prefix) | Learns remote VTEP prefix reachability | Route overlay traffic toward remote VTEPs |
-| **Type-2** (MAC/IP) | Installs unicast FDB entry (`MAC → VTEP`) | Learn remote MACs via control plane |
-| **Type-3** (Inclusive Multicast) | Installs BUM FDB entry (`00:00:00:00:00:00 → VTEP`) | Enable BUM flooding to remote VTEPs |
-
-Routes originating from BOOTy's own router-id are skipped.
-
-### Gateway Connectivity
-
-In an L2 overlay, `provision_gateway` is required. When set, BOOTy:
-
-1. **Installs a /32 kernel route** to the gateway VTEP via the first
-   physical NIC (`installGatewayRoute()`). This ensures VXLAN-encapsulated
-   packets can reach the remote VTEP.
-
-2. **Adds a BUM FDB entry** on the VXLAN device pointing to the gateway
-   VTEP (`addGatewayFDB()`). This ensures ARP/broadcast frames are
-   flooded to the gateway before dynamic routes arrive.
-
-When netplan defines a VXLAN `link`, BOOTy binds the VXLAN device to that
-underlay link (`VtepDevIndex`) and creates the configured underlay dummy with
-the same name. This preserves the selected VRF's routing table for outer
-VXLAN packets; configurations without an explicit link retain the historical
-unbound behavior unless an underlay VRF is configured.
-
-For a direct Type-5-only fabric, set `EVPN_TYPE5_ONLY=true` and omit
-`provision_gateway`. BOOTy learns each remote VTEP from the Type-5 next hop,
-installs its underlay /32 reachability route, and programs the router-MAC FDB
-from the route's extended community. DCGWs in this topology must not own an
-L2VNI, SVI, bridge, VXLAN interface, or provisioning gateway address.
-
-## Network Interfaces Created
-
-| Interface | Description |
-|-----------|-------------|
-| `lo` (modified) | Router-id /32 added to loopback |
-| `vx<VNI>` | VXLAN device (e.g. `vx100` for VNI 100) |
-| `br.provision` | Linux bridge enslaving the VXLAN device |
-| `dummy-prov` | Dummy interface for overlay loopback (in VRF) |
-| `vrf-prov` | VRF device for provisioning network isolation |
-
-## Topology Example
-
-A minimal ContainerLab topology for testing:
-
-```
-         ┌─────────────┐
-         │   spine01    │
-         │ AS 65000     │
-         │ lo: 10.0.0.1 │
-         │ VTEP gateway │
-         └──┬───────┬──┘
-            │       │
-     eth1-2 │       │ eth3-5
-            │       │
-    ┌───────┴─┐  ┌──┴────────┐
-    │ leaf01  │  │  BOOTy    │
-    │ AS 65001│  │  AS 65020 │
-    │         │  │  VTEP:    │
-    │         │  │ 10.0.0.20 │
-    └─────────┘  └───────────┘
-```
-
-The spine acts as both the BGP route reflector and the VXLAN gateway.
-Its loopback (`10.0.0.1`) is used as `provision_gateway` by BOOTy.
+All BOOTy nodes use `provision_gateway="10.0.0.1"`.
 
 ## Troubleshooting
 
-### Verify BGP Sessions
+BOOTy does not start the GoBGP gRPC API, so the `gobgp` CLI cannot connect.
+Check the BGP state on the FRR peer and the kernel state in the ramdisk.
+
+On the FRR peer:
 
 ```bash
-# Inside the BOOTy container/VM
-gobgp neighbor          # List BGP peers and state
-gobgp global rib -a l2vpn-evpn   # Show EVPN routes
+vtysh -c "show bgp summary"
+vtysh -c "show bgp l2vpn evpn route type prefix"
+vtysh -c "show bgp l2vpn evpn route type macip"
+vtysh -c "show bgp l2vpn evpn route type multicast"
 ```
 
-### Verify VXLAN Data Plane
+In the BOOTy ramdisk (the default and `gobgp` flavors ship `ip` and `bridge`):
 
 ```bash
-# Check VXLAN interface
 ip -d link show type vxlan
-
-# Check bridge
 ip addr show dev br.provision
-
-# Check FDB entries (should see BUM entry for gateway)
 bridge fdb show dev vx100
-
-# Check kernel route to gateway VTEP
 ip route show 10.0.0.1/32
-
-# Test overlay connectivity
-ping -c 1 -I br.provision <gateway_provision_ip>
 ```
-
-### Common Issues
 
 | Symptom | Cause | Fix |
-|---------|-------|-----|
-| No BGP sessions | NICs not detected | Check physical NIC availability, retry timing |
-| BGP up but no EVPN routes | Wrong address family | Verify `L2VPN-EVPN` family is negotiated |
-| VXLAN created but no connectivity | Missing `provision_gateway` | Set `provision_gateway` to spine loopback IP |
-| ARP timeout on overlay | No BUM FDB entry | Check `bridge fdb show dev vx<VNI>` for `00:00:00:00:00:00` entry |
-| Packets dropped after VXLAN encap | No route to VTEP | Check `ip route show <gateway_ip>/32` exists |
+|---|---|---|
+| `provision gateway is required for GoBGP VXLAN data plane` | L2 or default route mode without `provision_gateway` | Set `provision_gateway`, or set `EVPN_TYPE5_ONLY=true` |
+| `type5Only and EnableL2 cannot both be enabled` | `EVPN_L2_ENABLED=true` and `EVPN_TYPE5_ONLY=true` | Set only one |
+| `gobgp mode does not support BFD` | `BFD_TRANSMIT_MS` or `BFD_RECEIVE_MS` set | Remove the BFD values or use FRR mode |
+| `timed out waiting for N BGP peer(s) to establish` | Fewer than `BGP_MIN_PEERS` sessions are up | Check cabling, `BGP_INTERFACES`, `BGP_NEIGHBORS` and the peer ASN |
+| No BGP sessions in unnumbered mode | The peer link-local address is not found through NDP | Check that the fabric NICs are up and that the peer sends IPv6 RAs or NDP replies |
+| BGP up, no EVPN routes processed | Route target mismatch | Set `vpn_rt` to the fabric route target, or align `asn_server:provision_vni` |
+| ARP timeout on the overlay | No BUM FDB entry | Check `bridge fdb show dev vx<VNI>` for `00:00:00:00:00:00` |
+| VXLAN packets dropped after encapsulation | No route to the remote VTEP | Check `ip route show <vtep>/32` (in the VRF table when `VRF_NAME` is set) |
 
-## E2E Testing
+## E2E tests
 
-GoBGP E2E tests use ContainerLab with the `e2e_gobgp` build tag:
+| Make targets | Build tag | Scope |
+|---|---|---|
+| `make clab-gobgp-up && make test-e2e-gobgp` | `e2e_gobgp` | All peer modes, EVPN route modes, gateway FDB and route, overlay reachability (`gobgp_e2e_test.go`, `gobgp_route_mode_e2e_test.go`) |
+| `make clab-type5-up && make test-e2e-type5` | `e2e_gobgp_type5` | Type-5-only on a per-machine leaf fabric: per-host router MAC, VTEP routes, no Type-2/3 routes (`gobgp_type5_e2e_test.go`) |
+| `make clab-gobgp-vrnetlab-up && make test-e2e-gobgp-vrnetlab` | `e2e_gobgp_vrnetlab` | GoBGP in QEMU VMs, all peer modes, FRR fabric only (`gobgp_vrnetlab_e2e_test.go`) |
 
-```bash
-make clab-gobgp-up && make test-e2e-gobgp
-```
-
-For full EVPN validation with QEMU BOOTy VMs and FRR-based fabric containers:
-
-```bash
-make clab-gobgp-vrnetlab-up && make test-e2e-gobgp-vrnetlab
-```
-
-See `test/e2e/integration/gobgp_e2e_test.go` for the test suite, which
-covers BGP peering, EVPN route exchange, VXLAN interface creation,
-FDB entries, gateway routes, and overlay ping connectivity.
+The test files are in `test/e2e/integration/`. See
+[e2e-test-matrix.md](e2e-test-matrix.md) for all suites.

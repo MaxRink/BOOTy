@@ -97,6 +97,21 @@ Design, Affected Files, Risks, and Effort Estimate.
 | [VLAN Support](proposal-vlan-support.md) | Implemented |
 | [Firmware Reporting](proposal-firmware-reporting.md) | Implemented |
 | [Observability (Debug Dump)](proposal-observability.md) | Implemented |
+| [JWT Authentication](proposal-jwt-auth.md) | Implemented: `TOKEN_URL` exchange and renewal |
+| [Dry-Run Mode](proposal-dry-run.md) | Implemented: `MODE=dry-run` read-only checks |
+| [Cloud-Init Management](proposal-cloudinit-management.md) | Implemented: NoCloud and ConfigDrive seeds |
+| [Custom Disk Partitioning](proposal-disk-partitioning.md) | Implemented: `PARTITION_LAYOUT` with LVM |
+| [NVMe Namespaces](proposal-nvme-namespaces.md) | Implemented: `NVME_NAMESPACES` creation |
+| [Network Persistence](proposal-network-persistence.md) | Partial: Ubuntu and Flatcar writers; RHEL blocked |
+| [Resilient Provisioning](proposal-resilient-provisioning.md) | Partial: step retries and `BOOTY_RESUME` checkpoint |
+| [Rescue Mode](proposal-rescue-mode.md) | Partial: `reboot`, `retry`, `shell`, `wait`; `RESCUE_TIMEOUT` not used |
+| [SecureBoot Lifecycle](proposal-secureboot.md) | Partial: `SECUREBOOT_REENABLE` and digest pins; MOK enrollment not implemented |
+| [Observability (Metrics)](proposal-observability.md) | Partial: endpoints exist; steps do not feed the collector |
+| [LUKS Encryption](proposal-luks-encryption.md) | Planned: library only; the vars parser rejects `LUKS_*` keys |
+| CAPRF legacy parity | Partial (open rows in the parity matrix): `CAPRF_LEGACY_COMPAT`, see [caprf-legacy-migration.md](caprf-legacy-migration.md) |
+
+The [configuration reference](configuration.md) lists the keys that are
+implemented today.
 
 ## Total Estimated Effort
 

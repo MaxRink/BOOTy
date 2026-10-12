@@ -104,12 +104,15 @@ applies:
 | **Matrix (this doc)**       | `e2e && linux`           | Fast, hermetic; every PR. Covers {raw,OCI}×{single,RAID1} end-to-end.      |
 | `TestFullProvisionFlow`     | `e2e && linux`           | Single-cell orchestrator drive-through; legacy reference.                  |
 | `TestRAIDLVMProvisionOrder*`| `e2e && linux`           | Asserts step ordering within the orchestrator.                             |
-| ContainerLab integration    | `e2e_integration`        | Real BGP/DHCP/FRR networking in containers.                                |
-| GoBGP E2E                   | `e2e_gobgp`              | Real GoBGP peering, all PeerModes.                                         |
-| Boot E2E                    | `e2e_boot`               | Provisioning orchestrator step ordering with real network plumbing.        |
-| vrnetlab / QEMU             | `e2e_vrnetlab`           | Full boot flow, kexec, EVPN fabric, ISO boot (KVM-required).               |
-| GoBGP vrnetlab              | `e2e_gobgp_vrnetlab`     | GoBGP QEMU VMs with FRR fabric only; no vendor NOS interoperability proof. |
+| ContainerLab integration    | `e2e_integration`        | FRR EVPN fabric in containers (`make test-e2e-integration`), plus DHCP, static, bond and multi-NIC smoke topologies (`make test-e2e-dhcp`, `test-e2e-static`, `test-e2e-bond`, `test-e2e-multi-nic`). |
+| GoBGP E2E                   | `e2e_gobgp`              | Real GoBGP peering in all PeerModes and the EVPN route modes (`make test-e2e-gobgp`).          |
+| GoBGP Type-5                | `e2e_gobgp_type5`        | Type-5-only EVPN on a per-machine leaf fabric without static spine FDB entries (`make test-e2e-type5`). |
+| Boot E2E                    | `linux && e2e_boot`      | Three BOOTy containers on the FRR EVPN fabric run provision, deprovision and standby (`make test-e2e-boot`). |
+| vrnetlab / QEMU             | `e2e_vrnetlab`           | BOOTy in QEMU VMs (direct kernel and initramfs boot) on an FRR EVPN fabric; provision, deprovision and standby over EVPN (`make test-e2e-vrnetlab`). Uses KVM when `/dev/kvm` exists. |
+| GoBGP vrnetlab              | `e2e_gobgp_vrnetlab`     | GoBGP QEMU VMs with FRR fabric only; no vendor NOS interoperability proof (`make test-e2e-gobgp-vrnetlab`). |
 | Production smoke            | `e2e_production`         | CI-proven production-like topology: CAPRF/FRR mode, BGP peering, EVPN AF, VXLAN, underlay routes, overlay reachability, gateway FDB/route. VRF, DCGW BFD, and EVPN type-5 assertions are not CI-proven and are covered by `make test-e2e-production-full` as known limitations. |
+
+Network behaviour is described in [networking.md](networking.md).
 
 ## Running
 

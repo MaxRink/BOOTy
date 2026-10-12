@@ -1,0 +1,206 @@
+# CAPRF integration
+
+This page describes how cluster-api-provider-redfish (CAPRF) drives BOOTy:
+the boot contract, the run modes, the callbacks, authentication, transport
+rules and what BOOTy does at the end of a run.
+
+Related pages:
+
+- [Configuration reference](configuration.md): every `/deploy/vars` variable,
+  with defaults and accepted values.
+- [Migration from the CAPRF legacy ramdisk](caprf-legacy-migration.md): the
+  `CAPRF_LEGACY_COMPAT` behaviour and the parity matrix.
+- [Networking](networking.md): network stacks, EVPN, connectivity check.
+- [Disk handling](disk.md): disk selection, wipe rules, RAID.
+
+## Boot contract
+
+CAPRF builds an ISO for each machine and boots it through Redfish virtual
+media. The ISO holds a kernel and the BOOTy initramfs. BOOTy runs as PID 1
+and reads its input from the `/deploy` directory of the ramdisk:
+
+| Path | Content | Used by |
+|------|---------|---------|
+| `/deploy/vars` | Machine configuration, one variable per line | All modes. BOOTy cannot start without it. |
+| `/deploy/file-system/` | Provisioner files (CAPRF `provisionerConfig.files`) | Copied into the installed OS. With `CAPRF_LEGACY_COMPAT=true`, copied into the ramdisk instead. |
+| `/deploy/file-system/etc/netplan/*.yaml`, `/deploy/file-system/etc/frr/frr.conf` | Network input | Network setup in all modes. See [Netplan and FRR config input](networking.md#netplan-and-frr-config-input). |
+| `/deploy/machine-files/` | Machine files | `copy-machine-files` step: copied into the installed OS. |
+| `/deploy/machine-commands/` | One command per file | `run-machine-commands` step: run in a chroot of the installed OS. |
+
+### `/deploy/vars` format
+
+`caprf.ParseVars` reads the file line by line:
+
+- A line is `KEY=VALUE` or `export KEY=VALUE`. Empty lines and lines that
+  start with `#` are ignored.
+- BOOTy does not run the file as a shell script. It does not expand
+  variables or command substitutions.
+- Quoting, comments, duplicate keys and unknown keys are described in
+  [Vars file format](configuration.md#vars-file-format).
+- A value that does not parse, or a configuration that fails validation,
+  stops the run. See [End of a run](#end-of-a-run).
+
+Example for a provision run:
+
+```bash
+export MODE="provision"
+export HOSTNAME="worker-01"
+export IMAGE="https://images.example.com/ubuntu-24.04.img.gz"
+export TARGET_OS="linux"
+export TOKEN="bootstrap-token"
+export INIT_URL="https://caprf.example.com/status/init"
+export SUCCESS_URL="https://caprf.example.com/status/success"
+export ERROR_URL="https://caprf.example.com/status/error"
+export LOG_URL="https://caprf.example.com/log"
+export DEBUG_URL="https://caprf.example.com/debug"
+export MACHINE_EXTRA_KERNEL_PARAMS="intel_iommu=on"
+export PROVIDER_ID="redfish://bmc-01/Systems/1"
+export FAILURE_DOMAIN="az-1"
+export REGION="eu-central"
+```
+
+Provisioning needs `TARGET_OS=linux` (or `PROVISION_TARGET_OS=linux`). The
+`validate-provision-inputs` step fails without it, before any disk is
+changed.
+
+## Startup sequence
+
+`runCAPRF` in `main.go` runs these steps:
+
+1. Mount the early filesystems and load the kernel modules from `/modules`.
+2. Parse `/deploy/vars`. If this fails, BOOTy has no client and sends no
+   callback.
+3. Apply the transport settings: TLS verification and proxy. See
+   [Transport rules](#transport-rules).
+4. With `CAPRF_LEGACY_COMPAT=true` only: copy `/deploy/file-system` into the
+   ramdisk and, for provisioning, set the ramdisk hostname.
+5. If `DRY_RUN=true`, set the mode to `dry-run`.
+6. If `LOG_URL` is set, start the log shipping.
+7. Set up the network and wait for connectivity. Dry-run skips this step.
+   See [Connectivity check](networking.md#connectivity-check).
+8. If `TOKEN_URL` is set, get a JWT and start its renewal.
+9. Inspect crash artifacts of an earlier run, if crash artifact upload is
+   configured.
+10. Run the mode that `MODE` selects.
+11. Hand off: kexec, reboot, power off, rescue shell or wait.
+
+## Modes
+
+`MODE` selects the run mode. An empty `MODE` means `provision`.
+
+| `MODE` | What BOOTy does |
+|--------|-----------------|
+| `provision` | Runs the provisioning pipeline: writes the image to the target disk and configures the installed OS. |
+| `deprovision`, `hard` | Wipes the disks and removes the EFI boot entries. Without a disk override it wipes every disk. |
+| `soft-deprovision`, `soft` | Renames `/boot/grub/grub.cfg` to `grub.cfg.bak` on the installed root. The disk is not wiped. |
+| `decommission` | Wipes every disk and removes every EFI boot entry in `BootOrder`. Failures are logged and do not stop the run. CAPRF uses this mode for the `force-clean` annotation. |
+| `standby` | Sends a heartbeat to `HEARTBEAT_URL` every 30 seconds and polls `COMMANDS_URL` every 10 seconds. It runs the `provision`, `deprovision`, `reboot` and `health-check` commands. Both URLs are required. |
+| `dry-run` | Runs read-only checks (configuration, image, disk, EFI, health) and reports the result. It does not set up the network and does not write to disks. `DRY_RUN=true` selects this mode. |
+| `check` | Runs the hardware health checks and reports the result. |
+
+Wipe and disk rules are in [Disk handling](disk.md).
+
+## Callbacks
+
+BOOTy sends each callback as an HTTP `POST` with a `text/plain` body. It
+tries a callback up to 3 times, with a 1 second and a 2 second pause. If a
+URL is empty, BOOTy skips the callback.
+
+| Variable | When BOOTy calls it | Body |
+|----------|---------------------|------|
+| `INIT_URL` | At the start of provision and deprovision (`report-init` step). Standby sends `standby`, check mode sends `health-check`. BOOTy also uses `INIT_URL` as the connectivity check target. | `provisioning started` |
+| `SUCCESS_URL` | At the end of a successful run (`report-success` step), and for dry-run and check results. | `provisioning complete` or `deprovisioning complete`, or a check summary |
+| `ERROR_URL` | When a step fails, when a handoff fails, and, with `CAPRF_LEGACY_COMPAT=true`, when the run fails before or outside a mode. | `step <name> failed: <error>` or a short failure message |
+| `LOG_URL` | For every log record at level `INFO` or higher. BOOTy redacts attributes with sensitive names, buffers 256 lines and drops lines when the buffer is full. | One log line |
+| `DEBUG_URL` | Never. BOOTy reads the variable but sends nothing to it. Diagnostic dumps go to the log and through `LOG_URL`. | |
+
+## Authentication
+
+- `TOKEN`: BOOTy sends it as `Authorization: Bearer <TOKEN>`.
+- `TOKEN_URL`: after the network is up, BOOTy exchanges `TOKEN` for a JWT
+  and renews the JWT in the background. This needs `TOKEN` and `HOSTNAME`.
+  `TOKEN_ALGORITHM` accepts `RS256` or `ES256`.
+- If the JWT exchange fails, the run fails. See [End of a run](#end-of-a-run).
+- If the JWT renewal fails for good, BOOTy reboots. With
+  `CAPRF_LEGACY_COMPAT=true`, BOOTy stops the active task, reports the error
+  and waits.
+
+## Transport rules
+
+| Rule | Default | `CAPRF_LEGACY_COMPAT=true` |
+|------|---------|----------------------------|
+| Bearer token over plain HTTP | Refused, the request fails. Allowed only for `https://` or loopback URLs, or with `INSECURE_TRANSPORT=true`. | Allowed |
+| `COMMANDS_URL` and crash artifact URLs over plain HTTP | Refused, except for loopback or with `INSECURE_TRANSPORT=true` | Allowed |
+| TLS certificate check for callbacks, the connectivity check and image downloads | Verified against the system roots | Not verified, like `curl --insecure` |
+| TLS certificate check for the crash artifact upload | Verified | Verified |
+| `http://` image URLs | Need `IMAGE_ALLOW_INSECURE_HTTP=true` | Allowed |
+| `TOKEN_URL` | HTTPS required (plain HTTP only for loopback). TLS verified. No proxy. | Same |
+| Proxy (`https_proxy`, `http_proxy`, `no_proxy`) | Read from the process environment. `/deploy/vars` entries do not reach the environment. | Every `/deploy/vars` entry is exported, so proxy entries apply. |
+
+Planned (#624): redact URL query strings in transport errors.
+
+## End of a run
+
+"Wait" means that the ramdisk keeps running until it gets `SIGTERM` or
+`SIGINT`, and then reboots. BOOTy runs `sync` before every reboot, power off
+and kexec.
+
+| Result | Default | `CAPRF_LEGACY_COMPAT=true` |
+|--------|---------|----------------------------|
+| Provision success | Report success, then kexec into the default GRUB entry of the installed OS. If kexec is not allowed or fails, reboot. | Report success, then power off. No kexec. |
+| Deprovision success (all deprovision modes) | Report success, then reboot | Report success, then power off |
+| Provision failure | Report the error, then apply `RESCUE_MODE` (default `reboot`) | Report the error, then apply `RESCUE_MODE` (default `wait`) |
+| Deprovision failure | Report the error, then reboot | Report the error, then wait |
+| `/deploy/vars` does not parse | Reboot. No callback is possible. | Wait. No callback is possible. |
+| Network setup, connectivity check or JWT exchange fails | Reboot | Report the error, then wait |
+| JWT renewal fails for good | Reboot | Stop the task, report the error, then wait |
+| Reboot or power off request fails after success | Report the error, then open a shell. After a deprovision reboot, BOOTy opens the shell without a report. | Report the error, then open a shell |
+| Dry-run or check ends | Reboot | Reboot |
+| Standby `reboot` command | Reboot | Reboot |
+
+A standby `provision` or `deprovision` command ends like the matching mode.
+
+BOOTy skips kexec and reboots when one of these is true:
+
+- `DISABLE_KEXEC=true`,
+- `SECUREBOOT_REENABLE=true`,
+- a step changed firmware values, for example the Mellanox SR-IOV setup,
+- the installed root has no usable `/boot/grub/grub.cfg` entry.
+
+An A/B upgrade with `AB_PRESERVE_EXISTING=true` needs kexec. If kexec does
+not happen, BOOTy powers off instead of a reboot. `CAPRF_LEGACY_COMPAT=true`
+cannot be combined with `AB_PRESERVE_EXISTING=true`; the configuration is
+rejected.
+
+### Rescue modes
+
+`RESCUE_MODE` applies to a failed provision run, and to a failed
+`provision` command in standby mode.
+
+| `RESCUE_MODE` | What BOOTy does |
+|---------------|-----------------|
+| `reboot` | Reboot. This is the default without `CAPRF_LEGACY_COMPAT`. |
+| `retry` | Run the pipeline again after 30 seconds, up to 3 times, then reboot. |
+| `shell` | Open a rescue shell on the console. Reboot when the shell exits. |
+| `wait` | Wait. This is the default with `CAPRF_LEGACY_COMPAT=true`. |
+
+For `shell` and `wait`, BOOTy installs `RESCUE_SSH_PUBKEY` for root, sets
+`RESCUE_PASSWORD_HASH`, starts `dropbear` if the ramdisk has it, and mounts
+the disks when `RESCUE_AUTO_MOUNT=true`.
+
+## Enable CAPRF legacy compatibility
+
+CAPRF sets `CAPRF_LEGACY_COMPAT=true` in `/deploy/vars` when it runs BOOTy
+in place of its legacy shell provisioner.
+
+- `true`, `1` and `yes` enable it, in any letter case. Other values disable
+  it. When the key occurs more than once, the last line wins.
+- `caprf.RequestsLegacyCompat` reads only this key. So a `/deploy/vars` file
+  that does not parse still selects the legacy failure handling: BOOTy waits
+  instead of a reboot.
+- `Config.normalize` then applies the legacy transport rules. This has the
+  effect of `INSECURE_TRANSPORT=true` and `IMAGE_ALLOW_INSECURE_HTTP=true`,
+  and it turns TLS certificate verification off.
+
+The full list of changes is in
+[What CAPRF_LEGACY_COMPAT changes](caprf-legacy-migration.md#what-caprf_legacy_compat-changes).
