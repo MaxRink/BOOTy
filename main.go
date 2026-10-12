@@ -25,6 +25,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/crash"
 	"github.com/telekom/BOOTy/pkg/disk"
 	"github.com/telekom/BOOTy/pkg/executil"
+	"github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/kexec"
 	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/frr"
@@ -493,6 +494,8 @@ func runCAPRF(ctx context.Context) {
 		provision.DumpDebugState("config-fetch")
 		reboot()
 	}
+	network.SetSkipTLSVerify(cfg.Transport.SkipTLSVerify)
+	image.RefreshHTTPClients()
 
 	// DRY_RUN=true overrides mode before logging.
 	if cfg.DryRun {

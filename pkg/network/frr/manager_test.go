@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/telekom/BOOTy/pkg/network"
 )
 
 // mockCommander records calls and returns preset results.
@@ -699,5 +701,20 @@ func TestWaitForHTTPWithFRRRestartsOnFailure(t *testing.T) {
 	err := waitForHTTPWithFRR(context.Background(), srv.URL, 30*time.Second, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// Legacy evidence: common.sh have_network probes INIT_URL with
+// `curl --insecure` in FRR mode as well.
+func TestWaitForHTTPWithFRRSkipTLSVerify(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	network.SetSkipTLSVerify(true)
+	t.Cleanup(func() { network.SetSkipTLSVerify(false) })
+
+	if err := waitForHTTPWithFRR(context.Background(), srv.URL, 5*time.Second, nil); err != nil {
+		t.Fatalf("waitForHTTPWithFRR() = %v, want success with verification off", err)
 	}
 }

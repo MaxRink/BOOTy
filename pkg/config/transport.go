@@ -44,4 +44,11 @@ type TransportConfig struct {
 	// WARNING: Only for testing. Never enable in production.
 	// Default: false
 	Insecure bool `yaml:"insecure" json:"insecure"`
+
+	// SkipTLSVerify disables TLS certificate verification for CAPRF
+	// callbacks, the connectivity check and image downloads, like the
+	// `curl --insecure` calls of the CAPRF legacy provisioner. It is only
+	// set through CAPRF_LEGACY_COMPAT.
+	// Default: false
+	SkipTLSVerify bool `yaml:"skipTLSVerify" json:"skipTLSVerify"`
 }

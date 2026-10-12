@@ -471,6 +471,13 @@ behaviour where the two differ:
   `ttyS1` on Lenovo hosts, and `update-grub` runs only when the image has it.
   BOOTy does not resolve the console from firmware and does not write getty
   units in this mode.
+- Transport follows the legacy `curl --insecure` calls: CAPRF callbacks and
+  image URLs may use plain HTTP, and TLS certificates are not verified for
+  callbacks, the connectivity check and image downloads.
+- Every entry of `/deploy/vars` is exported to the environment, like
+  `source vars`. Proxy variables such as `https_proxy` from CAPRF
+  `additionalVars` apply to the CAPRF callbacks, the connectivity check and
+  the image downloads.
 
 Without the variable, BOOTy keeps its own defaults.
 

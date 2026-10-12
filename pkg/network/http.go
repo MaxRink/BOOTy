@@ -24,7 +24,7 @@ func WaitForHTTP(ctx context.Context, target string, timeout time.Duration) erro
 	waitCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := NewHTTPClient(10 * time.Second)
 	attempt := 0
 	retryTicker := time.NewTicker(1 * time.Second)
 	defer retryTicker.Stop()

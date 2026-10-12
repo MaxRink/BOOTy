@@ -26,6 +26,13 @@ const imageCopyBufferSize = 16 << 20 // 16 MiB
 // while leaving the response body read timeout unlimited (for large images).
 var imageHTTPClient = network.NewHTTPClient(0)
 
+// RefreshHTTPClients rebuilds the image download clients so they pick up
+// network.SetSkipTLSVerify and proxy settings from the environment.
+func RefreshHTTPClients() {
+	imageHTTPClient = network.NewHTTPClient(0)
+	gpgHTTPClient = network.NewHTTPClient(0)
+}
+
 // StreamOpts are optional parameters for Stream.
 type StreamOpts struct {
 	// Checksum is the expected hex-encoded checksum of the decompressed data.

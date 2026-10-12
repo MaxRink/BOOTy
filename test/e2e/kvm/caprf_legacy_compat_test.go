@@ -34,6 +34,20 @@ func startFakeCAPRF(t *testing.T, imagePath string) *fakeCAPRF {
 	t.Helper()
 	f := &fakeCAPRF{messages: map[string]string{}}
 
+	// Listen on all interfaces so the QEMU guest reaches us via 10.0.2.2.
+	listener, err := net.Listen("tcp", "0.0.0.0:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	srv := &http.Server{Handler: f.handler(imagePath), ReadHeaderTimeout: 10 * time.Second}
+	go func() { _ = srv.Serve(listener) }()
+	t.Cleanup(func() { _ = srv.Close() })
+
+	f.baseURL = fmt.Sprintf("http://10.0.2.2:%d", listener.Addr().(*net.TCPAddr).Port)
+	return f
+}
+
+func (f *fakeCAPRF) handler(imagePath string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/image.gz", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, imagePath)
@@ -57,18 +71,7 @@ func startFakeCAPRF(t *testing.T, imagePath string) *fakeCAPRF {
 		}
 		w.WriteHeader(http.StatusOK)
 	})
-
-	// Listen on all interfaces so the QEMU guest reaches us via 10.0.2.2.
-	listener, err := net.Listen("tcp", "0.0.0.0:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
-	go func() { _ = srv.Serve(listener) }()
-	t.Cleanup(func() { _ = srv.Close() })
-
-	f.baseURL = fmt.Sprintf("http://10.0.2.2:%d", listener.Addr().(*net.TCPAddr).Port)
-	return f
+	return mux
 }
 
 // vars returns the /deploy/vars entries that the CAPRF ramdisk builder writes

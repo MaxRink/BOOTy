@@ -54,15 +54,83 @@ func New(varsPath string) (*Client, error) {
 		return nil, fmt.Errorf("parse vars: %w", err)
 	}
 
+	if cfg.LegacyCompat {
+		// The legacy scripts `source` the vars file, which exports every
+		// entry. Proxy settings such as https_proxy then apply to all
+		// requests.
+		if err := exportVars(varsPath); err != nil {
+			return nil, fmt.Errorf("export vars: %w", err)
+		}
+	}
+
 	c := &Client{
-		httpClient: newHTTPClient(30 * time.Second),
+		httpClient: newHTTPClient(30*time.Second, cfg.Transport.SkipTLSVerify),
 		cfg:        cfg,
 		log:        slog.Default().With("component", "caprf"),
 	}
-	if cfg.Transport.Insecure {
+	c.warnTransport()
+	return c, nil
+}
+
+func (c *Client) warnTransport() {
+	if c.cfg.Transport.Insecure {
 		c.log.Warn("insecure transport enabled: bearer tokens will be sent over plain HTTP")
 	}
-	return c, nil
+	if c.cfg.Transport.SkipTLSVerify {
+		c.log.Warn("tls certificate verification disabled, like curl --insecure in the legacy CAPRF provisioner")
+	}
+}
+
+// exportVars sets every variable of the vars file in the process
+// environment, like `source vars` with `export` lines.
+func exportVars(varsPath string) error {
+	f, err := os.Open(varsPath) //nolint:gosec // trusted path from ISO
+	if err != nil {
+		return fmt.Errorf("open vars file: %w", err)
+	}
+	defer f.Close() //nolint:errcheck // best-effort close
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		key, value, ok := parseVarLine(scanner.Text())
+		if !ok || !isShellIdentifier(key) {
+			continue
+		}
+		value, err := unquoteVarValue(value)
+		if err != nil {
+			return fmt.Errorf("parse var %s: %w", key, err)
+		}
+		if err := os.Setenv(key, value); err != nil {
+			return fmt.Errorf("export %s: %w", key, err)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("scan vars: %w", err)
+	}
+	return nil
+}
+
+// parseVarLine splits one vars file line into key and raw value.
+func parseVarLine(line string) (key, value string, ok bool) {
+	line = strings.TrimSpace(line)
+	if line == "" || strings.HasPrefix(line, "#") {
+		return "", "", false
+	}
+	line = strings.TrimPrefix(line, "export ")
+	return strings.Cut(line, "=")
+}
+
+func isShellIdentifier(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		if r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (i > 0 && r >= '0' && r <= '9') {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // RequestsLegacyCompat reports whether the vars file sets
@@ -95,13 +163,11 @@ func RequestsLegacyCompat(varsPath string) bool {
 // NewFromConfig creates a CAPRF client from an already-parsed config.
 func NewFromConfig(cfg *config.MachineConfig) *Client {
 	c := &Client{
-		httpClient: newHTTPClient(30 * time.Second),
+		httpClient: newHTTPClient(30*time.Second, cfg.Transport.SkipTLSVerify),
 		cfg:        cfg,
 		log:        slog.Default().With("component", "caprf"),
 	}
-	if cfg.Transport.Insecure {
-		c.log.Warn("insecure transport enabled: bearer tokens will be sent over plain HTTP")
-	}
+	c.warnTransport()
 	return c
 }
 
@@ -651,7 +717,7 @@ func (c *Client) doCrashUploadRequest(req *http.Request, redacted string) error 
 	if req.Body != nil {
 		defer req.Body.Close() //nolint:errcheck // close multipart pipe on early transport failures
 	}
-	client := newHTTPClient(c.crashUploadTimeout())
+	client := newHTTPClient(c.crashUploadTimeout(), false)
 	resp, err := client.Do(req) //nolint:gosec // URL from trusted config or CAPRF response
 	if err != nil {
 		return fmt.Errorf("upload crash artifact to %s: %w", redacted, err)
@@ -754,11 +820,15 @@ func isLoopback(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-func newHTTPClient(timeout time.Duration) *http.Client {
+func newHTTPClient(timeout time.Duration, skipTLSVerify bool) *http.Client {
 	return &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+			Proxy: http.ProxyFromEnvironment,
+			TLSClientConfig: &tls.Config{
+				MinVersion:         tls.VersionTLS12,
+				InsecureSkipVerify: skipTLSVerify, //nolint:gosec // opt-in legacy CAPRF parity (curl --insecure)
+			},
 		},
 	}
 }
@@ -848,15 +918,7 @@ func ParseVars(r io.Reader) (*config.MachineConfig, error) {
 	legacyExtraKernelParams := ""
 
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-
-		// Strip "export " prefix.
-		line = strings.TrimPrefix(line, "export ")
-
-		key, value, ok := strings.Cut(line, "=")
+		key, value, ok := parseVarLine(scanner.Text())
 		if !ok {
 			continue
 		}
