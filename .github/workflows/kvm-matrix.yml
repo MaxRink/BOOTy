@@ -227,12 +227,18 @@ jobs:
           go-version: "1.26.6"
 
       - name: Install KVM dependencies
+        # A slow mirror should fail this step fast instead of eating the job budget.
+        timeout-minutes: 15
         run: |
           # GitHub runner images can carry Microsoft/Azure apt sources that intermittently return 403.
           # Remove only those optional source snippets so unrelated package installs stay reliable.
           sudo find /etc/apt/sources.list.d -type f \( -iname '*microsoft*' -o -iname '*azure-cli*' \) -delete
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools cpio zstd busybox-static linux-image-generic xorriso isolinux syslinux-common fdisk util-linux e2fsprogs dosfstools parted mdadm lvm2 gdisk cloud-guest-utils
+          apt_opts=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
+          sudo apt-get "${apt_opts[@]}" update
+          # No linux-image-generic: it pulled about 850 MB of linux-firmware, and the
+          # tests boot the runner kernel (/boot/vmlinuz-*-azure sorts first). The
+          # "Prepare kernel" step downloads a kernel package if /boot has none.
+          sudo DEBIAN_FRONTEND=noninteractive apt-get "${apt_opts[@]}" install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools cpio zstd busybox-static xorriso isolinux syslinux-common fdisk util-linux e2fsprogs dosfstools parted mdadm lvm2 gdisk cloud-guest-utils
 
       - name: Scenario-specific setup
         if: matrix.setup != ''
