@@ -384,7 +384,6 @@ func setupMountsAndDevicesWith(m earlyInitMountManager, d earlyInitDeviceManager
 // first pass (e.g. virtio_net depends on virtio_pci → virtio → virtio_ring)
 // succeed on subsequent passes once their dependencies have been loaded.
 func loadModules() {
-	const moduleDir = "/modules"
 	entries, err := os.ReadDir(moduleDir)
 	if err != nil {
 		slog.Debug("no kernel modules directory, skipping", "path", moduleDir)
@@ -405,10 +404,12 @@ func loadModules() {
 		var failed []string
 		for _, name := range pending {
 			ko := filepath.Join(moduleDir, name)
-			if err := loadModule(ko); err != nil {
+			if err := loadModuleFn(ko); err != nil {
 				failed = append(failed, name)
 				if pass == maxPasses-1 {
-					slog.Debug("module load skipped", "module", name, "error", err)
+					// Visible at the default level: a missing driver often
+					// shows up later as "no disk" or "DHCP failed".
+					slog.Warn("kernel module failed to load", "module", name, "error", err)
 				}
 				continue
 			}
@@ -420,6 +421,12 @@ func loadModules() {
 		pending = failed
 	}
 }
+
+// Test seams for loadModules.
+var (
+	moduleDir    = "/modules"
+	loadModuleFn = loadModule
+)
 
 // loadModule loads a single kernel module via the finit_module syscall.
 // Returns nil when the module is already loaded or built-in (EEXIST).

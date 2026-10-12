@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -1256,5 +1257,26 @@ func TestKeepProvisionerResolvConfInLegacyCompat(t *testing.T) {
 	keepProvisionerResolvConf(&config.MachineConfig{LegacyCompat: true}, netCfg)
 	if netCfg.DNSResolvers != "" {
 		t.Fatalf("legacy compat would rewrite the provisioner resolv.conf with %q", netCfg.DNSResolvers)
+	}
+}
+
+func TestLoadModulesWarnsWhenAModuleNeverLoads(t *testing.T) {
+	origDir, origLoad, origLogger := moduleDir, loadModuleFn, slog.Default()
+	t.Cleanup(func() {
+		moduleDir, loadModuleFn = origDir, origLoad
+		slog.SetDefault(origLogger)
+	})
+	moduleDir = t.TempDir()
+	if err := os.WriteFile(filepath.Join(moduleDir, "broken.ko"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loadModuleFn = func(string) error { return errors.New("invalid module format") }
+	var logs bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+
+	loadModules()
+
+	if !strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), "broken.ko") {
+		t.Fatalf("expected a warning for broken.ko at the default level, got:\n%s", logs.String())
 	}
 }
