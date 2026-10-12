@@ -16,9 +16,11 @@ generic helpers.
   Current in-repository callers are tests, so this does not affect the agent.
 
 Keep image/HTTP source context alongside the shared sanitized message. Keep OCI
-reference policy local: image references are not general URLs. CAPRF retains
-its recursively copied, sanitized `url.Error` chain rather than exposing the
-original error through `redact.Wrap`. Auth similarly retains recursively copied
+reference policy local: image references are not general URLs. CAPRF builds
+transport errors only from fixed parts: a `url.Error` with an allowlisted
+operation, the request URL reduced to scheme, host and path, and a fixed cause
+class. It keeps `context.Canceled`, `context.DeadlineExceeded` and the
+`net.Error` timeout flag, and never copies the original message. Auth similarly retains recursively copied
 URL, joined, cancellation and timeout errors; it uses only the shared sanitized
 message, never the wrapper's original cause. Image/connectivity callers preserve
 original causes for `errors.Is/As`; those causes must never be logged. Local

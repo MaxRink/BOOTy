@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/telekom/t-caas-go-library/pkg/redact"
@@ -335,7 +337,7 @@ func (c *Client) FetchCommands(ctx context.Context) ([]config.Command, error) {
 
 	resp, err := c.httpClient.Do(req) //nolint:gosec // URL from trusted config
 	if err != nil {
-		return nil, fmt.Errorf("fetch commands: %w", err)
+		return nil, fmt.Errorf("fetch commands: %w", redactedURLError(req.URL.String(), err))
 	}
 	defer resp.Body.Close() //nolint:errcheck // best-effort close
 
@@ -494,7 +496,7 @@ func (c *Client) doPrepareCrashArtifactUpload(ctx context.Context, data []byte) 
 	}
 	resp, err := c.httpClient.Do(req) //nolint:gosec // URL from trusted config
 	if err != nil {
-		return nil, true, fmt.Errorf("post %s: %w", redacted, err)
+		return nil, true, fmt.Errorf("post %s: %w", redacted, redactedURLError(req.URL.String(), err))
 	}
 	defer resp.Body.Close() //nolint:errcheck // best-effort close
 	if resp.StatusCode >= 400 && resp.StatusCode < 500 {
@@ -720,7 +722,7 @@ func (c *Client) doCrashUploadRequest(req *http.Request, redacted string) error 
 	client := newHTTPClient(c.crashUploadTimeout(), false)
 	resp, err := client.Do(req) //nolint:gosec // URL from trusted config or CAPRF response
 	if err != nil {
-		return fmt.Errorf("upload crash artifact to %s: %w", redacted, err)
+		return fmt.Errorf("upload crash artifact to %s: %w", redacted, redactedURLError(req.URL.String(), err))
 	}
 	defer resp.Body.Close() //nolint:errcheck // best-effort close
 	_, _ = io.Copy(io.Discard, resp.Body)
@@ -738,21 +740,86 @@ func redactedURL(raw string) string {
 	return safe
 }
 
+// redactedURLError turns an HTTP or URL error into a *url.Error whose text is
+// built only from the URL we chose (reduced by redactedURL), the operation and
+// a fixed cause. Server-controlled text, such as a redirect Location or an
+// upstream message, is never included.
 func redactedURLError(raw string, err error) error {
 	if err == nil {
 		return nil
 	}
-	if urlErr, ok := err.(*neturl.Error); ok { //nolint:errorlint // direct copy avoids retaining the raw URL.
-		sanitized := *urlErr
-		sanitized.URL = redactedURL(urlErr.URL)
-		sanitized.Err = redactedURLError(raw, urlErr.Err)
-		return &sanitized
+	op := "request"
+	redirected := false
+	var urlErr *neturl.Error
+	if errors.As(err, &urlErr) {
+		// net/http copies the request method into Op, and some methods come
+		// from CAPRF responses, so only known values are kept.
+		if allowedURLErrorOps[urlErr.Op] {
+			op = urlErr.Op
+		}
+		// url.Parse reports the URL without its fragment, so only compare
+		// for requests. A different URL there means a redirect was followed.
+		redirected = op != "parse" && urlErr.URL != raw
 	}
-	return errors.New(redactURLErrorString(raw, err.Error()))
+	cause, timeout, sentinel := classifyTransportError(err, op)
+	if redirected {
+		cause += " after redirect"
+	}
+	return &neturl.Error{
+		Op:  op,
+		URL: redactedURL(raw),
+		Err: &transportCause{cause: cause, sentinel: sentinel, timeout: timeout},
+	}
 }
 
-func redactURLErrorString(raw, msg string) string {
-	return fmt.Sprintf("%s: %s", redactedURL(raw), redact.Wrap(errors.New(msg), raw))
+// allowedURLErrorOps are the url.Error operations that redactedURLError may
+// show. Anything else is reported as "request".
+var allowedURLErrorOps = map[string]bool{
+	"Get": true, "Head": true, "Post": true, "Put": true, "Patch": true, "Delete": true, "parse": true,
+}
+
+// transportCause is a fixed transport failure cause. Unwrap returns
+// context.Canceled or context.DeadlineExceeded when that was the cause, so
+// errors.Is keeps working, and Timeout keeps the net.Error classification.
+type transportCause struct {
+	cause    string
+	sentinel error
+	timeout  bool
+}
+
+func (e *transportCause) Error() string   { return e.cause }
+func (e *transportCause) Unwrap() error   { return e.sentinel }
+func (e *transportCause) Timeout() bool   { return e.timeout }
+func (e *transportCause) Temporary() bool { return false }
+
+// classifyTransportError maps err to a fixed cause.
+func classifyTransportError(err error, op string) (cause string, timeout bool, sentinel error) {
+	var netErr net.Error
+	var dnsErr *net.DNSError
+	var certErr *tls.CertificateVerificationError
+	var authorityErr x509.UnknownAuthorityError
+	var hostnameErr x509.HostnameError
+	var recordErr tls.RecordHeaderError
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "canceled", false, context.Canceled
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout", true, context.DeadlineExceeded
+	case errors.As(err, &netErr) && netErr.Timeout():
+		return "timeout", true, nil
+	case errors.As(err, &dnsErr):
+		return "dns lookup failed", false, nil
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "connection refused", false, nil
+	case errors.Is(err, syscall.ECONNRESET):
+		return "connection reset", false, nil
+	case errors.As(err, &certErr), errors.As(err, &authorityErr), errors.As(err, &hostnameErr), errors.As(err, &recordErr):
+		return "tls error", false, nil
+	case op == "parse":
+		return "invalid URL", false, nil
+	default:
+		return "transport error", false, nil
+	}
 }
 
 func (c *Client) postWithAuth(ctx context.Context, url, body string) error {
@@ -871,7 +938,7 @@ func (c *Client) doPost(ctx context.Context, url, body string) error {
 
 	resp, err := c.httpClient.Do(req) //nolint:gosec // URL from trusted config
 	if err != nil {
-		return fmt.Errorf("POST %s: %w", redacted, err)
+		return fmt.Errorf("POST %s: %w", redacted, redactedURLError(req.URL.String(), err))
 	}
 	defer resp.Body.Close() //nolint:errcheck // best-effort close
 	_, _ = io.Copy(io.Discard, resp.Body)
@@ -896,7 +963,7 @@ func (c *Client) doPostJSON(ctx context.Context, url string, data []byte) error 
 
 	resp, err := c.httpClient.Do(req) //nolint:gosec // URL from trusted config
 	if err != nil {
-		return fmt.Errorf("POST %s: %w", redacted, err)
+		return fmt.Errorf("POST %s: %w", redacted, redactedURLError(req.URL.String(), err))
 	}
 	defer resp.Body.Close() //nolint:errcheck // best-effort close
 	_, _ = io.Copy(io.Discard, resp.Body)
