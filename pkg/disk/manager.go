@@ -647,6 +647,30 @@ func isVirtualDisk(name string) bool {
 // nvme0n1, but they are hidden and have no /dev node.
 var nvmePathNodeRE = regexp.MustCompile(`^nvme\d+c\d+n\d+$`)
 
+// resizeKnownFilesystem grows ext2/3/4, xfs or btrfs with its own tool. It
+// reports false for other types, so the caller falls back to trying tools.
+func (m *Manager) resizeKnownFilesystem(ctx context.Context, fsType, device, mountpoint string) (bool, error) {
+	var name string
+	var args []string
+	switch fsType {
+	case "ext2", "ext3", "ext4":
+		name, args = "resize2fs", []string{device}
+	case "xfs":
+		name, args = "xfs_growfs", []string{mountpoint}
+	case "btrfs":
+		name, args = "btrfs", []string{"filesystem", "resize", "max", mountpoint}
+	default:
+		return false, nil
+	}
+	if name != "resize2fs" && strings.TrimSpace(mountpoint) == "" {
+		return true, fmt.Errorf("resize filesystem %s requires mountpoint for %s", device, fsType)
+	}
+	if out, err := m.cmd.Run(ctx, name, args...); err != nil {
+		return true, fmt.Errorf("resize %s filesystem %s with %s: %s: %w", fsType, device, name, strings.TrimSpace(string(out)), err)
+	}
+	return true, nil
+}
+
 // readDiskSizeGB reads the size of a block device in GB from sysfs.
 func (m *Manager) readDiskSizeGB(name string) (int, error) {
 	sizePath := m.sysfsRoot + "/block/" + name + "/size" //nolint:gocritic // path join not needed for sysfs
@@ -871,6 +895,13 @@ func (m *Manager) ResizeFilesystem(ctx context.Context, device, mountpoint strin
 	if fsErr == nil && fsType == "vfat" {
 		return fmt.Errorf("resize filesystem %s: vfat resize is not supported; vfat is supported for ESP mount/format only", device)
 	}
+	// With a known type, run only its tool so its error is the one reported.
+	if fsErr == nil {
+		if handled, err := m.resizeKnownFilesystem(ctx, fsType, device, mountpoint); handled {
+			return err
+		}
+	}
+	// Unknown type: try the tools in turn.
 	// Try resize2fs for ext2/3/4 first.
 	if out, err := m.cmd.Run(ctx, "resize2fs", device); err != nil {
 		slog.Debug("resize2fs failed, trying xfs_growfs", "output", string(out))
