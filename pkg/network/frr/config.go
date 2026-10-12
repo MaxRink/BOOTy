@@ -394,3 +394,9 @@ func normalizeBGPAuthPassword(password string) (string, error) {
 	}
 	return password, nil
 }
+
+// isIPv6 returns true if the given IP string is an IPv6 address.
+func isIPv6(ip string) bool {
+	parsed := net.ParseIP(ip)
+	return parsed != nil && parsed.To4() == nil
+}
