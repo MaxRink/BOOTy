@@ -9,6 +9,12 @@ import (
 	"syscall"
 )
 
+// Test seams for the syscalls in RequestReboot and RequestPowerOff.
+var (
+	syncFilesystems = syscall.Sync
+	rebootSyscall   = syscall.Reboot
+)
+
 // RequestReboot asks the kernel to reboot and returns only if the request did
 // not take over the machine. BOOTY_NO_REBOOT suppresses the syscall for test
 // containers and returns nil.
@@ -17,7 +23,9 @@ func RequestReboot() error {
 		slog.Info("reboot suppressed (BOOTY_NO_REBOOT set)")
 		return nil
 	}
-	if err := syscall.Reboot(syscall.LINUX_REBOOT_CMD_RESTART); err != nil {
+	// reboot(2) does not flush dirty pages. Sync first like shutdown does.
+	syncFilesystems()
+	if err := rebootSyscall(syscall.LINUX_REBOOT_CMD_RESTART); err != nil {
 		return fmt.Errorf("reboot: %w", err)
 	}
 	return nil
@@ -27,8 +35,8 @@ func RequestReboot() error {
 // did not take over the machine.
 func RequestPowerOff() error {
 	// reboot(2) does not flush dirty pages. Sync first like shutdown does.
-	syscall.Sync()
-	if err := syscall.Reboot(syscall.LINUX_REBOOT_CMD_POWER_OFF); err != nil {
+	syncFilesystems()
+	if err := rebootSyscall(syscall.LINUX_REBOOT_CMD_POWER_OFF); err != nil {
 		return fmt.Errorf("power off: %w", err)
 	}
 	return nil
