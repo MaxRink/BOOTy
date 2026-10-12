@@ -10,6 +10,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -94,6 +96,45 @@ func TestStreamABRawChecksumErrorMarksBootAndRootDirty(t *testing.T) {
 	want := []string{bootTarget, rootTarget}
 	if !sameStrings(dirty.targets, want) {
 		t.Fatalf("dirty targets = %#v, want %#v", dirty.targets, want)
+	}
+}
+
+func TestStreamABChecksumMismatchWipesWrittenTargets(t *testing.T) {
+	raw := testGPTImage(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(raw)
+	}))
+	defer srv.Close()
+
+	bootTarget := filepath.Join(t.TempDir(), "boot.img")
+	rootTarget := filepath.Join(t.TempDir(), "root.img")
+	createTargetFile(t, bootTarget)
+	createTargetFile(t, rootTarget)
+
+	err := StreamAB(context.Background(), srv.URL+"/image.raw", ABTargets{
+		BootPartition: bootTarget,
+		RootPartition: rootTarget,
+	}, StreamOpts{Checksum: strings.Repeat("0", sha256.Size*2), ChecksumType: "sha256"})
+	if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("StreamAB() error = %v, want checksum mismatch", err)
+	}
+
+	// The copy writes 8 boot and 16 root sectors of 'B' and 'R' before the
+	// checksum is known. A failed checksum must leave no payload bytes behind.
+	for _, tc := range []struct {
+		path    string
+		written int
+	}{
+		{bootTarget, 8 * gptSectorSize},
+		{rootTarget, 16 * gptSectorSize},
+	} {
+		got := readFile(t, tc.path)
+		if len(got) < tc.written {
+			t.Fatalf("%s has %d bytes, want at least %d", tc.path, len(got), tc.written)
+		}
+		if i := bytes.IndexFunc(got[:tc.written], func(r rune) bool { return r != 0 }); i >= 0 {
+			t.Fatalf("%s byte %d = %q after checksum mismatch, want zeroed target", tc.path, i, got[i])
+		}
 	}
 }
 
