@@ -1599,3 +1599,16 @@ func TestDisableLVMError(t *testing.T) {
 		t.Fatal("expected error when lvm vgchange fails")
 	}
 }
+
+func TestMountDataNoRecovery(t *testing.T) {
+	for fsType, want := range map[string]string{
+		"ext4": "ro,noload", "ext3": "ro,noload", "xfs": "ro,norecovery", "btrfs": "ro,rescue=nologreplay", "ext2": "ro", "vfat": "ro",
+	} {
+		if got := mountData(fsType, noRecoveryData); got != want {
+			t.Errorf("mountData(%s) = %q, want %q", fsType, got, want)
+		}
+	}
+	if got := mountData("ext4", "ro"); got != "ro" {
+		t.Errorf("mountData(ext4, ro) = %q, other callers must keep their data", got)
+	}
+}

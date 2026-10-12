@@ -1865,7 +1865,7 @@ func (o *Orchestrator) parsePartitions(ctx context.Context) error {
 		o.bootPartition = boot.Node
 	}
 
-	root, err := o.findRootPartition(parts)
+	root, err := o.findRootPartition(ctx, parts)
 	if err != nil {
 		return err
 	}
@@ -1873,7 +1873,7 @@ func (o *Orchestrator) parsePartitions(ctx context.Context) error {
 	return nil
 }
 
-func (o *Orchestrator) findRootPartition(parts []disk.Partition) (*disk.Partition, error) {
+func (o *Orchestrator) findRootPartition(ctx context.Context, parts []disk.Partition) (*disk.Partition, error) {
 	label := strings.TrimSpace(o.cfg.Provision.Disk.RootPartitionLabel)
 	if label != "" {
 		return findRootPartitionByLabel(parts, label)
@@ -1882,7 +1882,11 @@ func (o *Orchestrator) findRootPartition(parts []disk.Partition) (*disk.Partitio
 	if number > 0 {
 		return findRootPartitionByNumber(parts, o.targetDisk, number)
 	}
-	return o.disk.FindRootPartition(parts)
+	root, err := o.disk.FindRootPartition(parts)
+	if errors.Is(err, disk.ErrAmbiguousRootPartition) {
+		return o.probeRootPartition(ctx, parts, err)
+	}
+	return root, err
 }
 
 func findRootPartitionByLabel(parts []disk.Partition, label string) (*disk.Partition, error) {

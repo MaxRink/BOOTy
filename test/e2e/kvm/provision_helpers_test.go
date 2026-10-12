@@ -77,7 +77,18 @@ func createTestDiskImage(t *testing.T, sizeMB int) string {
 	efiDev := loopDev + "p1"
 	if _, err := exec.LookPath("mkfs.vfat"); err == nil {
 		if _, statErr := os.Stat(efiDev); statErr == nil {
-			run(t, "format EFI partition", "mkfs.vfat", "-F", "32", efiDev)
+			// udev can still hold the new partition node; retry briefly.
+			var out []byte
+			var err error
+			for attempt := 0; attempt < 5; attempt++ {
+				if out, err = exec.Command("mkfs.vfat", "-F", "32", efiDev).CombinedOutput(); err == nil {
+					break
+				}
+				settleDevices(2)
+			}
+			if err != nil {
+				t.Fatalf("format EFI partition: mkfs.vfat -F 32 %s: %v\n%s", efiDev, err, out)
+			}
 		}
 	}
 

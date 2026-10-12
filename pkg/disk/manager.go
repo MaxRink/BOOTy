@@ -755,6 +755,11 @@ func (m *Manager) FindBootPartition(parts []Partition) (*Partition, error) {
 	return nil, fmt.Errorf("no EFI system partition found")
 }
 
+// ErrAmbiguousRootPartition reports several Linux filesystem partitions
+// without exactly one named "root" or "/", so the partition table alone
+// cannot tell which one is root.
+var ErrAmbiguousRootPartition = errors.New("ambiguous Linux root partition candidates")
+
 // FindRootPartition finds the primary Linux filesystem partition.
 // When multiple partitions share a Linux filesystem type, it requires exactly
 // one partition named "root" or "/" to avoid selecting data/state partitions.
@@ -779,7 +784,7 @@ func (m *Manager) FindRootPartition(parts []Partition) (*Partition, error) {
 	case len(candidates) == 1:
 		return candidates[0], nil
 	case len(candidates) > 1:
-		return nil, fmt.Errorf("ambiguous Linux root partition candidates: %s; name exactly one partition root or /", partitionCandidateList(candidates))
+		return nil, fmt.Errorf("%w: %s; name exactly one partition root or /", ErrAmbiguousRootPartition, partitionCandidateList(candidates))
 	default:
 		return nil, fmt.Errorf("no Linux filesystem partition found")
 	}
@@ -947,6 +952,32 @@ func listDir(dir string) []string {
 // supportedFilesystems lists filesystem types to try when mounting, in priority order.
 var supportedFilesystems = []string{"ext4", "xfs", "btrfs", "ext3", "ext2", "vfat"}
 
+// noRecoveryData marks a read-only inspection mount that must not replay a
+// filesystem journal. mountData maps it to the option of each filesystem.
+const noRecoveryData = "ro,norecovery"
+
+func mountData(fsType, data string) string {
+	if data != noRecoveryData {
+		return data
+	}
+	switch fsType {
+	case "ext4", "ext3":
+		return "ro,noload"
+	case "xfs":
+		return "ro,norecovery"
+	case "btrfs":
+		return "ro,rescue=nologreplay"
+	default:
+		return "ro"
+	}
+}
+
+// MountPartitionInspect mounts a device read-only without journal replay, so
+// inspecting a dirty filesystem does not write to it.
+func (m *Manager) MountPartitionInspect(ctx context.Context, device, mountpoint string) error {
+	return m.mountPartition(ctx, device, mountpoint, syscall.MS_RDONLY, noRecoveryData)
+}
+
 // MountPartition mounts a device at the given mountpoint.
 // Tries all supported filesystem types in order: ext4, xfs, btrfs, ext3, ext2, vfat.
 // Waits up to 10 seconds for the device node to appear (devtmpfs may lag after partprobe).
@@ -973,7 +1004,7 @@ func (m *Manager) mountPartition(ctx context.Context, device, mountpoint string,
 	}
 	var errs []string
 	for _, fsType := range supportedFilesystems {
-		err := syscall.Mount(device, mountpoint, fsType, flags, data)
+		err := syscall.Mount(device, mountpoint, fsType, flags, mountData(fsType, data))
 		if err == nil {
 			slog.Info("mounted partition", "device", device, "fsType", fsType)
 			return nil
