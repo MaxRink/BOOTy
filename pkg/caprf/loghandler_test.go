@@ -233,22 +233,46 @@ func TestRemoteHandlerCloseIdempotent(t *testing.T) {
 }
 
 func TestRemoteHandlerCloseFromDerivedHandlers(t *testing.T) {
-	ts := newTestServer(t)
+	var (
+		mu       sync.Mutex
+		received []string
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		// Delay the response so the line is only recorded if Close waits
+		// for the in-flight send.
+		time.Sleep(200 * time.Millisecond)
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		received = append(received, string(body))
+		mu.Unlock()
+	}))
+	t.Cleanup(srv.Close)
 
 	cfg := &config.MachineConfig{
-		Transport: config.TransportConfig{Token: "derived-close-token", LogURL: ts.server.URL + "/log"},
+		Transport: config.TransportConfig{Token: "derived-close-token", LogURL: srv.URL + "/log"},
 	}
 	client := NewFromConfig(cfg)
 
-	inner := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
+	inner := slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelDebug})
 	root := NewRemoteHandler(client, inner, slog.LevelInfo, 10)
 	derived := root.WithAttrs([]slog.Attr{slog.String("component", "test")}).(*RemoteHandler)
 
 	logger := slog.New(derived)
 	logger.Info("log from derived handler")
 
-	root.Close()
+	// Closing the derived handler closes the shared buffer and drains it.
 	derived.Close()
+
+	mu.Lock()
+	got := append([]string(nil), received...)
+	mu.Unlock()
+	want := "[INFO] log from derived handler component=test"
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("server received %q before Close returned, want [%q]", got, want)
+	}
+
+	// A second Close through the root handler must be a no-op.
+	root.Close()
 }
 
 func TestMaybeWarnDroppedCadence(t *testing.T) {

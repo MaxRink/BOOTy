@@ -5,6 +5,7 @@ package network
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -21,10 +22,34 @@ import (
 )
 
 func TestDHCPMode_Setup(t *testing.T) {
+	// Fake an empty link list, so the test never probes the host NICs and
+	// does not depend on root or on a DHCP server being reachable.
+	t.Cleanup(snapshotNICFns())
+	linkList = func() ([]netlink.Link, error) { return nil, nil }
+	sleepFunc = func(time.Duration) {}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
 	d := &DHCPMode{}
-	// DHCP setup is expected to fail in test environments (no real interfaces).
-	// We just verify it doesn't panic.
-	_ = d.Setup(context.Background(), &Config{})
+	err := d.Setup(ctx, &Config{})
+	if err == nil {
+		t.Fatal("Setup() = nil, want error when no interface gets a DHCP lease")
+	}
+	if d.client != nil {
+		t.Fatalf("Setup() kept a DHCP client after error %v", err)
+	}
+}
+
+func TestDHCPMode_SetupCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	d := &DHCPMode{}
+	err := d.Setup(ctx, &Config{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Setup() error = %v, want context.Canceled", err)
+	}
+	if d.client != nil {
+		t.Fatal("Setup() kept a DHCP client after cancellation")
+	}
 }
 
 func TestDHCPMode_Teardown(t *testing.T) {

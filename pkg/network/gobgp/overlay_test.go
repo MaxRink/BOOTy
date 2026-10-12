@@ -1204,19 +1204,27 @@ func TestParsePrefixRoute(t *testing.T) {
 }
 
 func TestHandleType5RouteInvalidPrefix(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{}
 	overlay := &OverlayTier{
 		cfg:        &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision"},
 		log:        slog.Default(),
-		netlinkOps: &mockOverlayNetlinkOps{},
+		netlinkOps: mock,
 	}
 
 	route := &apipb.EVPNIPPrefixRoute{
 		IpPrefix:    "not-an-ip",
-		IpPrefixLen: 0,
+		IpPrefixLen: 24,
+		GwAddress:   "10.0.0.1",
 	}
+	routerMAC := net.HardwareAddr{0x02, 0x00, 0x00, 0x00, 0x00, 0x01}
 
-	// Should return early due to invalid prefix — no panic.
-	overlay.handleType5Route(route, "10.0.0.1", nil, false)
+	// Valid VTEP, gateway and router MAC: only the prefix check stops the install.
+	overlay.handleType5Route(route, "10.0.0.1", routerMAC, false)
+
+	assertNoType5NetlinkChanges(t, mock)
+	if mock.linkName != "" {
+		t.Fatalf("bridge lookup %q ran for an invalid prefix", mock.linkName)
+	}
 }
 
 func TestHandleType5RouteSelfRoute(t *testing.T) {
@@ -1243,20 +1251,49 @@ func TestHandleType5RouteSelfRoute(t *testing.T) {
 }
 
 func TestHandleType5RouteNoGateway(t *testing.T) {
-	overlay := &OverlayTier{
-		cfg:        &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision"},
-		log:        slog.Default(),
-		netlinkOps: &mockOverlayNetlinkOps{},
+	routerMAC := net.HardwareAddr{0x02, 0x00, 0x00, 0x00, 0x00, 0x01}
+	tests := []struct {
+		name     string
+		gw       string
+		vtep     string
+		withdraw bool
+	}{
+		// Install with no gateway and no next-hop: the VTEP check stops it.
+		{name: "install without gateway or next-hop", gw: "", vtep: ""},
+		// Withdrawals skip the VTEP check, so only the gateway check stops it.
+		{name: "withdraw without gateway or next-hop", gw: "", vtep: "", withdraw: true},
+		// Valid VTEP but an unparsable gateway: only the gateway check stops it.
+		{name: "install with unparsable gateway", gw: "not-an-ip", vtep: "10.0.0.1"},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockOverlayNetlinkOps{}
+			overlay := &OverlayTier{
+				cfg:        &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision"},
+				log:        slog.Default(),
+				netlinkOps: mock,
+			}
+			route := &apipb.EVPNIPPrefixRoute{
+				IpPrefix:    "10.50.0.0",
+				IpPrefixLen: 24,
+				GwAddress:   tt.gw,
+			}
 
-	route := &apipb.EVPNIPPrefixRoute{
-		IpPrefix:    "0.0.0.0",
-		IpPrefixLen: 0,
-		GwAddress:   "",
+			overlay.handleType5Route(route, tt.vtep, routerMAC, tt.withdraw)
+
+			assertNoType5NetlinkChanges(t, mock)
+		})
 	}
+}
 
-	// No gateway and no next-hop — should return early.
-	overlay.handleType5Route(route, "", nil, false)
+func assertNoType5NetlinkChanges(t *testing.T, mock *mockOverlayNetlinkOps) {
+	t.Helper()
+	if len(mock.routeReplaces) != 0 || len(mock.routeDels) != 0 {
+		t.Fatalf("route changes: replaces=%v dels=%v, want none", mock.routeReplaces, mock.routeDels)
+	}
+	if len(mock.sets) != 0 || len(mock.appends) != 0 || len(mock.dels) != 0 {
+		t.Fatalf("neighbor changes: sets=%v appends=%v dels=%v, want none", mock.sets, mock.appends, mock.dels)
+	}
 }
 
 func TestHandleType5RouteInstallsOnlinkGatewayRoute(t *testing.T) {
