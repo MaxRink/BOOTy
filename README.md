@@ -460,6 +460,10 @@ behaviour where the two differ:
 - After a failed provision or deprovision, BOOTy reports the error and keeps
   the ramdisk running, like `RESCUE_MODE=wait`. An explicit `RESCUE_MODE`
   still wins for provisioning.
+- `setup-mellanox` raises `NUM_OF_VFS` to 32 (or `NUM_VFS`) with `mstconfig`
+  on every ConnectX-4/5/6/6 Dx/6 Lx/7 Ethernet function, like
+  `setup_mellanox_num_of_vfs`, and skips quietly without `mstconfig` or such
+  NICs. Without the variable `NUM_VFS` stays opt-in.
 - Without `DISK_DEVICE` or `DISK_SERIAL`, the target disk is the first disk
   of at least `MIN_DISK_SIZE_GB` in `lsblk` order, NVMe and virtio disks
   first, then SCSI/SATA disks, like `_select_single_disk`. BOOTy otherwise

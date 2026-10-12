@@ -629,7 +629,11 @@ func (o *Orchestrator) createEFIBootEntry(ctx context.Context) error {
 }
 
 func (o *Orchestrator) setupMellanox(ctx context.Context) error {
-	changed, err := o.config.SetupMellanox(ctx, o.cfg.Provision.Disk.NumVFs)
+	setup := o.config.SetupMellanox
+	if o.cfg.LegacyCompat {
+		setup = o.config.setupMellanoxLegacy
+	}
+	changed, err := setup(ctx, o.cfg.Provision.Disk.NumVFs)
 	if err != nil {
 		return err
 	}
