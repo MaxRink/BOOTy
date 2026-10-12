@@ -20,6 +20,7 @@ import (
 
 	"github.com/telekom/BOOTy/pkg/executil"
 	"github.com/telekom/BOOTy/pkg/network"
+	"github.com/telekom/t-caas-go-library/pkg/redact"
 )
 
 // Manager handles FRR/EVPN network setup and teardown.
@@ -324,10 +325,12 @@ func isMissingNetlinkObject(err error) bool {
 		strings.Contains(msg, "cannot assign requested address")
 }
 
+// frrDumpCommandTimeout bounds each vtysh call in DumpFRRState.
+var frrDumpCommandTimeout = 10 * time.Second
+
 // DumpFRRState logs FRR diagnostic state via the commander abstraction.
 // Called on FRR setup failure or connectivity timeout to capture BGP/EVPN state.
 func (m *Manager) DumpFRRState() {
-	ctx := context.Background()
 	type frrCmd struct {
 		label string
 		args  []string
@@ -342,7 +345,10 @@ func (m *Manager) DumpFRRState() {
 	}
 	m.log.Warn("=== FRR STATE DUMP START ===")
 	for _, c := range cmds {
+		// FRR may be wedged when this runs, so bound each vtysh call.
+		ctx, cancel := context.WithTimeout(context.Background(), frrDumpCommandTimeout)
 		out, err := m.commander.Run(ctx, "vtysh", c.args...)
+		cancel()
 		if err != nil {
 			m.log.Error("FRR dump command failed", "label", c.label, "error", err)
 			continue
@@ -1050,6 +1056,7 @@ func waitForHTTPWithFRR(ctx context.Context, target string, timeout time.Duratio
 	if target == "" {
 		return fmt.Errorf("empty connectivity target URL")
 	}
+	logTarget := network.RedactHTTPURLForLog(target)
 
 	deadline := time.Now().Add(timeout)
 	client := network.NewHTTPClient(10 * time.Second)
@@ -1061,19 +1068,19 @@ func waitForHTTPWithFRR(ctx context.Context, target string, timeout time.Duratio
 		attempt++
 		req, err := http.NewRequestWithContext(ctx, http.MethodHead, target, http.NoBody)
 		if err != nil {
-			return fmt.Errorf("create request: %w", err)
+			return fmt.Errorf("create request: %w", redact.Wrap(err, target))
 		}
 
 		resp, err := client.Do(req) //nolint:gosec // target URL from trusted config, not user input
 		if err == nil {
 			_ = resp.Body.Close()
 			log.Info("Network connectivity established",
-				"target", target, "attempt", attempt)
+				"target", logTarget, "attempt", attempt)
 			return nil
 		}
 
 		log.Debug("Connectivity check failed",
-			"target", target, "attempt", attempt, "error", err)
+			"target", logTarget, "attempt", attempt, "error", redact.Wrap(err, target))
 
 		if time.Since(lastRestart) >= restartInterval {
 			log.Info("Restarting FRR daemons for connectivity recovery")
