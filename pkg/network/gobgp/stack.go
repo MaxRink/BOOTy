@@ -481,12 +481,14 @@ func (s *Stack) Teardown(ctx context.Context) error {
 	var firstErr error
 
 	s.teardownGatewayRoute()
-	s.teardownVTEPRoutes()
 
+	// Stop the overlay first. It waits for a Type-5 update in flight, so
+	// no VTEP route is added after the cleanup below.
 	if err := s.overlay.Teardown(ctx); err != nil {
 		s.log.Warn("Overlay teardown error", "error", err)
 		firstErr = err
 	}
+	s.teardownVTEPRoutes()
 
 	if err := s.underlay.Teardown(ctx); err != nil {
 		s.log.Warn("Underlay teardown error", "error", err)

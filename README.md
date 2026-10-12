@@ -1294,6 +1294,7 @@ make clab-gobgp-vrnetlab-up && make test-e2e-gobgp-vrnetlab  # GoBGP with FRR fa
 
 # Linux-only E2E (disk/mount/loop device, requires root)
 sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m ./test/e2e/linux/...
+sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestType5Netlink' ./pkg/network/gobgp/
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for coding standards, test requirements,

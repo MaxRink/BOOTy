@@ -15,6 +15,7 @@ require (
 	github.com/telekom/t-caas-go-library v0.1.0
 	github.com/ulikunitz/xz v0.5.17
 	github.com/vishvananda/netlink v1.3.1
+	github.com/vishvananda/netns v0.0.5
 	github.com/zcalusic/sysinfo v1.1.3
 	golang.org/x/net v0.60.0
 	golang.org/x/sys v0.48.0
@@ -46,7 +47,6 @@ require (
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/spf13/viper v1.21.0 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
-	github.com/vishvananda/netns v0.0.5 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/text v0.42.0 // indirect

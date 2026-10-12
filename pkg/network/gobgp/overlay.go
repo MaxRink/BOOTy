@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -120,6 +122,18 @@ type OverlayTier struct {
 	// type5GatewayRefs tracks Type-5 prefix → gateway references so one
 	// prefix withdrawal cannot delete a shared gateway neighbor.
 	type5GatewayRefs sync.Map
+	// type5PathsMu serializes Type-5 route handling. type5Paths maps a
+	// kernel route prefix to the live Type-5 paths for it, keyed by NLRI.
+	// Two gateways can advertise the same prefix with different RDs. The
+	// kernel route uses one of them, so a withdraw falls back to another.
+	type5PathsMu sync.Mutex
+	type5Paths   map[string]map[string]*type5Path
+	// type5Active maps a prefix to the key of the path whose install last
+	// succeeded, so withdrawing another path does not touch the route.
+	type5Active map[string]string
+	// type5Stopped is set by Teardown so a route callback that is still in
+	// flight does not touch the kernel after teardown.
+	type5Stopped bool
 
 	importRTOnce sync.Once
 	importRTASN  uint32
@@ -174,6 +188,9 @@ func (o *OverlayTier) Setup(ctx context.Context) error {
 	if o.bgp == nil {
 		return fmt.Errorf("BGP server not set: call SetBgpServer before Setup")
 	}
+	o.type5PathsMu.Lock()
+	o.type5Stopped = false
+	o.type5PathsMu.Unlock()
 
 	if err := o.setupCreateVXLANAndBridge(); err != nil {
 		return o.cleanupSetupFailure(ctx, "create VXLAN/bridge", err)
@@ -248,6 +265,12 @@ func (o *OverlayTier) Teardown(_ context.Context) error {
 	if o.cancel != nil {
 		o.cancel()
 	}
+
+	o.type5PathsMu.Lock()
+	o.type5Paths = nil
+	o.type5Active = nil
+	o.type5Stopped = true
+	o.type5PathsMu.Unlock()
 
 	if o.gatewayFDB != nil {
 		if err := o.netlinkOps.NeighDel(o.gatewayFDB); err != nil {
@@ -821,19 +844,141 @@ func (o *OverlayTier) handleType5RouteWithRouterMACState(
 	if vtep == o.cfg.RouterID {
 		return
 	}
-	vtepIP, ok := o.ensureType5VTEP(vtep, withdraw)
-	if !ok {
+
+	// Hold the lock for the whole update, so Teardown waits for an update
+	// in flight and later updates do not touch the kernel.
+	o.type5PathsMu.Lock()
+	defer o.type5PathsMu.Unlock()
+	if o.type5Stopped {
 		return
 	}
+	dst, err := parsePrefixRoute(route.GetIpPrefix(), route.GetIpPrefixLen())
+	if err != nil {
+		o.log.Debug("type-5 route with invalid prefix", "prefix", route.GetIpPrefix(), "len", route.GetIpPrefixLen(), "error", err)
+		return
+	}
+	prefix, key := dst.String(), type5PathKey(route)
+	if withdraw {
+		o.withdrawType5Path(prefix, key, route, vtep, routerMAC)
+		return
+	}
+	// Remember the path before any kernel change, so a later withdraw of
+	// another path can still fall back to it even if this install fails.
+	o.addType5Path(prefix, &type5Path{
+		key:       key,
+		route:     route,
+		vtep:      vtep,
+		routerMAC: append(net.HardwareAddr(nil), routerMAC...),
+		valid:     routerMACValid,
+	})
+}
+
+// addType5Path records and installs a path. If the install fails, the
+// kernel route may have moved already, so the previously installed path,
+// or else another live path, is installed again. The caller holds
+// type5PathsMu.
+func (o *OverlayTier) addType5Path(prefix string, path *type5Path) {
+	o.rememberType5Path(prefix, path.key, path)
+	ok, routeChanged := o.applyType5PathDetailed(path)
+	if ok {
+		o.markType5Active(prefix, path.key)
+		return
+	}
+	if !routeChanged {
+		// The kernel route was not touched. Another installed path stays
+		// installed. If this was an update of the installed path itself,
+		// the recorded path no longer matches the kernel, so forget which
+		// path is installed and let a later withdraw delete by prefix.
+		if o.type5Active[prefix] == path.key {
+			delete(o.type5Active, prefix)
+		}
+		return
+	}
+	previous := o.type5Active[prefix]
+	delete(o.type5Active, prefix)
+	if p := o.type5Paths[prefix][previous]; p != nil && previous != path.key && o.applyType5Path(p) {
+		o.markType5Active(prefix, previous)
+		return
+	}
+	others := o.sortedType5Paths(prefix)
+	for _, p := range others {
+		if p.key != path.key && p.key != previous && o.applyType5Path(p) {
+			o.markType5Active(prefix, p.key)
+			return
+		}
+	}
+	// No path could be installed completely. With several paths the kernel
+	// route may now point at one whose gateway state failed, so remove it.
+	// A single path keeps the old behavior.
+	if len(others) > 1 {
+		if state, ok := o.type5RouteState(path.route, path.vtep, net.ParseIP(path.vtep)); ok {
+			o.removeType5Prefix(state)
+		}
+	}
+}
+
+// withdrawType5Path removes a path. If it was the installed one, the route
+// moves to a remaining path, or is deleted when none can be installed.
+// The caller holds type5PathsMu.
+func (o *OverlayTier) withdrawType5Path(prefix, key string, route *apipb.EVPNIPPrefixRoute, vtep string, routerMAC net.HardwareAddr) {
+	_, tracked := o.type5Paths[prefix][key]
+	remaining := o.forgetType5Path(prefix, key)
+	active, known := o.type5Active[prefix]
+	if known && active != key && len(remaining) > 0 {
+		// An inactive path withdrew. The installed route stays.
+		return
+	}
+	delete(o.type5Active, prefix)
+	for _, p := range remaining {
+		if o.applyType5Path(p) {
+			o.markType5Active(prefix, p.key)
+			o.log.Info("type-5 path withdrawn, keeping route via remaining path",
+				"dst", prefix, "withdrawn_vtep", vtep, "vtep", p.vtep)
+			return
+		}
+	}
+	vtepIP, _ := o.ensureType5VTEP(vtep, true)
 	state, ok := o.type5RouteState(route, vtep, vtepIP)
 	if !ok {
 		return
 	}
-	if withdraw {
-		o.withdrawType5Route(state, routerMAC)
+	if len(remaining) > 0 || (tracked && !known) {
+		// A failed fallback or update may have left the kernel route on
+		// another gateway, so delete the prefix route whatever its gateway.
+		o.removeType5Prefix(state)
 		return
 	}
-	o.installType5Route(state, routerMAC, routerMACValid)
+	o.withdrawType5Route(state, routerMAC)
+}
+
+// markType5Active records the installed path of a prefix. The caller holds
+// type5PathsMu.
+func (o *OverlayTier) markType5Active(prefix, key string) {
+	if o.type5Active == nil {
+		o.type5Active = make(map[string]string)
+	}
+	o.type5Active[prefix] = key
+}
+
+// applyType5Path prepares the VTEP route and installs the kernel route and
+// gateway state for one path. The caller holds type5PathsMu.
+func (o *OverlayTier) applyType5Path(p *type5Path) bool {
+	ok, _ := o.applyType5PathDetailed(p)
+	return ok
+}
+
+// applyType5PathDetailed is applyType5Path that also reports whether the
+// kernel route was replaced, even if the gateway state then failed.
+func (o *OverlayTier) applyType5PathDetailed(p *type5Path) (ok, routeChanged bool) {
+	vtepIP, ok := o.ensureType5VTEP(p.vtep, false)
+	if !ok {
+		return false, false
+	}
+	state, ok := o.type5RouteState(p.route, p.vtep, vtepIP)
+	if !ok {
+		return false, false
+	}
+	return o.installType5RouteDetailed(state, p.routerMAC, p.valid)
 }
 
 type type5RouteState struct {
@@ -841,6 +986,61 @@ type type5RouteState struct {
 	gw   net.IP
 	vtep net.IP
 	link netlink.Link
+}
+
+// type5Path is one live Type-5 path for a kernel route prefix. It keeps the
+// raw route so a fallback can redo the VTEP route and bridge lookup.
+type type5Path struct {
+	key       string
+	route     *apipb.EVPNIPPrefixRoute
+	vtep      string
+	routerMAC net.HardwareAddr
+	valid     bool
+}
+
+// type5PathKey identifies a Type-5 route. RFC 9136 section 3.1 makes RD,
+// Ethernet tag, IP prefix length and IP prefix the route key; ESI, gateway
+// and label are not part of it. GoBGP keys its RIB the same way
+// (EVPNIPPrefixRoute.String), so an update that changes the gateway of the
+// same key replaces the old path instead of adding a second one.
+func type5PathKey(route *apipb.EVPNIPPrefixRoute) string {
+	rd := route.GetRd()
+	return fmt.Sprintf("%s|%x|%d|%s/%d",
+		rd.GetTypeUrl(), rd.GetValue(), route.GetEthernetTag(), route.GetIpPrefix(), route.GetIpPrefixLen())
+}
+
+// rememberType5Path records a live path. The caller holds type5PathsMu.
+func (o *OverlayTier) rememberType5Path(prefix, key string, path *type5Path) {
+	if o.type5Paths == nil {
+		o.type5Paths = make(map[string]map[string]*type5Path)
+	}
+	if o.type5Paths[prefix] == nil {
+		o.type5Paths[prefix] = make(map[string]*type5Path)
+	}
+	o.type5Paths[prefix][key] = path
+}
+
+// forgetType5Path removes a withdrawn path and returns the remaining paths
+// for the same prefix in a stable order. The caller holds type5PathsMu.
+func (o *OverlayTier) forgetType5Path(prefix, key string) []*type5Path {
+	paths := o.type5Paths[prefix]
+	delete(paths, key)
+	if len(paths) == 0 {
+		delete(o.type5Paths, prefix)
+		return nil
+	}
+	return o.sortedType5Paths(prefix)
+}
+
+// sortedType5Paths returns the live paths of a prefix in a stable order.
+// The caller holds type5PathsMu.
+func (o *OverlayTier) sortedType5Paths(prefix string) []*type5Path {
+	paths := o.type5Paths[prefix]
+	sorted := make([]*type5Path, 0, len(paths))
+	for _, k := range slices.Sorted(maps.Keys(paths)) {
+		sorted = append(sorted, paths[k])
+	}
+	return sorted
 }
 
 func (o *OverlayTier) type5RouteState(route *apipb.EVPNIPPrefixRoute, vtep string, vtepIP net.IP) (type5RouteState, bool) {
@@ -878,22 +1078,38 @@ func (o *OverlayTier) withdrawType5Route(state type5RouteState, routerMAC net.Ha
 	o.deleteType5GatewayNeighbor(state.link, state.dst.String(), state.gw, state.vtep, routerMAC)
 }
 
-func (o *OverlayTier) installType5Route(state type5RouteState, routerMAC net.HardwareAddr, valid bool) {
+// removeType5Prefix deletes the kernel route for a prefix whatever its
+// gateway, and the gateway state of that prefix. It is used when no
+// remaining path could be installed completely.
+func (o *OverlayTier) removeType5Prefix(state type5RouteState) {
+	route := buildType5KernelRoute(state.link, state.dst, nil, o.overlayRouteTable())
+	if err := o.netlinkOps.RouteDel(route); err != nil {
+		// Keep the gateway state, the kernel route may still need it.
+		o.log.Warn("failed to delete type-5 route after failed fallback", "dst", state.dst, "error", err)
+		return
+	}
+	o.log.Warn("no remaining type-5 path could be installed, removed route", "dst", state.dst)
+	o.clearType5GatewayNeighbor(state.link, state.dst.String())
+}
+
+// installType5RouteDetailed also reports whether the kernel route was
+// replaced, so a caller can tell a failed route from failed gateway state.
+func (o *OverlayTier) installType5RouteDetailed(state type5RouteState, routerMAC net.HardwareAddr, valid bool) (ok, routeChanged bool) {
 	route := buildType5KernelRoute(state.link, state.dst, state.gw, o.overlayRouteTable())
 	if err := o.netlinkOps.RouteReplace(route); err != nil {
 		o.log.Warn("failed to install route from type-5", "dst", state.dst, "gw", state.gw, "error", err)
-		return
+		return false, false
 	}
 	o.log.Info("installed route from type-5", "dst", state.dst, "gw", state.gw)
-	if !valid {
+	switch {
+	case !valid:
 		o.updateType5GatewayRefWithoutRouterMAC(state.link, state.dst.String(), state.gw, state.vtep)
-		return
-	}
-	if len(routerMAC) == 0 {
+	case len(routerMAC) == 0:
 		o.clearType5GatewayNeighbor(state.link, state.dst.String())
-		return
+	default:
+		return o.setType5GatewayNeighbor(state.link, state.dst.String(), state.gw, state.vtep, routerMAC), true
 	}
-	o.setType5GatewayNeighbor(state.link, state.dst.String(), state.gw, state.vtep, routerMAC)
+	return true, true
 }
 
 func (o *OverlayTier) ensureType5VTEP(vtep string, withdraw bool) (net.IP, bool) {
@@ -920,31 +1136,32 @@ func (o *OverlayTier) setType5GatewayNeighbor(
 	gw net.IP,
 	vtep net.IP,
 	routerMAC net.HardwareAddr,
-) {
+) bool {
 	o.type5GatewayMu.Lock()
 	defer o.type5GatewayMu.Unlock()
 
 	neigh := buildType5GatewayNeighbor(link, gw, routerMAC)
 	if neigh == nil {
-		return
+		return true // no gateway neighbor for this gateway or router MAC
 	}
 	fdb := o.buildType5GatewayFDB(vtep, routerMAC)
 	if fdb == nil {
-		return
+		return false
 	}
 	if err := o.netlinkOps.NeighSet(neigh); err != nil {
 		o.log.Warn("failed to install type-5 gateway neighbor", "ip", gw, "mac", routerMAC, "error", err)
-		return
+		return false
 	}
 	if err := o.netlinkOps.NeighSet(fdb); err != nil {
 		o.log.Warn("failed to install type-5 gateway FDB entry", "vtep", vtep, "mac", routerMAC, "error", err)
 		if delErr := o.netlinkOps.NeighDel(neigh); delErr != nil {
 			o.log.Debug("failed to roll back type-5 gateway neighbor", "ip", gw, "mac", routerMAC, "error", delErr)
 		}
-		return
+		return false
 	}
 	o.replaceType5GatewayRef(link, prefix, gw, vtep, routerMAC)
 	o.log.Info("installed type-5 gateway neighbor and FDB entry", "ip", gw, "vtep", vtep, "mac", routerMAC)
+	return true
 }
 
 func (o *OverlayTier) updateType5GatewayRefWithoutRouterMAC(link netlink.Link, prefix string, gw, vtep net.IP) {

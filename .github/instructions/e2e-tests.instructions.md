@@ -19,7 +19,7 @@ Every E2E test file **must** start with a build tag matching its topology:
 | `e2e_vrnetlab` | QEMU vrnetlab | `make clab-vrnetlab-up && make test-e2e-vrnetlab` |
 | `e2e_gobgp_vrnetlab` | GoBGP QEMU vrnetlab | `make clab-gobgp-vrnetlab-up && make test-e2e-gobgp-vrnetlab` |
 | `e2e_production` | CI-proven production smoke: CAPRF/FRR mode, BGP, EVPN AF, VXLAN, overlay reachability, gateway FDB/route | `make clab-production-up && make test-e2e-production` |
-| `linux_e2e` | Linux root access | `sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m ./test/e2e/linux/...` |
+| `linux_e2e` | Linux root access | `sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m ./test/e2e/linux/...`, then the same with `-run '^TestType5Netlink' ./pkg/network/gobgp/` |
 
 ## Helper Functions
 

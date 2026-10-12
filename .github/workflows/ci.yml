@@ -1150,6 +1150,7 @@ jobs:
           set -o pipefail
           mkdir -p linux-e2e-logs
           sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m ./test/e2e/linux/... 2>&1 | tee linux-e2e-logs/go-test.log
+          sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestType5Netlink' ./pkg/network/gobgp/ 2>&1 | tee -a linux-e2e-logs/go-test.log
           if grep -E '^[[:space:]]*--- SKIP:' linux-e2e-logs/go-test.log; then
             echo "::error::linux e2e tests skipped in CI"
             exit 1
