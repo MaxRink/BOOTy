@@ -114,6 +114,9 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 - `CAPRF_LEGACY_COMPAT` parity (#585, #588, #589, #590, #591, #594, #617, #622,
   #625, #626, #628)
 - NIC firmware versions are read from ethtool when sysfs has none (#628)
+- disk: `DISK_SELECTION=lsblk` warns when more than one disk of the selected
+  bus qualifies, because disk names can change between boots; `docs/disk.md`
+  recommends `DISK_SERIAL_NUMBER` (#666)
 
 ### Security
 

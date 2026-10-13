@@ -472,7 +472,7 @@ func (m *Manager) detectDiskLegacyCAPRF(ctx context.Context, minSizeGB int) (str
 	}
 	minBytes := int64(minSizeGB) << 30
 	slog.Info("detecting target disk like the legacy CAPRF provisioner", "minSizeBytes", minBytes)
-	var candidates []string
+	var candidates, firstBus []string
 	for _, majors := range legacyCAPRFDiskMajors {
 		out, err := m.cmd.Run(ctx, "lsblk", "--nodeps", "--noheadings", "--include", majors,
 			"--output", "PATH,SIZE", "--bytes")
@@ -496,9 +496,19 @@ func (m *Manager) detectDiskLegacyCAPRF(ctx context.Context, minSizeGB int) (str
 			slog.Info("disk candidate", "device", fields[0], "sizeBytes", size, "majors", majors)
 			candidates = append(candidates, fields[0])
 		}
+		if firstBus == nil && len(candidates) > 0 {
+			firstBus = candidates
+		}
 	}
 	if len(candidates) == 0 {
 		return "", fmt.Errorf("no suitable disk found (min %d GB)", minSizeGB)
+	}
+	if len(firstBus) > 1 {
+		// The kernel names disks of one bus in probe order, which can change
+		// between boots (lab: the 40 GB disk was sda in one boot, sdb in the
+		// next). The lsblk order then picks another disk.
+		slog.Warn("lsblk disk selection is ambiguous: several disks of the same bus qualify and their names can change between boots; select the root disk with DISK_SERIAL_NUMBER, and exclude smaller disks with MIN_DISK_SIZE_GB",
+			"selected", firstBus[0], "candidates", strings.Join(firstBus, ","))
 	}
 	slog.Info("selected disk", "device", candidates[0])
 	return candidates[0], nil

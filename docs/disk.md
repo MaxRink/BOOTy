@@ -106,6 +106,34 @@ target when no NVMe or virtio disk qualifies, also without
 `BOOTY_ALLOW_REMOVABLE`. `DISK_DEVICE`, the serial lookup and
 `PARTITION_LAYOUT.device` keep their normal precedence.
 
+### Disk Names Are Not Stable
+
+The kernel names disks in the order in which it finds them. On a host with
+more than one disk of a bus, the names can change between boots: in a lab run
+(TCAAS-862) the same 40 GB disk was `sda` in one boot and `sdb` in the next.
+These selections can then pick another disk in the next boot:
+
+- `DISK_SELECTION=lsblk` takes the first disk in `lsblk` order. When more
+  than one disk of the selected bus (NVMe and virtio, or SCSI and SATA)
+  qualifies, BOOTy logs the warning `lsblk disk selection is ambiguous` with
+  the candidates.
+- `prefer-nvme` takes the largest disk, and the name order decides between
+  disks of the same size.
+- `DISK_DEVICE=/dev/sdX` is not an automatic rule, but it names the disk
+  by its kernel name and has the same problem.
+
+On hosts with more than one disk, select the root disk by a stable value:
+
+- `DISK_SERIAL_NUMBER` (CAPRF `RedfishHost.spec.rootDiskSelector.serialNumber`):
+  the identifier that the [Serial Lookup](#serial-lookup) reads, for most
+  disks the serial number. For a disk without a serial, the lookup reads the
+  WWID (`device/wwid`). A failed lookup lists the identifiers that BOOTy saw.
+- `MIN_DISK_SIZE_GB` excludes smaller disks, for example a boot or data
+  disk. It does not help when the disks have the same size.
+
+BOOTy runs without udev, so the ramdisk has no `/dev/disk/by-id` or
+`/dev/disk/by-path` links; do not use them in `DISK_DEVICE`.
+
 ### Serial Lookup
 
 `DISK_SERIAL` and `DISK_SERIAL_NUMBER` are aliases. Both set

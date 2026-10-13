@@ -3,10 +3,13 @@
 package disk
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"math"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -119,5 +122,41 @@ func TestDetectDiskLegacyCAPRFRejectsOverflowingMinimum(t *testing.T) {
 		if _, err := mgr.DetectDisk(context.Background(), minSizeGB); err == nil {
 			t.Fatalf("DetectDisk(min %d) selected a disk, want an error", minSizeGB)
 		}
+	}
+}
+
+// Lab finding (TCAAS-862): the 40 GB SCSI disk was sda in one boot and sdb
+// in the next, so the lsblk order picked another disk. BOOTy warns when
+// more than one disk of the selected bus qualifies.
+func TestDetectDiskLegacyCAPRFWarnsOnAmbiguousBus(t *testing.T) {
+	for name, tt := range map[string]struct {
+		byMajors map[string]string
+		want     string
+		warn     bool
+	}{
+		"two SCSI disks":           {byMajors: map[string]string{"8": "/dev/sda 42949672960\n/dev/sdb 42949672960\n"}, want: "/dev/sda", warn: true},
+		"two NVMe disks":           {byMajors: map[string]string{"259,253": "/dev/nvme0n1 42949672960\n/dev/nvme1n1 42949672960\n"}, want: "/dev/nvme0n1", warn: true},
+		"one NVMe, two SCSI disks": {byMajors: map[string]string{"259,253": "/dev/nvme0n1 42949672960\n", "8": "/dev/sda 1\n/dev/sdb 1\n"}, want: "/dev/nvme0n1"},
+		"one SCSI disk":            {byMajors: map[string]string{"8": "/dev/sda 42949672960\n"}, want: "/dev/sda"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var logs bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+			t.Cleanup(func() { slog.SetDefault(prev) })
+
+			mgr := NewManager(lsblkCommander{byMajors: tt.byMajors})
+			mgr.SetLegacyCAPRFSelection(true)
+			got, err := mgr.DetectDisk(context.Background(), 0)
+			if err != nil {
+				t.Fatalf("DetectDisk() = %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("DetectDisk() = %q, want %q", got, tt.want)
+			}
+			if warned := strings.Contains(logs.String(), "lsblk disk selection is ambiguous"); warned != tt.warn {
+				t.Fatalf("ambiguity warning = %v, want %v. logs:\n%s", warned, tt.warn, logs.String())
+			}
+		})
 	}
 }
