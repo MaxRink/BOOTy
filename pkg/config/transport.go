@@ -42,13 +42,24 @@ type TransportConfig struct {
 
 	// Insecure allows bearer tokens over plain HTTP.
 	// WARNING: Only for testing. Never enable in production.
-	// Default: false
-	Insecure bool `yaml:"insecure" json:"insecure"`
+	// Preset by legacyCompat: true.
+	// Default: nil (false)
+	Insecure *bool `yaml:"insecure,omitempty" json:"insecure,omitempty"`
 
 	// SkipTLSVerify disables TLS certificate verification for CAPRF
 	// callbacks, the connectivity check and image downloads, like the
-	// `curl --insecure` calls of the CAPRF legacy provisioner. It is only
-	// set through CAPRF_LEGACY_COMPAT.
-	// Default: false
-	SkipTLSVerify bool `yaml:"skipTLSVerify" json:"skipTLSVerify"`
+	// `curl --insecure` calls of the CAPRF legacy provisioner. TokenURL and
+	// the crash artifact upload always verify TLS.
+	// Preset by legacyCompat: true.
+	// Default: nil (false)
+	SkipTLSVerify *bool `yaml:"skipTLSVerify,omitempty" json:"skipTLSVerify,omitempty"`
+
+	// ExportVars exports every vars file entry whose key is a valid shell
+	// identifier to the process environment, like `source vars` in the
+	// CAPRF legacy scripts. Proxy entries such as https_proxy then apply to
+	// the CAPRF callbacks, the connectivity check and image downloads. Only
+	// the vars file input uses it.
+	// Preset by legacyCompat: true.
+	// Default: nil (false)
+	ExportVars *bool `yaml:"exportVars,omitempty" json:"exportVars,omitempty"`
 }

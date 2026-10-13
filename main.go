@@ -501,7 +501,7 @@ func runCAPRF(ctx context.Context) {
 		provision.DumpDebugState("config-fetch")
 		reboot()
 	}
-	network.SetSkipTLSVerify(cfg.Transport.SkipTLSVerify)
+	network.SetSkipTLSVerify(config.BoolOr(cfg.Transport.SkipTLSVerify, false))
 	image.RefreshHTTPClients()
 
 	if cfg.LegacyCompat {

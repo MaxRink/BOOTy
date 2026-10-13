@@ -285,7 +285,7 @@ func TestRAIDLVMProvisionOrderE2E(t *testing.T) {
 		Network:  config.NetworkConfig{DNSResolvers: "8.8.8.8"},
 		Provision: config.ProvisionConfig{
 			TargetOS: config.TargetOSLinux,
-			Image:    config.ImageConfig{URLs: []string{startE2ERawImageServer(t)}, AllowInsecureHTTP: true},
+			Image:    config.ImageConfig{URLs: []string{startE2ERawImageServer(t)}, AllowInsecureHTTP: new(true)},
 		},
 	}
 	orch := provision.NewOrchestrator(cfg, newMockProvider(cfg), disk.NewManager(cmd))

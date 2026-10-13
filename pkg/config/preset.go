@@ -34,6 +34,12 @@ func (c *Config) applyLegacyCompatPreset() {
 	presetString(&c.Provision.Disk.Selection, DiskSelectionLsblk)
 	presetBool(&c.Provision.Disk.WipeAllDisks, true)
 	presetBool(&c.Provision.Disk.DiscardNVMe, true)
+	// The legacy scripts use `curl --insecure`, accept plain HTTP URLs and
+	// `source vars`.
+	presetBool(&c.Transport.Insecure, true)
+	presetBool(&c.Transport.SkipTLSVerify, true)
+	presetBool(&c.Provision.Image.AllowInsecureHTTP, true)
+	presetBool(&c.Transport.ExportVars, true)
 }
 
 // presetString sets an unset (blank) string option.

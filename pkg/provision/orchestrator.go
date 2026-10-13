@@ -929,7 +929,7 @@ func (o *Orchestrator) validateProvisionInputs(ctx context.Context) error {
 		}
 		hasSource = true
 		imageSources = append(imageSources, source)
-		if err := validateProvisionImageSource(source, checksumConfigured, o.cfg.Provision.Image.AllowInsecureHTTP); err != nil {
+		if err := validateProvisionImageSource(source, checksumConfigured, config.BoolOr(o.cfg.Provision.Image.AllowInsecureHTTP, false)); err != nil {
 			return err
 		}
 	}

@@ -17,8 +17,12 @@ func applyParityVar(cfg *config.MachineConfig, key, value string) bool {
 	}
 	// Bool options are pointers, so an explicit false wins over the preset.
 	boolFields := map[string]**bool{
-		"WIPE_ALL_DISKS": &cfg.Provision.Disk.WipeAllDisks,
-		"DISCARD_NVME":   &cfg.Provision.Disk.DiscardNVMe,
+		"WIPE_ALL_DISKS":            &cfg.Provision.Disk.WipeAllDisks,
+		"DISCARD_NVME":              &cfg.Provision.Disk.DiscardNVMe,
+		"INSECURE_TRANSPORT":        &cfg.Transport.Insecure,
+		"SKIP_TLS_VERIFY":           &cfg.Transport.SkipTLSVerify,
+		"EXPORT_VARS":               &cfg.Transport.ExportVars,
+		"IMAGE_ALLOW_INSECURE_HTTP": &cfg.Provision.Image.AllowInsecureHTTP,
 	}
 	if ptr, ok := boolFields[key]; ok {
 		b := parseBoolVar(value)

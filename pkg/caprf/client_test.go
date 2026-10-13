@@ -320,7 +320,7 @@ export HOSTNAME="worker-01"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.Transport.Insecure {
+	if !config.BoolOr(cfg.Transport.Insecure, false) {
 		t.Fatal("expected InsecureTransport=true")
 	}
 }
@@ -2236,7 +2236,7 @@ func TestSetAuth(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			c := &Client{
 				log: slog.Default().With("component", "caprf"),
-				cfg: &config.MachineConfig{Transport: config.TransportConfig{Token: tt.token, Insecure: tt.insecureTransport}},
+				cfg: &config.MachineConfig{Transport: config.TransportConfig{Token: tt.token, Insecure: new(tt.insecureTransport)}},
 			}
 			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, tt.url, http.NoBody)
 			if err != nil {
@@ -2303,7 +2303,7 @@ func TestRequireSecureEndpointParseErrorRedactsSensitiveURLParts(t *testing.T) {
 
 func TestFetchCommandsCreateRequestErrorRedactsSensitiveURLParts(t *testing.T) {
 	c := NewFromConfig(&config.MachineConfig{
-		Transport: config.TransportConfig{Insecure: true},
+		Transport: config.TransportConfig{Insecure: new(true)},
 		Agent:     config.AgentConfig{CommandsURL: malformedCAPRFEndpointWithSensitiveParts()},
 	})
 	_, err := c.FetchCommands(context.Background())
@@ -2316,7 +2316,7 @@ func TestFetchCommandsCreateRequestErrorRedactsSensitiveURLParts(t *testing.T) {
 
 func TestAcknowledgeCommandBuildURLErrorRedactsSensitiveURLParts(t *testing.T) {
 	c := NewFromConfig(&config.MachineConfig{
-		Transport: config.TransportConfig{Insecure: true},
+		Transport: config.TransportConfig{Insecure: new(true)},
 		Agent:     config.AgentConfig{CommandsURL: malformedCAPRFEndpointWithSensitiveParts()},
 	})
 	err := c.AcknowledgeCommand(context.Background(), "cmd-placeholder", "completed", "")

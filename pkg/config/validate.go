@@ -265,13 +265,6 @@ func validateImageSourceRootSelectors(cfg *ImageConfig) error {
 // normalize lowercases or uppercases case-insensitive enum fields so downstream
 // code can use plain equality comparisons without calling ToLower/ToUpper.
 func (c *Config) normalize() {
-	if c.LegacyCompat {
-		// The legacy CAPRF scripts use `curl --insecure` for callbacks and
-		// image downloads and accept plain HTTP URLs.
-		c.Transport.Insecure = true
-		c.Transport.SkipTLSVerify = true
-		c.Provision.Image.AllowInsecureHTTP = true
-	}
 	lowerFields := []*string{
 		&c.Provision.TargetOS,
 		&c.Provision.Image.ChecksumType,

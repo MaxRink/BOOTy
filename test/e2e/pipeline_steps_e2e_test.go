@@ -359,7 +359,7 @@ func TestSetupNVMeNamespacesInvalidConfigE2E(t *testing.T) {
 		Health:  config.HealthConfig{Enabled: false},
 		Provision: config.ProvisionConfig{
 			TargetOS:  config.TargetOSLinux,
-			Image:     config.ImageConfig{URLs: []string{startE2ERawImageServer(t)}, AllowInsecureHTTP: true},
+			Image:     config.ImageConfig{URLs: []string{startE2ERawImageServer(t)}, AllowInsecureHTTP: new(true)},
 			Disk:      config.DiskConfig{NVMeNamespaces: "{not valid json"},
 			Inventory: config.InventoryConfig{Enabled: false},
 		},
@@ -400,7 +400,7 @@ func TestSetupNVMeNamespacesCommandsCalledE2E(t *testing.T) {
 		Health:  config.HealthConfig{Enabled: false},
 		Provision: config.ProvisionConfig{
 			TargetOS:  config.TargetOSLinux,
-			Image:     config.ImageConfig{URLs: []string{startE2ERawImageServer(t)}, AllowInsecureHTTP: true},
+			Image:     config.ImageConfig{URLs: []string{startE2ERawImageServer(t)}, AllowInsecureHTTP: new(true)},
 			Disk:      config.DiskConfig{NVMeNamespaces: nvmeCfg},
 			Inventory: config.InventoryConfig{Enabled: false},
 		},

@@ -11,8 +11,9 @@ import (
 var skipTLSVerify atomic.Bool
 
 // SetSkipTLSVerify controls TLS certificate verification for clients that
-// NewHTTPClient creates afterwards. Only CAPRF legacy compatibility enables
-// it, to match `curl --insecure` in the legacy provisioner.
+// NewHTTPClient creates afterwards. SKIP_TLS_VERIFY (preset by
+// CAPRF_LEGACY_COMPAT) enables it, to match `curl --insecure` in the legacy
+// provisioner.
 func SetSkipTLSVerify(skip bool) {
 	skipTLSVerify.Store(skip)
 }

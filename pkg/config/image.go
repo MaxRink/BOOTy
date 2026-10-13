@@ -11,8 +11,9 @@ type ImageConfig struct {
 
 	// AllowInsecureHTTP permits plain HTTP image sources. This is intended for
 	// local testing/airgapped environments without TLS infrastructure.
-	// Default: false (requires HTTPS or OCI)
-	AllowInsecureHTTP bool `yaml:"allowInsecureHTTP" json:"allowInsecureHTTP"`
+	// Preset by legacyCompat: true.
+	// Default: nil (false, requires HTTPS or OCI)
+	AllowInsecureHTTP *bool `yaml:"allowInsecureHTTP,omitempty" json:"allowInsecureHTTP,omitempty"`
 
 	// Checksum is the expected hex digest of the raw (decompressed) image.
 	// Verified after streaming completes.

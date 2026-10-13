@@ -25,8 +25,8 @@ BOOTy runs as PID 1 and reads its configuration from two sources:
    [Process environment](#process-environment).
 2. The process environment of PID 1. The kernel passes unknown `name=value`
    kernel command line parameters to init as environment variables. With
-   `CAPRF_LEGACY_COMPAT=true`, BOOTy also exports every vars file entry to the
-   environment. See [CAPRF legacy compatibility](#caprf-legacy-compatibility).
+   `EXPORT_VARS=true` (preset by `CAPRF_LEGACY_COMPAT=true`), BOOTy also
+   exports every vars file entry to the environment.
 
 The runtime binary does not read YAML or JSON configuration files. The
 `pkg/config` loader for `.yaml` and `.json` files is a library. Only the
@@ -110,12 +110,14 @@ values are false.
 | `TOKEN` | (unset) | string | Bearer token. With `TOKEN_URL` it is the bootstrap token for the JWT exchange. |
 | `TOKEN_URL` | (unset) | HTTPS URL | JWT endpoint. BOOTy exchanges `TOKEN` for a JWT after the network is up and renews it in the background. Plain HTTP is accepted only for `localhost`, `127.0.0.1` and `::1`. Requires `TOKEN` and `HOSTNAME`. A failed exchange or an exhausted renewal ends the run. |
 | `TOKEN_ALGORITHM` | (unset) | `RS256`, `ES256` | JWT signing algorithm that BOOTy requests from `TOKEN_URL`. Empty leaves the choice to the server. |
-| `INSECURE_TRANSPORT` | `false` | boolean | Send the bearer token over plain HTTP. Without it, BOOTy refuses to send the token to an `http://` URL that is not a loopback address. Legacy compat sets it. |
+| `INSECURE_TRANSPORT` | `false` | boolean | Send the bearer token over plain HTTP. Without it, BOOTy refuses to send the token to an `http://` URL that is not a loopback address. YAML `transport.insecure`. Preset: `true`. |
+| `SKIP_TLS_VERIFY` | `false` | boolean | Do not verify TLS certificates for the CAPRF callbacks, the connectivity check and image downloads, like `curl --insecure`. BOOTy logs a warning. `TOKEN_URL` and the crash artifact upload always verify. YAML `transport.skipTLSVerify`. Preset: `true`. |
+| `EXPORT_VARS` | `false` | boolean | Export every vars file entry whose key is a valid shell identifier to the process environment, like `source vars`. Proxy entries (`https_proxy`, `no_proxy`) and the [process environment](#process-environment) variables then apply. YAML `transport.exportVars`. Preset: `true`. |
 
 The CAPRF callback, connectivity check and image HTTP clients use the
 standard proxy variables (`https_proxy`, `http_proxy`, `no_proxy`) from the
 process environment. The `TOKEN_URL` client uses no proxy and always verifies
-TLS, also in legacy compat.
+TLS, also with `SKIP_TLS_VERIFY=true` or `EXPORT_VARS=true`.
 
 ## CAPRF legacy compatibility
 
@@ -132,16 +134,14 @@ defaults.
 | Target disk auto-detection | `DISK_SELECTION` | `provision.disk.selection` | `prefer-nvme` | `lsblk` |
 | Wipe every disk, not only the target | `WIPE_ALL_DISKS` | `provision.disk.wipeAllDisks` | `false` | `true` |
 | `blkdiscard` NVMe disks before a wipe of all disks | `DISCARD_NVME` | `provision.disk.discardNVMe` | `false` | `true` |
+| Bearer token over plain HTTP | `INSECURE_TRANSPORT` | `transport.insecure` | `false` | `true` |
+| No TLS certificate check, like `curl --insecure` | `SKIP_TLS_VERIFY` | `transport.skipTLSVerify` | `false` | `true` |
+| Plain HTTP image URLs | `IMAGE_ALLOW_INSECURE_HTTP` | `provision.image.allowInsecureHTTP` | `false` | `true` |
+| Export the vars entries, like `source vars` | `EXPORT_VARS` | `transport.exportVars` | `false` | `true` |
 
 These behaviours do not have their own option yet. Only the preset turns
 them on:
 
-- `INSECURE_TRANSPORT=true`, `IMAGE_ALLOW_INSECURE_HTTP=true`, and TLS
-  certificate checks off for the CAPRF callbacks, the connectivity check and
-  the image downloads.
-- BOOTy exports every vars file entry whose key is a valid shell identifier to
-  the process environment, like `source vars`. Proxy variables and the
-  [process environment](#process-environment) variables then apply.
 - `MACHINE_SERIAL_CONSOLE` is ignored.
 - `setup-mellanox` raises `NUM_OF_VFS` to 32 (or `NUM_VFS`) on every
   ConnectX Ethernet function. It skips quietly without `mstconfig` or such a
@@ -156,7 +156,7 @@ behaviour changes of this mode.
 | Key | Default | Values | Description |
 |-----|---------|--------|-------------|
 | `IMAGE` | (unset) | URLs separated by commas or spaces | OS image sources: `https://`, `http://` or `oci://`. With more than one URL, BOOTy probes each URL with a ranged GET and uses the fastest. Required for provisioning. |
-| `IMAGE_ALLOW_INSECURE_HTTP` | `false` | boolean | Accept `http://` image URLs. Legacy compat sets it. |
+| `IMAGE_ALLOW_INSECURE_HTTP` | `false` | boolean | Accept `http://` image URLs. YAML `provision.image.allowInsecureHTTP`. Preset: `true`. |
 | `IMAGE_CHECKSUM` | (unset) | hex digest, optional `sha256:` or `sha512:` prefix | Expected digest of the decompressed image. Required for `oci://` sources that are not pinned by digest, and with `IMAGE_SIGNATURE_URL`. |
 | `IMAGE_CHECKSUM_TYPE` | from digest length | `sha256`, `sha512` | Hash algorithm of `IMAGE_CHECKSUM`. |
 | `IMAGE_SIGNATURE_URL` | (unset) | URL | Detached GPG signature of the image. Not supported for `oci://` sources. |

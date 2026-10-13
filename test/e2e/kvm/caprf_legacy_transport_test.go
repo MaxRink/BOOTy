@@ -74,6 +74,30 @@ func startConnectProxy(t *testing.T, caprfPort int) *connectProxy {
 // Here CAPRF has a self-signed certificate and is only reachable through
 // the proxy from the vars file.
 func TestLegacyCompatTLSAndProxyQEMU(t *testing.T) {
+	testTLSAndProxy(t, func(f *fakeCAPRF) map[string]string {
+		vars := f.vars("provision")
+		// No explicit transport opt-ins: CAPRF_LEGACY_COMPAT implies them.
+		delete(vars, "INSECURE_TRANSPORT")
+		return vars
+	})
+}
+
+// SKIP_TLS_VERIFY and EXPORT_VARS give the same result without
+// CAPRF_LEGACY_COMPAT. Without SKIP_TLS_VERIFY the certificate check fails,
+// without EXPORT_VARS the guest cannot reach CAPRF.
+func TestNativeParityTLSAndProxyQEMU(t *testing.T) {
+	testTLSAndProxy(t, func(f *fakeCAPRF) map[string]string {
+		vars := f.nativeVars("provision")
+		delete(vars, "INSECURE_TRANSPORT")
+		vars["SKIP_TLS_VERIFY"] = "true"
+		vars["EXPORT_VARS"] = "true"
+		vars["SUCCESS_ACTION"] = "poweroff"
+		return vars
+	})
+}
+
+func testTLSAndProxy(t *testing.T, varsFor func(*fakeCAPRF) map[string]string) {
+	t.Helper()
 	requireRoot(t)
 	qemuAvailable(t)
 	requireProvisionTools(t)
@@ -95,9 +119,7 @@ func TestLegacyCompatTLSAndProxyQEMU(t *testing.T) {
 	targetDisk := filepath.Join(t.TempDir(), "legacy-transport-target.qcow2")
 	run(t, "create target disk", "qemu-img", "create", "-f", "qcow2", targetDisk, "2G")
 
-	vars := caprf.vars("provision")
-	// No explicit transport opt-ins: CAPRF_LEGACY_COMPAT implies them.
-	delete(vars, "INSECURE_TRANSPORT")
+	vars := varsFor(caprf)
 	vars["IMAGE"] = caprf.baseURL + "/image.gz"
 	vars["DISK_DEVICE"] = "/dev/vda"
 	vars["https_proxy"] = proxy.url

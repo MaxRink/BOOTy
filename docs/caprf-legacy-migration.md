@@ -42,8 +42,9 @@ The variable changes these behaviours:
   waits (`FAILURE_ACTION=wait`). Details are in
   [End of a run](caprf-integration.md#end-of-a-run).
 - **Transport.** Plain HTTP is allowed and TLS certificates are not
-  verified, like `curl --insecure`. Every `/deploy/vars` entry is exported
-  to the environment, like `source vars`. Details are in
+  verified, like `curl --insecure` (`INSECURE_TRANSPORT`,
+  `IMAGE_ALLOW_INSECURE_HTTP`, `SKIP_TLS_VERIFY`). Every `/deploy/vars`
+  entry is exported to the environment, like `source vars` (`EXPORT_VARS`). Details are in
   [Transport rules](caprf-integration.md#transport-rules).
 - **Provisioner files and DNS.** `/deploy/file-system` goes into the ramdisk
   before the network starts, like `copy_files`, and not into the installed
@@ -104,8 +105,8 @@ Detail for these rows is in [Disk handling](disk.md).
 
 | Legacy behaviour | BOOTy default | BOOTy with `CAPRF_LEGACY_COMPAT=true` | Status | Native option (preset value) |
 |------------------|---------------|---------------------------------------|--------|------------------------------|
-| `curl --insecure` for callbacks, the connectivity check and image downloads. Any URL scheme. | TLS certificates verified. Bearer token only over HTTPS or loopback. `http://` images need `IMAGE_ALLOW_INSECURE_HTTP=true`. | Plain HTTP allowed. TLS certificates not verified. The crash artifact upload still verifies. | Merged (#589) | None yet |
-| `source vars` exports every entry, so `https_proxy` and `no_proxy` apply | Unknown keys ignored. Proxy only from the process environment. | Every entry with a shell identifier as key is exported. Proxy entries apply to callbacks, the connectivity check and image downloads. | Merged (#589) | None yet |
+| `curl --insecure` for callbacks, the connectivity check and image downloads. Any URL scheme. | TLS certificates verified. Bearer token only over HTTPS or loopback. `http://` images need `IMAGE_ALLOW_INSECURE_HTTP=true`. | Plain HTTP allowed. TLS certificates not verified. The crash artifact upload still verifies. | Merged (#589) | `INSECURE_TRANSPORT=true`, `SKIP_TLS_VERIFY=true`, `IMAGE_ALLOW_INSECURE_HTTP=true` |
+| `source vars` exports every entry, so `https_proxy` and `no_proxy` apply | Unknown keys ignored. Proxy only from the process environment. | Every entry with a shell identifier as key is exported. Proxy entries apply to callbacks, the connectivity check and image downloads. | Merged (#589) | `EXPORT_VARS=true` |
 | `copy_files`: `/deploy/file-system` into the ramdisk before the network starts, netplan files mode `0600`, symlinks skipped | Copied into the installed OS (`copy-provisioner-files` step). Symlinks skipped. | Copied into the ramdisk before the network starts. Netplan files get mode `0600`. Not copied into the installed OS. If the copy fails, BOOTy waits without a callback. | Merged (#588) | None yet |
 | Ramdisk `/etc/resolv.conf` from the provisioner files, never rewritten. Installed OS `resolv.conf` not written. | Ramdisk `resolv.conf` written from `dns_resolver` or netplan. Installed OS `resolv.conf` written from `dns_resolver`. | A provisioner `/etc/resolv.conf` stays in the ramdisk. The installed OS `resolv.conf` is not written. | Merged (#588) | None yet |
 | `debug()` progress lines to `DEBUG_URL` | `DEBUG_URL` is read but not used. Progress goes to the log and `LOG_URL`. | Same | Not implemented | Not needed |

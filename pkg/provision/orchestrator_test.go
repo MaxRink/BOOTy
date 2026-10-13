@@ -44,7 +44,7 @@ func newTestOrchestratorWithCommander(t *testing.T, cfg *config.MachineConfig, p
 	t.Helper()
 	cmd := newMockCommander()
 	mgr := disk.NewManager(cmd)
-	cfg.Provision.Image.AllowInsecureHTTP = true
+	cfg.Provision.Image.AllowInsecureHTTP = new(true)
 	o := NewOrchestrator(cfg, provider, mgr)
 	o.config.rootDir = t.TempDir()
 	withHermeticHostRoots(t, o.config)
@@ -2154,8 +2154,8 @@ func TestWipeOrSecureEraseDisks(t *testing.T) {
 			}
 			provider := &mockProvider{}
 			mgr := disk.NewManager(cmd)
-			cfg.Provision.Image.AllowInsecureHTTP = true
-			cfg.Provision.Image.AllowInsecureHTTP = true
+			cfg.Provision.Image.AllowInsecureHTTP = new(true)
+			cfg.Provision.Image.AllowInsecureHTTP = new(true)
 			o := NewOrchestrator(cfg, provider, mgr)
 
 			err := o.wipeOrSecureEraseDisks(context.Background())
@@ -3005,7 +3005,7 @@ func TestVerifyImageSignature_Skipped(t *testing.T) {
 	}))
 	defer srv.Close()
 	cfg.Provision.Image.URLs = []string{srv.URL}
-	cfg.Provision.Image.AllowInsecureHTTP = true
+	cfg.Provision.Image.AllowInsecureHTTP = new(true)
 	provider := &mockProvider{}
 	o := newTestOrchestrator(t, cfg, provider)
 
@@ -4894,7 +4894,7 @@ func TestValidateProvisionInputsHTTPInsecure(t *testing.T) {
 	t.Run("rejects plain http when allowInsecureHTTP is false", func(t *testing.T) {
 		cfg := &config.MachineConfig{Provision: config.ProvisionConfig{TargetOS: "linux", Image: config.ImageConfig{URLs: []string{"http://images.example.invalid/node.raw"}}}}
 		o := newTestOrchestrator(t, cfg, &mockProvider{})
-		o.cfg.Provision.Image.AllowInsecureHTTP = false
+		o.cfg.Provision.Image.AllowInsecureHTTP = new(false)
 		err := o.validateProvisionInputs(context.Background())
 		if err == nil || !strings.Contains(err.Error(), "plain HTTP sources require") {
 			t.Errorf("expected error about insecure HTTP, got %v", err)
@@ -4903,7 +4903,7 @@ func TestValidateProvisionInputsHTTPInsecure(t *testing.T) {
 	t.Run("accepts plain http when allowInsecureHTTP is true", func(t *testing.T) {
 		cfg := &config.MachineConfig{Provision: config.ProvisionConfig{TargetOS: "linux", Image: config.ImageConfig{URLs: []string{"http://images.example.invalid/node.raw"}}}}
 		o := newTestOrchestrator(t, cfg, &mockProvider{})
-		o.cfg.Provision.Image.AllowInsecureHTTP = true
+		o.cfg.Provision.Image.AllowInsecureHTTP = new(true)
 		err := o.validateProvisionInputs(context.Background())
 		if err != nil && strings.Contains(err.Error(), "plain HTTP sources require") {
 			t.Errorf("did not expect error about insecure HTTP, got %v", err)

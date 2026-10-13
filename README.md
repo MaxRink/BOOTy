@@ -274,7 +274,7 @@ dns_resolver="8.8.8.8"
 Comments must be on their own lines: BOOTy keeps text after a value as part of
 the value. BOOTy sends the bearer token only to HTTPS or loopback URLs, unless
 `INSECURE_TRANSPORT=true`. Plain `http://` image URLs need
-`IMAGE_ALLOW_INSECURE_HTTP=true`. `CAPRF_LEGACY_COMPAT=true` sets both. When
+`IMAGE_ALLOW_INSECURE_HTTP=true`. `CAPRF_LEGACY_COMPAT=true` presets both. When
 `TOKEN_URL` is set and the JWT exchange or renewal fails, BOOTy reboots. With
 `FAILURE_ACTION=wait` (preset by `CAPRF_LEGACY_COMPAT=true`) it reports the
 error and keeps the ramdisk running.
@@ -332,7 +332,9 @@ root is mounted.
 | `TOKEN_URL` | — | JWT token acquisition endpoint (HTTPS required except localhost) |
 | `TOKEN_ALGORITHM` | — | JWT algorithm override: `RS256` or `ES256` |
 | `SECURE_ERASE` | `false` | Use NVMe format / ATA secure erase instead of partition wipe |
-| `INSECURE_TRANSPORT` | `false` | Allow insecure HTTP connections |
+| `INSECURE_TRANSPORT` | `false` | Allow insecure HTTP connections. Preset by `CAPRF_LEGACY_COMPAT` |
+| `SKIP_TLS_VERIFY` | `false` | Skip TLS certificate checks for CAPRF callbacks, the connectivity check and images, like `curl --insecure`. Never for `TOKEN_URL`. Preset by `CAPRF_LEGACY_COMPAT` |
+| `EXPORT_VARS` | `false` | Export every `/deploy/vars` entry to the environment, like `source vars`. Preset by `CAPRF_LEGACY_COMPAT` |
 | `PARTITION_LAYOUT` | — | Custom partition layout specification |
 | `DISK_SERIAL` | — | Target specific disk by serial number |
 | `RESCUE_PASSWORD_HASH` | — | Password hash for rescue mode access |
@@ -472,10 +474,12 @@ With the variable set, BOOTy keeps the legacy behaviour where the two differ:
   BOOTy does not resolve the console from firmware and does not write getty
   units in this mode.
 - Transport follows the legacy `curl --insecure` calls: CAPRF callbacks and
-  image URLs may use plain HTTP, and TLS certificates are not verified for
-  callbacks, the connectivity check and image downloads.
+  image URLs may use plain HTTP (`INSECURE_TRANSPORT=true`,
+  `IMAGE_ALLOW_INSECURE_HTTP=true`), and TLS certificates are not verified
+  for callbacks, the connectivity check and image downloads
+  (`SKIP_TLS_VERIFY=true`).
 - Every entry of `/deploy/vars` is exported to the environment, like
-  `source vars`. Proxy variables such as `https_proxy` from CAPRF
+  `source vars` (`EXPORT_VARS=true`). Proxy variables such as `https_proxy` from CAPRF
   `additionalVars` apply to the CAPRF callbacks, the connectivity check and
   the image downloads.
 - Files in `/deploy/file-system` (CAPRF `provisionerConfig.files`) are copied

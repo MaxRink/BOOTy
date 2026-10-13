@@ -127,15 +127,18 @@ URL is empty, BOOTy skips the callback.
 
 ## Transport rules
 
-| Rule | Default | `CAPRF_LEGACY_COMPAT=true` |
-|------|---------|----------------------------|
-| Bearer token over plain HTTP | Refused, the request fails. Allowed only for `https://` or loopback URLs, or with `INSECURE_TRANSPORT=true`. | Allowed |
-| `COMMANDS_URL` and crash artifact URLs over plain HTTP | Refused, except for loopback or with `INSECURE_TRANSPORT=true` | Allowed |
-| TLS certificate check for callbacks, the connectivity check and image downloads | Verified against the system roots | Not verified, like `curl --insecure` |
-| TLS certificate check for the crash artifact upload | Verified | Verified |
-| `http://` image URLs | Need `IMAGE_ALLOW_INSECURE_HTTP=true` | Allowed |
-| `TOKEN_URL` | HTTPS required (plain HTTP only for loopback). TLS verified. No proxy. | Same |
-| Proxy (`https_proxy`, `http_proxy`, `no_proxy`) | Read from the process environment. `/deploy/vars` entries do not reach the environment. | Every `/deploy/vars` entry is exported, so proxy entries apply. |
+Each rule has its own option. `CAPRF_LEGACY_COMPAT=true` presets all of them
+to the legacy value; an explicit option wins.
+
+| Rule | Default | Legacy value | Option (preset value) |
+|------|---------|--------------|-----------------------|
+| Bearer token over plain HTTP | Refused, the request fails. Allowed only for `https://` or loopback URLs. | Allowed | `INSECURE_TRANSPORT=true` |
+| `COMMANDS_URL` and crash artifact URLs over plain HTTP | Refused, except for loopback | Allowed | `INSECURE_TRANSPORT=true` |
+| TLS certificate check for callbacks, the connectivity check and image downloads | Verified against the system roots | Not verified, like `curl --insecure`. BOOTy logs a warning. | `SKIP_TLS_VERIFY=true` |
+| TLS certificate check for the crash artifact upload | Verified | Verified | None, always verified |
+| `http://` image URLs | Refused | Allowed | `IMAGE_ALLOW_INSECURE_HTTP=true` |
+| `TOKEN_URL` | HTTPS required (plain HTTP only for loopback). TLS verified. No proxy. | Same | None, `SKIP_TLS_VERIFY` and the exported proxy never apply |
+| Proxy (`https_proxy`, `http_proxy`, `no_proxy`) | Read from the process environment. `/deploy/vars` entries do not reach the environment. | Every `/deploy/vars` entry is exported, so proxy entries apply. | `EXPORT_VARS=true` |
 
 Planned (#624): redact URL query strings in transport errors.
 
@@ -220,9 +223,9 @@ in place of its legacy shell provisioner.
 - `caprf.FailureConfig` reads only `CAPRF_LEGACY_COMPAT` and
   `FAILURE_ACTION`. So a `/deploy/vars` file that does not parse still
   selects the failure handling: BOOTy waits instead of a reboot.
-- `Config.normalize` then applies the legacy transport rules. This has the
-  effect of `INSECURE_TRANSPORT=true` and `IMAGE_ALLOW_INSECURE_HTTP=true`,
-  and it turns TLS certificate verification off.
+- The preset includes the legacy transport rules: `INSECURE_TRANSPORT=true`,
+  `IMAGE_ALLOW_INSECURE_HTTP=true`, `SKIP_TLS_VERIFY=true` and
+  `EXPORT_VARS=true`. See [Transport rules](#transport-rules).
 
 The full list of changes is in
 [What CAPRF_LEGACY_COMPAT changes](caprf-legacy-migration.md#what-caprf_legacy_compat-changes).
