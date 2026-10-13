@@ -451,10 +451,10 @@ func (o *Orchestrator) setHostname(_ context.Context) error {
 }
 
 func (o *Orchestrator) copyProvisionerFiles(ctx context.Context) error {
-	if o.cfg.LegacyCompat {
-		// The legacy CAPRF scripts apply provisioner files to the ramdisk
+	if o.cfg.ProvisionerFilesInRamdisk() {
+		// Like the legacy CAPRF scripts: provisioner files go to the ramdisk
 		// only. main applies them before the network starts.
-		o.log.Info("legacy compat: provisioner files stay in the ramdisk, not copied to the target")
+		o.log.Info("provisioner files stay in the ramdisk, not copied to the target")
 		return nil
 	}
 	return o.config.CopyProvisionerFiles(ctx)
@@ -465,10 +465,10 @@ func (o *Orchestrator) configureOverlayFS(_ context.Context) error {
 }
 
 func (o *Orchestrator) configureDNS(_ context.Context) error {
-	if o.cfg.LegacyCompat {
-		// The legacy CAPRF scripts never write the target resolv.conf. The
-		// installed OS keeps its own (for example the systemd-resolved stub).
-		o.log.Info("legacy compat: keeping the target resolv.conf")
+	if !config.BoolOr(o.cfg.Provision.WriteResolvConf, true) {
+		// Like the legacy CAPRF scripts: the installed OS keeps its own
+		// resolv.conf (for example the systemd-resolved stub).
+		o.log.Info("keeping the target resolv.conf")
 	} else if err := o.config.ConfigureDNS(o.cfg); err != nil {
 		return err
 	}

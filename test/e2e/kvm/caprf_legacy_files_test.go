@@ -15,6 +15,36 @@ import (
 // /etc/resolv.conf change how the ramdisk reaches CAPRF. They never reach
 // the installed OS.
 func TestLegacyCompatProvisionerFilesStayInRamdiskQEMU(t *testing.T) {
+	testProvisionerFilesStayInRamdisk(t, func(f *fakeCAPRF) map[string]string { return f.vars("provision") }, nil)
+}
+
+// PROVISIONER_FILES_TARGET=ramdisk, WRITE_RESOLV_CONF=false and
+// RAMDISK_HOSTNAME=true select the same behavior without
+// CAPRF_LEGACY_COMPAT. Without the first option the guest cannot resolve
+// the CAPRF name; without the others the checks on the ramdisk hostname and
+// the target resolv.conf fail.
+func TestNativeParityProvisionerFilesStayInRamdiskQEMU(t *testing.T) {
+	testProvisionerFilesStayInRamdisk(t, func(f *fakeCAPRF) map[string]string {
+		vars := f.nativeVars("provision")
+		vars["PROVISIONER_FILES_TARGET"] = "ramdisk"
+		vars["WRITE_RESOLV_CONF"] = "false"
+		vars["RAMDISK_HOSTNAME"] = "true"
+		vars["SUCCESS_ACTION"] = "poweroff"
+		vars["dns_resolver"] = "10.0.2.3"
+		return vars
+	}, func(t *testing.T, output []byte, rootMount string) {
+		t.Helper()
+		if !strings.Contains(string(output), "ramdisk hostname set") {
+			t.Errorf("RAMDISK_HOSTNAME=true did not set the ramdisk hostname")
+		}
+		if data, err := os.ReadFile(filepath.Join(rootMount, "etc", "resolv.conf")); err == nil && strings.Contains(string(data), "10.0.2.3") {
+			t.Errorf("WRITE_RESOLV_CONF=false wrote the target resolv.conf:\n%s", data)
+		}
+	})
+}
+
+func testProvisionerFilesStayInRamdisk(t *testing.T, varsFor func(*fakeCAPRF) map[string]string, extraCheck func(*testing.T, []byte, string)) {
+	t.Helper()
 	requireRoot(t)
 	qemuAvailable(t)
 	requireProvisionTools(t)
@@ -30,7 +60,7 @@ func TestLegacyCompatProvisionerFilesStayInRamdiskQEMU(t *testing.T) {
 	// /etc/hosts resolves. The run only succeeds when BOOTy applies the
 	// provisioner files to the ramdisk before it starts the network.
 	byName := strings.Replace(caprf.baseURL, "10.0.2.2", "caprf.legacy.test", 1)
-	vars := caprf.vars("provision")
+	vars := varsFor(caprf)
 	for _, key := range []string{"LOG_URL", "INIT_URL", "ERROR_URL", "SUCCESS_URL"} {
 		vars[key] = strings.Replace(vars[key], caprf.baseURL, byName, 1)
 	}
@@ -59,5 +89,8 @@ func TestLegacyCompatProvisionerFilesStayInRamdiskQEMU(t *testing.T) {
 		case !os.IsNotExist(err):
 			t.Errorf("cannot check %s on the installed OS: %v", rel, err)
 		}
+	}
+	if extraCheck != nil {
+		extraCheck(t, output, rootMount)
 	}
 }

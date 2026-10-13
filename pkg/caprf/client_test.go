@@ -2496,6 +2496,23 @@ func TestParseVarsDiskOptions(t *testing.T) {
 	}
 }
 
+func TestParseVarsFilesOptions(t *testing.T) {
+	cfg, err := ParseVars(strings.NewReader("PROVISIONER_FILES_TARGET=ramdisk\nWRITE_RESOLV_CONF=false\nRAMDISK_HOSTNAME=true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.ProvisionerFilesInRamdisk() || config.BoolOr(cfg.Provision.WriteResolvConf, true) || !config.BoolOr(cfg.RamdiskHostname, false) {
+		t.Fatalf("files options = %q %v %v", cfg.ProvisionerFilesTarget, cfg.Provision.WriteResolvConf, cfg.RamdiskHostname)
+	}
+	cfg, err = ParseVars(strings.NewReader("CAPRF_LEGACY_COMPAT=true\nPROVISIONER_FILES_TARGET=target\nWRITE_RESOLV_CONF=true\nRAMDISK_HOSTNAME=false\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ProvisionerFilesInRamdisk() || !config.BoolOr(cfg.Provision.WriteResolvConf, false) || config.BoolOr(cfg.RamdiskHostname, true) {
+		t.Fatalf("explicit options must win over the preset: %q %v %v", cfg.ProvisionerFilesTarget, cfg.Provision.WriteResolvConf, cfg.RamdiskHostname)
+	}
+}
+
 func TestParseVarsLifecycleActions(t *testing.T) {
 	tests := []struct {
 		vars         string

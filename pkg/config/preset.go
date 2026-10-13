@@ -10,6 +10,12 @@ const (
 	FailureActionWait     = "wait"
 )
 
+// Values of ProvisionerFilesTarget.
+const (
+	ProvisionerFilesTarget  = "target"
+	ProvisionerFilesRamdisk = "ramdisk"
+)
+
 // Values of DiskConfig.Selection.
 const (
 	DiskSelectionPreferNVMe = "prefer-nvme"
@@ -40,6 +46,9 @@ func (c *Config) applyLegacyCompatPreset() {
 	presetBool(&c.Transport.SkipTLSVerify, true)
 	presetBool(&c.Provision.Image.AllowInsecureHTTP, true)
 	presetBool(&c.Transport.ExportVars, true)
+	presetString(&c.ProvisionerFilesTarget, ProvisionerFilesRamdisk)
+	presetBool(&c.Provision.WriteResolvConf, false)
+	presetBool(&c.RamdiskHostname, true)
 }
 
 // presetString sets an unset (blank) string option.

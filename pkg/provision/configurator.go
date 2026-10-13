@@ -773,9 +773,14 @@ func SetProvisionerFilesDirForTest(dir string) func() {
 }
 
 // HasProvisionerResolvConf reports whether the CAPRF provisioner files carry
-// an /etc/resolv.conf for the ramdisk.
+// an /etc/resolv.conf for the ramdisk. Like copyTree it does not follow
+// symlinks: a linked etc directory or resolv.conf is never applied.
 func HasProvisionerResolvConf() bool {
-	info, err := os.Stat(filepath.Join(provisionerFilesDir, "etc", "resolv.conf"))
+	etc, err := os.Lstat(filepath.Join(provisionerFilesDir, "etc"))
+	if err != nil || !etc.IsDir() {
+		return false
+	}
+	info, err := os.Lstat(filepath.Join(provisionerFilesDir, "etc", "resolv.conf"))
 	return err == nil && info.Mode().IsRegular()
 }
 

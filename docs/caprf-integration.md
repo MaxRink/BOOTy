@@ -22,7 +22,7 @@ and reads its input from the `/deploy` directory of the ramdisk:
 | Path | Content | Used by |
 |------|---------|---------|
 | `/deploy/vars` | Machine configuration, one variable per line | All modes. BOOTy cannot start without it. |
-| `/deploy/file-system/` | Provisioner files (CAPRF `provisionerConfig.files`) | Copied into the installed OS. With `CAPRF_LEGACY_COMPAT=true`, copied into the ramdisk instead. |
+| `/deploy/file-system/` | Provisioner files (CAPRF `provisionerConfig.files`) | Copied into the installed OS. With `PROVISIONER_FILES_TARGET=ramdisk` (preset by `CAPRF_LEGACY_COMPAT=true`), copied into the ramdisk instead. |
 | `/deploy/file-system/etc/netplan/*.yaml`, `/deploy/file-system/etc/frr/frr.conf` | Network input | Network setup in all modes. See [Netplan and FRR config input](networking.md#netplan-and-frr-config-input). |
 | `/deploy/machine-files/` | Machine files | `copy-machine-files` step: copied into the installed OS. |
 | `/deploy/machine-commands/` | One command per file | `run-machine-commands` step: run in a chroot of the installed OS. |
@@ -72,8 +72,9 @@ changed.
    callback.
 3. Apply the transport settings: TLS verification and proxy. See
    [Transport rules](#transport-rules).
-4. With `CAPRF_LEGACY_COMPAT=true` only: copy `/deploy/file-system` into the
-   ramdisk and, for provisioning, set the ramdisk hostname.
+4. With `PROVISIONER_FILES_TARGET=ramdisk`: copy `/deploy/file-system` into
+   the ramdisk. With `RAMDISK_HOSTNAME=true` and for provisioning: set the
+   ramdisk hostname. `CAPRF_LEGACY_COMPAT=true` presets both.
 5. If `DRY_RUN=true`, set the mode to `dry-run`.
 6. If `LOG_URL` is set, start the log shipping.
 7. Set up the network and wait for connectivity. Dry-run skips this step.

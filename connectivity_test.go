@@ -57,7 +57,7 @@ func TestEnsureNetworkConnectivityRedactsTargetInLogs(t *testing.T) {
 	}
 }
 
-func TestSetLegacyRamdiskHostname(t *testing.T) {
+func TestSetRamdiskHostname(t *testing.T) {
 	tests := []struct {
 		name string
 		cfg  config.MachineConfig
@@ -72,7 +72,7 @@ func TestSetLegacyRamdiskHostname(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := ""
-			setLegacyRamdiskHostname(&tt.cfg, func(name []byte) error {
+			setRamdiskHostname(&tt.cfg, func(name []byte) error {
 				got = string(name)
 				return nil
 			})
@@ -84,13 +84,13 @@ func TestSetLegacyRamdiskHostname(t *testing.T) {
 }
 
 // A failed sethostname is only logged; the run goes on.
-func TestSetLegacyRamdiskHostnameFailureIsLogged(t *testing.T) {
+func TestSetRamdiskHostnameFailureIsLogged(t *testing.T) {
 	var logs bytes.Buffer
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
 	t.Cleanup(func() { slog.SetDefault(previous) })
 
-	setLegacyRamdiskHostname(&config.MachineConfig{Hostname: "node-1"}, func([]byte) error { return errors.New("operation not permitted") })
+	setRamdiskHostname(&config.MachineConfig{Hostname: "node-1"}, func([]byte) error { return errors.New("operation not permitted") })
 	if !strings.Contains(logs.String(), "setting the ramdisk hostname failed") {
 		t.Fatalf("logs = %q, want the warning", logs.String())
 	}

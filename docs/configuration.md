@@ -79,13 +79,16 @@ values are false.
 |-----|---------|--------|-------------|
 | `MODE` | `provision` | `provision`, `deprovision`, `hard`, `soft-deprovision`, `soft`, `decommission`, `standby`, `dry-run`, `check` | Operating mode. `hard` is an alias of `deprovision`, `soft` is an alias of `soft-deprovision`. `deprovision` wipes the disks and removes the EFI boot entries. `soft-deprovision` renames `grub.cfg`. `decommission` wipes every disk and removes every EFI boot entry, and logs failures without stopping. `check` runs the health checks only. |
 | `DRY_RUN` | `false` | boolean | Sets `MODE=dry-run`. Dry-run skips the network setup and the token flow, runs read-only checks and reports the result. |
-| `HOSTNAME` | (unset) | host name | Machine name. BOOTy writes it into the target OS, sends it to `TOKEN_URL`, and in legacy compat sets it as the ramdisk host name for provisioning. |
+| `HOSTNAME` | (unset) | host name | Machine name. BOOTy writes it into the target OS, sends it to `TOKEN_URL`, and with `RAMDISK_HOSTNAME=true` sets it as the ramdisk host name for provisioning. |
 | `PROVISION_TARGET_OS` | (unset) | `linux` | Target OS class. Provisioning preflight fails when it is empty or not `linux`. Alias: `TARGET_OS`. |
 | `TARGET_OS` | (unset) | `linux` | Alias of `PROVISION_TARGET_OS`. |
 | `OS_FAMILY` | (unset) | `ubuntu`, `rhel`, `flatcar` | Target OS family. Required by `PERSIST_NETWORK=true`. `OVERLAYFS_ENABLED=true` requires `ubuntu`. `flatcar` rejects `CLOUDINIT_ENABLED=true`. `rhel` rejects `PERSIST_NETWORK=true`. |
 | `DISABLE_KEXEC` | `false` | boolean | Skip kexec after provisioning and reboot instead. Can not be combined with `AB_PRESERVE_EXISTING=true`. |
 | `CAPRF_LEGACY_COMPAT` | `false` | boolean | Preset that makes BOOTy behave like the CAPRF legacy shell provisioner. It sets the options in [CAPRF legacy compatibility](#caprf-legacy-compatibility) that the vars file does not set. |
 | `SUCCESS_ACTION` | `reboot` | `reboot`, `poweroff` | End of a successful provision, deprovision or decommission. `reboot`: provision kexecs into the installed OS (reboot when kexec is disabled or fails), the other modes reboot. `poweroff`: power off, never kexec. `poweroff` can not be combined with `AB_PRESERVE_EXISTING=true`. YAML `successAction`. Preset: `poweroff`. |
+| `PROVISIONER_FILES_TARGET` | `target` | `target`, `ramdisk` | Where the provisioner files (`/deploy/file-system`) go. `target`: into the installed OS. `ramdisk`: into the ramdisk root before the network starts, like `copy_files`; netplan files get mode `0600`, a provisioner `/etc/resolv.conf` stays in the ramdisk, and nothing reaches the installed OS. If the copy fails, BOOTy waits without a callback. YAML `provisionerFilesTarget`. Preset: `ramdisk`. |
+| `WRITE_RESOLV_CONF` | `true` | boolean | Write the installed OS `/etc/resolv.conf` from `dns_resolver`. `false` keeps the image file, like the legacy scripts. YAML `provision.writeResolvConf`. Preset: `false`. |
+| `RAMDISK_HOSTNAME` | `false` | boolean | For provisioning, set `HOSTNAME` as the ramdisk host name, like `hostname "$HOSTNAME"` in `provision.sh`. A failure is only logged. YAML `ramdiskHostname`. Preset: `true`. |
 | `FAILURE_ACTION` | `reboot` | `reboot`, `wait` | End of a failed run. `wait`: report the error to `ERROR_URL` and keep the ramdisk running. Applies to a failed deprovision, a failure before the mode runs (vars file, network, JWT exchange) and exhausted JWT renewal. For a failed provision it is the default of `RESCUE_MODE`; an explicit `RESCUE_MODE` wins. YAML `failureAction`. Preset: `wait`. |
 | `MACHINE_EXTRA_KERNEL_PARAMS` | (unset) | kernel parameters | Extra kernel parameters for the installed OS GRUB configuration. A `console=` token is folded into the serial console resolution. |
 | `EXTRA_KERNEL_PARAMS` | (unset) | kernel parameters | Extra kernel parameters that the legacy provisioner reads. BOOTy appends them after `MACHINE_EXTRA_KERNEL_PARAMS`, whatever the line order. |
@@ -138,6 +141,9 @@ defaults.
 | No TLS certificate check, like `curl --insecure` | `SKIP_TLS_VERIFY` | `transport.skipTLSVerify` | `false` | `true` |
 | Plain HTTP image URLs | `IMAGE_ALLOW_INSECURE_HTTP` | `provision.image.allowInsecureHTTP` | `false` | `true` |
 | Export the vars entries, like `source vars` | `EXPORT_VARS` | `transport.exportVars` | `false` | `true` |
+| Provisioner files into the ramdisk, like `copy_files` | `PROVISIONER_FILES_TARGET` | `provisionerFilesTarget` | `target` | `ramdisk` |
+| Write the installed OS `resolv.conf` | `WRITE_RESOLV_CONF` | `provision.writeResolvConf` | `true` | `false` |
+| Ramdisk host name for provisioning | `RAMDISK_HOSTNAME` | `ramdiskHostname` | `false` | `true` |
 
 These behaviours do not have their own option yet. Only the preset turns
 them on:
@@ -146,7 +152,6 @@ them on:
 - `setup-mellanox` raises `NUM_OF_VFS` to 32 (or `NUM_VFS`) on every
   ConnectX Ethernet function. It skips quietly without `mstconfig` or such a
   NIC.
-- For provisioning, the ramdisk takes the `HOSTNAME`.
 - The network wait follows the legacy `wait_for_network`:
   `NETWORK_WAIT_MAX_ATTEMPTS` rounds of 20 seconds on one network setup.
 
@@ -215,7 +220,7 @@ files from the provisioner override these keys. See
 | Key | Default | Values | Description |
 |-----|---------|--------|-------------|
 | `NETWORK_MODE` | (unset) | `gobgp`, `frr`, `static`, `dhcp` | Validation accepts all four values. Only `gobgp` changes the stack selection. |
-| `dns_resolver` | (unset) | IP addresses separated by commas | DNS servers for the ramdisk and the target OS. Legacy compat keeps a provisioner `/etc/resolv.conf` and ignores this key for the ramdisk. |
+| `dns_resolver` | (unset) | IP addresses separated by commas | DNS servers for the ramdisk and the target OS. With `PROVISIONER_FILES_TARGET=ramdisk`, a provisioner `/etc/resolv.conf` stays in the ramdisk and this key is ignored for the ramdisk. With `WRITE_RESOLV_CONF=false`, it is ignored for the target OS. |
 | `STATIC_IP` | (unset) | CIDR, for example `10.0.0.5/24` | Static address. Selects the static stack. |
 | `STATIC_GATEWAY` | (unset) | IP address | Default gateway for the static stack. |
 | `STATIC_IFACE` | first physical NIC, `bond0` with a bond, or the first VLAN interface | interface name | Interface for `STATIC_IP`. Required for network persistence and cloud-init network config without a bond. |

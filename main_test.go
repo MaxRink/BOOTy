@@ -1238,7 +1238,7 @@ func TestIsTerminalSuccess(t *testing.T) {
 
 // Legacy evidence: copy_files puts the provisioner resolv.conf in place and
 // the legacy scripts never rewrite it, also when netplan names DNS servers.
-func TestKeepProvisionerResolvConfInLegacyCompat(t *testing.T) {
+func TestKeepProvisionerResolvConfWithRamdiskFiles(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "etc"), 0o755); err != nil {
 		t.Fatal(err)
@@ -1254,9 +1254,9 @@ func TestKeepProvisionerResolvConfInLegacyCompat(t *testing.T) {
 	if netCfg.DNSResolvers != "10.9.9.9" {
 		t.Fatal("default mode must keep the configured resolvers")
 	}
-	keepProvisionerResolvConf(&config.MachineConfig{LegacyCompat: true}, netCfg)
+	keepProvisionerResolvConf(&config.MachineConfig{ProvisionerFilesTarget: config.ProvisionerFilesRamdisk}, netCfg)
 	if netCfg.DNSResolvers != "" {
-		t.Fatalf("legacy compat would rewrite the provisioner resolv.conf with %q", netCfg.DNSResolvers)
+		t.Fatalf("PROVISIONER_FILES_TARGET=ramdisk would rewrite the provisioner resolv.conf with %q", netCfg.DNSResolvers)
 	}
 }
 

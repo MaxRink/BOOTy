@@ -79,3 +79,46 @@ func TestDiskOptionsAndLegacyPreset(t *testing.T) {
 		t.Fatal("Validate() accepted provision.disk.selection=largest")
 	}
 }
+
+func TestFilesOptionsAndLegacyPreset(t *testing.T) {
+	tests := []struct {
+		name         string
+		cfg          Config
+		wantRamdisk  bool
+		wantResolv   bool
+		wantHostname bool
+	}{
+		{name: "defaults", wantResolv: true},
+		{
+			name:        "native",
+			cfg:         Config{ProvisionerFilesTarget: "Ramdisk", RamdiskHostname: new(true), Provision: ProvisionConfig{WriteResolvConf: new(false)}},
+			wantRamdisk: true, wantHostname: true,
+		},
+		{name: "preset", cfg: Config{LegacyCompat: true}, wantRamdisk: true, wantHostname: true},
+		{
+			name:       "explicit options win over preset",
+			cfg:        Config{LegacyCompat: true, ProvisionerFilesTarget: "target", RamdiskHostname: new(false), Provision: ProvisionConfig{WriteResolvConf: new(true)}},
+			wantResolv: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := tt.cfg
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("Validate() = %v", err)
+			}
+			if got := cfg.ProvisionerFilesInRamdisk(); got != tt.wantRamdisk {
+				t.Errorf("ProvisionerFilesInRamdisk() = %v, want %v", got, tt.wantRamdisk)
+			}
+			if got := BoolOr(cfg.Provision.WriteResolvConf, true); got != tt.wantResolv {
+				t.Errorf("WriteResolvConf = %v, want %v", got, tt.wantResolv)
+			}
+			if got := BoolOr(cfg.RamdiskHostname, false); got != tt.wantHostname {
+				t.Errorf("RamdiskHostname = %v, want %v", got, tt.wantHostname)
+			}
+		})
+	}
+	if err := (&Config{ProvisionerFilesTarget: "both"}).Validate(); err == nil {
+		t.Fatal("Validate() accepted provisionerFilesTarget=both")
+	}
+}

@@ -313,6 +313,9 @@ root is mounted.
 | `DISABLE_KEXEC` | `false` | Skip kexec, always hard-reboot. Must stay `false` for A/B preserve-existing upgrades |
 | `CAPRF_LEGACY_COMPAT` | `false` | Preset that behaves like the CAPRF legacy shell provisioner. See [CAPRF legacy compatibility](#caprf-legacy-compatibility) |
 | `SUCCESS_ACTION` | `reboot` | `poweroff` powers off after a successful run instead of kexec or reboot. Preset by `CAPRF_LEGACY_COMPAT` |
+| `PROVISIONER_FILES_TARGET` | `target` | `ramdisk` copies `/deploy/file-system` into the ramdisk before the network starts, like `copy_files`, instead of into the installed OS. Preset by `CAPRF_LEGACY_COMPAT` |
+| `WRITE_RESOLV_CONF` | `true` | `false` keeps the installed OS `resolv.conf`. Preset by `CAPRF_LEGACY_COMPAT` |
+| `RAMDISK_HOSTNAME` | `false` | Set `HOSTNAME` as the ramdisk host name for provisioning. Preset by `CAPRF_LEGACY_COMPAT` |
 | `FAILURE_ACTION` | `reboot` | `wait` reports a failed run and keeps the ramdisk running. Default of `RESCUE_MODE`. Preset by `CAPRF_LEGACY_COMPAT` |
 | `MIN_DISK_SIZE_GB` | `0` | Minimum disk size filter (0 = no minimum) |
 | `DISK_SELECTION` | `prefer-nvme` | `lsblk` selects the first large enough disk in legacy `lsblk` order. Preset by `CAPRF_LEGACY_COMPAT` |
@@ -484,9 +487,10 @@ With the variable set, BOOTy keeps the legacy behaviour where the two differ:
   `additionalVars` apply to the CAPRF callbacks, the connectivity check and
   the image downloads.
 - Files in `/deploy/file-system` (CAPRF `provisionerConfig.files`) are copied
-  into the ramdisk root before the network starts, like `copy_files`. Netplan
-  files get mode `0600`. They are not copied into the installed OS, and BOOTy
-  does not write the installed OS `/etc/resolv.conf`. A provisioner
+  into the ramdisk root before the network starts, like `copy_files`
+  (`PROVISIONER_FILES_TARGET=ramdisk`). Netplan files get mode `0600`. They
+  are not copied into the installed OS, and BOOTy does not write the
+  installed OS `/etc/resolv.conf` (`WRITE_RESOLV_CONF=false`). A provisioner
   `/etc/resolv.conf` stays in place in the ramdisk; BOOTy does not replace it
   with resolvers from the vars or netplan.
 - `wipe-disks` wipes every disk, not only the target disk, for provisioning
@@ -497,7 +501,7 @@ With the variable set, BOOTy keeps the legacy behaviour where the two differ:
   configs or a deprovision disk override (`DISK_DEVICE`); those keep the
   BOOTy wipe rules.
 - For provisioning, the ramdisk takes the machine `HOSTNAME`, like
-  `hostname "$HOSTNAME"` in `provision.sh`.
+  `hostname "$HOSTNAME"` in `provision.sh` (`RAMDISK_HOSTNAME=true`).
 - BOOTy logs the firmware version of every NIC (`nic_firmware`), like
   `provision.sh`, also without `FIRMWARE_REPORT`.
 - `grow-partition` grows the last GPT Linux filesystem partition, like
@@ -727,7 +731,7 @@ Migration notes:
   not perform Cosign or Notation verification for these cached runtime images.
 - BOOTy uses the default Docker keychain of the ramdisk, for example
   `$DOCKER_CONFIG/config.json` or `$HOME/.docker/config.json`. Provisioner
-  files reach the ramdisk only with `CAPRF_LEGACY_COMPAT=true`. Do not place
+  files reach the ramdisk only with `PROVISIONER_FILES_TARGET=ramdisk`. Do not place
   registry passwords in image references or logs.
 - `OCI_PREPULL_ALLOW_INSECURE=true` is for controlled lab registries only; use
   TLS registries in production.

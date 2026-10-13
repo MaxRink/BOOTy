@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/config"
@@ -63,6 +64,37 @@ func TestApplyProvisionerFilesToRamdisk(t *testing.T) {
 	}
 }
 
+// copyTree skips symlinks, so a linked resolv.conf or etc directory is
+// never applied and must not count as a provisioner resolv.conf.
+func TestHasProvisionerResolvConfIgnoresSymlinks(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "resolv.conf")
+	if err := os.WriteFile(target, []byte("nameserver 192.0.2.1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := withProvisionerFiles(t, map[string]os.FileMode{"etc/resolv.conf": 0o644})
+	if !HasProvisionerResolvConf() {
+		t.Fatal("HasProvisionerResolvConf() = false for a regular file")
+	}
+	if err := os.Remove(filepath.Join(src, "etc", "resolv.conf")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(src, "etc", "resolv.conf")); err != nil {
+		t.Fatal(err)
+	}
+	if HasProvisionerResolvConf() {
+		t.Error("HasProvisionerResolvConf() = true for a symlinked resolv.conf")
+	}
+	if err := os.RemoveAll(filepath.Join(src, "etc")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Dir(target), filepath.Join(src, "etc")); err != nil {
+		t.Fatal(err)
+	}
+	if HasProvisionerResolvConf() {
+		t.Error("HasProvisionerResolvConf() = true for a symlinked etc directory")
+	}
+}
+
 func TestApplyProvisionerFilesToRamdiskWithoutFiles(t *testing.T) {
 	old := provisionerFilesDir
 	provisionerFilesDir = filepath.Join(t.TempDir(), "missing")
@@ -74,16 +106,19 @@ func TestApplyProvisionerFilesToRamdiskWithoutFiles(t *testing.T) {
 
 func TestCopyProvisionerFilesToTarget(t *testing.T) {
 	withProvisionerFiles(t, map[string]os.FileMode{"etc/netplan/50-provision.yaml": 0o600})
+	explicitTarget := &config.MachineConfig{LegacyCompat: true, ProvisionerFilesTarget: config.ProvisionerFilesTarget}
 	for _, tt := range []struct {
-		name         string
-		legacyCompat bool
-		wantCopied   bool
+		name       string
+		cfg        *config.MachineConfig
+		wantCopied bool
 	}{
-		{name: "default copies into the target", wantCopied: true},
-		{name: "legacy compat keeps the target clean", legacyCompat: true},
+		{name: "default copies into the target", cfg: &config.MachineConfig{}, wantCopied: true},
+		{name: "ramdisk keeps the target clean", cfg: &config.MachineConfig{ProvisionerFilesTarget: config.ProvisionerFilesRamdisk}},
+		{name: "preset keeps the target clean", cfg: withPresets(&config.MachineConfig{LegacyCompat: true})},
+		{name: "explicit target wins over preset", cfg: withPresets(explicitTarget), wantCopied: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			o := newTestOrchestrator(t, &config.MachineConfig{LegacyCompat: tt.legacyCompat}, &mockProvider{})
+			o := newTestOrchestrator(t, tt.cfg, &mockProvider{})
 			if err := o.copyProvisionerFiles(context.Background()); err != nil {
 				t.Fatalf("copyProvisionerFiles() = %v", err)
 			}
@@ -96,8 +131,10 @@ func TestCopyProvisionerFilesToTarget(t *testing.T) {
 }
 
 // Legacy evidence: the legacy scripts never write the target resolv.conf.
-func TestConfigureDNSLegacyCompatKeepsTargetResolvConf(t *testing.T) {
-	cfg := &config.MachineConfig{LegacyCompat: true}
+// WRITE_RESOLV_CONF=false (preset by CAPRF_LEGACY_COMPAT) keeps it.
+func TestConfigureDNSWriteResolvConfFalseKeepsTargetResolvConf(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.WriteResolvConf = new(false)
 	cfg.Network.DNSResolvers = "10.0.0.53"
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
 	etc := filepath.Join(o.config.rootDir, "etc")
@@ -149,5 +186,34 @@ func TestHasProvisionerResolvConf(t *testing.T) {
 	withProvisionerFiles(t, map[string]os.FileMode{"etc/resolv.conf": 0o644})
 	if !HasProvisionerResolvConf() {
 		t.Fatal("HasProvisionerResolvConf() = false with the file")
+	}
+}
+
+func TestConfigureDNSWriteResolvConfPrecedence(t *testing.T) {
+	explicitWrite := &config.MachineConfig{LegacyCompat: true}
+	explicitWrite.Provision.WriteResolvConf = new(true)
+	for _, tt := range []struct {
+		name      string
+		cfg       *config.MachineConfig
+		wantWrite bool
+	}{
+		{name: "default writes", cfg: &config.MachineConfig{}, wantWrite: true},
+		{name: "preset keeps", cfg: withPresets(&config.MachineConfig{LegacyCompat: true})},
+		{name: "explicit true wins over preset", cfg: withPresets(explicitWrite), wantWrite: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.cfg.Network.DNSResolvers = "10.0.0.53"
+			o := newTestOrchestrator(t, tt.cfg, &mockProvider{})
+			if err := os.MkdirAll(filepath.Join(o.config.rootDir, "etc"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := o.configureDNS(context.Background()); err != nil {
+				t.Fatalf("configureDNS() = %v", err)
+			}
+			data, err := os.ReadFile(filepath.Join(o.config.rootDir, "etc", "resolv.conf"))
+			if written := err == nil && strings.Contains(string(data), "10.0.0.53"); written != tt.wantWrite {
+				t.Fatalf("resolv.conf written = %v, want %v (content %q, err %v)", written, tt.wantWrite, data, err)
+			}
+		})
 	}
 }

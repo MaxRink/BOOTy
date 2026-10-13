@@ -69,6 +69,23 @@ type Config struct {
 	// Default: "" (reboot)
 	FailureAction string `yaml:"failureAction" json:"failureAction"`
 
+	// ProvisionerFilesTarget is where BOOTy copies the CAPRF provisioner
+	// files (/deploy/file-system).
+	// "target": into the installed OS (copy-provisioner-files step).
+	// "ramdisk": into the ramdisk root before the network starts, like
+	// copy_files of the CAPRF legacy scripts. A provisioner /etc/resolv.conf
+	// then stays in the ramdisk, and the files do not reach the installed OS.
+	// Valid values: "target", "ramdisk". Preset by legacyCompat: "ramdisk".
+	// Default: "" (target)
+	ProvisionerFilesTarget string `yaml:"provisionerFilesTarget" json:"provisionerFilesTarget"`
+
+	// RamdiskHostname sets Hostname as the ramdisk host name for
+	// provisioning, like `hostname "$HOSTNAME"` in the CAPRF legacy
+	// provision.sh. A failure is only logged.
+	// Preset by legacyCompat: true.
+	// Default: nil (false)
+	RamdiskHostname *bool `yaml:"ramdiskHostname,omitempty" json:"ramdiskHostname,omitempty"`
+
 	// Cross-cutting configuration sections.
 	Network   NetworkConfig   `yaml:"network"   json:"network"`
 	Transport TransportConfig `yaml:"transport" json:"transport"`
@@ -96,6 +113,12 @@ func (c *Config) KexecDisabled() bool {
 // PowerOffOnSuccess reports whether BOOTy powers off after a successful run.
 func (c *Config) PowerOffOnSuccess() bool {
 	return c.SuccessAction == SuccessActionPowerOff
+}
+
+// ProvisionerFilesInRamdisk reports whether the provisioner files go into
+// the ramdisk instead of the installed OS.
+func (c *Config) ProvisionerFilesInRamdisk() bool {
+	return c.ProvisionerFilesTarget == ProvisionerFilesRamdisk
 }
 
 // WaitOnFailure reports whether BOOTy reports a failed run and keeps the

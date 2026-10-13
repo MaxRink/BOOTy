@@ -7,9 +7,10 @@ import "github.com/telekom/BOOTy/pkg/config"
 // does not set (config.Config.ApplyPresets).
 func applyParityVar(cfg *config.MachineConfig, key, value string) bool {
 	strFields := map[string]*string{
-		"SUCCESS_ACTION": &cfg.SuccessAction,
-		"FAILURE_ACTION": &cfg.FailureAction,
-		"DISK_SELECTION": &cfg.Provision.Disk.Selection,
+		"SUCCESS_ACTION":           &cfg.SuccessAction,
+		"FAILURE_ACTION":           &cfg.FailureAction,
+		"DISK_SELECTION":           &cfg.Provision.Disk.Selection,
+		"PROVISIONER_FILES_TARGET": &cfg.ProvisionerFilesTarget,
 	}
 	if ptr, ok := strFields[key]; ok {
 		*ptr = value
@@ -23,6 +24,8 @@ func applyParityVar(cfg *config.MachineConfig, key, value string) bool {
 		"SKIP_TLS_VERIFY":           &cfg.Transport.SkipTLSVerify,
 		"EXPORT_VARS":               &cfg.Transport.ExportVars,
 		"IMAGE_ALLOW_INSECURE_HTTP": &cfg.Provision.Image.AllowInsecureHTTP,
+		"WRITE_RESOLV_CONF":         &cfg.Provision.WriteResolvConf,
+		"RAMDISK_HOSTNAME":          &cfg.RamdiskHostname,
 	}
 	if ptr, ok := boolFields[key]; ok {
 		b := parseBoolVar(value)

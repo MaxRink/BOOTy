@@ -504,7 +504,7 @@ func runCAPRF(ctx context.Context) {
 	network.SetSkipTLSVerify(config.BoolOr(cfg.Transport.SkipTLSVerify, false))
 	image.RefreshHTTPClients()
 
-	if cfg.LegacyCompat {
+	if cfg.ProvisionerFilesInRamdisk() {
 		// Like copy_files in the legacy common.sh: before any request, so
 		// files such as /etc/hosts also apply to the remote log shipping.
 		if err := provision.ApplyProvisionerFilesToRamdisk(ctx); err != nil {
@@ -517,7 +517,9 @@ func runCAPRF(ctx context.Context) {
 			reboot()
 			return
 		}
-		setLegacyRamdiskHostname(cfg, syscall.Sethostname)
+	}
+	if config.BoolOr(cfg.RamdiskHostname, false) {
+		setRamdiskHostname(cfg, syscall.Sethostname)
 	}
 
 	// DRY_RUN=true overrides mode before logging.
@@ -765,10 +767,10 @@ func failRun(ctx context.Context, cfg *config.MachineConfig, reporter provisionS
 	rebootFn()
 }
 
-// setLegacyRamdiskHostname names the ramdisk after the machine, like
-// `hostname "$HOSTNAME"` at the start of the CAPRF legacy provision.sh, so
-// FRR, syslog and DHCP use the machine name. A failure is only logged.
-func setLegacyRamdiskHostname(cfg *config.MachineConfig, sethostname func([]byte) error) {
+// setRamdiskHostname names the ramdisk after the machine (RAMDISK_HOSTNAME),
+// like `hostname "$HOSTNAME"` at the start of the CAPRF legacy provision.sh,
+// so FRR, syslog and DHCP use the machine name. A failure is only logged.
+func setRamdiskHostname(cfg *config.MachineConfig, sethostname func([]byte) error) {
 	if cfg.DryRun || (cfg.Mode != "provision" && cfg.Mode != "") || cfg.Hostname == "" {
 		return
 	}
@@ -986,11 +988,11 @@ func networkConfigFromMachineConfig(cfg *config.MachineConfig) *network.Config {
 }
 
 // keepProvisionerResolvConf leaves the provisioner /etc/resolv.conf in the
-// ramdisk alone in legacy compat: copy_files puts it in place and the
-// legacy scripts never rewrite it.
+// ramdisk alone with PROVISIONER_FILES_TARGET=ramdisk: copy_files puts it in
+// place and the legacy scripts never rewrite it.
 func keepProvisionerResolvConf(cfg *config.MachineConfig, netCfg *network.Config) {
-	if cfg.LegacyCompat && provision.HasProvisionerResolvConf() {
-		slog.Info("legacy compat: keeping the provisioner resolv.conf in the ramdisk")
+	if cfg.ProvisionerFilesInRamdisk() && provision.HasProvisionerResolvConf() {
+		slog.Info("keeping the provisioner resolv.conf in the ramdisk")
 		netCfg.DNSResolvers = ""
 	}
 }

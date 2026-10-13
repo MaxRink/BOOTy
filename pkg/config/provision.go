@@ -45,6 +45,13 @@ type ProvisionConfig struct {
 	// Default: ""
 	ProviderID string `yaml:"providerID" json:"providerID"`
 
+	// WriteResolvConf writes the installed OS /etc/resolv.conf from
+	// dns_resolver. false keeps the resolv.conf of the image, like the CAPRF
+	// legacy scripts.
+	// Preset by legacyCompat: false.
+	// Default: nil (true)
+	WriteResolvConf *bool `yaml:"writeResolvConf,omitempty" json:"writeResolvConf,omitempty"`
+
 	// DisableKexec skips kexec into the installed kernel and forces a hard reboot.
 	// Automatically set to true in dry-run mode.
 	// Default: false
