@@ -420,40 +420,15 @@ root is mounted.
 
 #### Network Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `NETWORK_MODE` | — | Network mode override: `gobgp` for pure-Go BGP stack |
-| `STATIC_IP` | — | Static IP in CIDR notation (e.g. `10.0.0.5/24`) |
-| `STATIC_GATEWAY` | — | Default gateway for static networking |
-| `STATIC_IFACE` | — | Target interface for static IP and non-bond cloud-init network config |
-| `PERSIST_NETWORK` | `false` | Write configured target OS network files during provisioning |
-| `OS_FAMILY` | — | Required when `PERSIST_NETWORK=true`; one of `ubuntu`, `rhel`, `flatcar`. `rhel` network persistence is parsed, but provisioning and dry-run preflight reject it until RHEL-like bootloader support is implemented. |
-| `PROVISION_TARGET_OS` / `TARGET_OS` | — | Required provisioning target OS preflight hint. Only `linux` is accepted; `windows`, `esxi`, and unknown values are rejected before destructive storage steps. |
-| `BOND_INTERFACES` | — | Comma-separated interfaces for a Linux bond (e.g. `eth0,eth1`) |
-| `BOND_MODE` | `802.3ad` | Bond mode: `802.3ad`/`lacp`, `balance-rr`, `active-backup`, `balance-xor` |
-| `VLANS` | — | Multi-VLAN config (e.g. `200:eno1:10.200.0.42/24,300:eno2`) |
-| `BGP_PEER_MODE` | `unnumbered` | GoBGP peering mode: `unnumbered`, `dual`, `numbered` |
-| `BGP_INTERFACES` | — | Optional comma-separated interface allowlist for unnumbered/dual GoBGP peers; empty means all detected physical NICs |
-| `BGP_NEIGHBORS` | — | Comma-separated peer IPs (required for `dual` and `numbered` modes) |
-| `BGP_REMOTE_ASN` | — | Remote ASN for numbered peers (0 or omitted = iBGP) |
-| `BGP_UNDERLAY_AF` | `ipv4` | Underlay address family. Only `ipv4` is implemented; `ipv6` and `dual-stack` are rejected during config validation. |
-| `BGP_OVERLAY_TYPE` | `evpn-vxlan` | Overlay encapsulation: `evpn-vxlan` or `none`. `l3vpn` passes validation, but GoBGP setup rejects it as not implemented |
-| `BGP_AUTH_PASSWORD` | — | Optional TCP-MD5 password for all BGP peers (empty = no authentication) |
-| `VRF_TABLE_ID` | `1000` | VRF routing table ID. `0` and `1` become `1000` |
-| `VRF_NAME` | (unset) | VRF name. Empty means no VRF (default routing table). FRR and GoBGP read it |
-| `BGP_KEEPALIVE` | `0` | Optional BGP keepalive timer in seconds (0 = stack default) |
-| `BGP_HOLD` | `0` | Optional BGP hold timer in seconds (0 = stack default) |
-| `BGP_MIN_PEERS` | `1` | Minimum number of BGP peers that must reach ESTABLISHED state before underlay is considered ready |
-| `BFD_TRANSMIT_MS` | `0` | FRR-only BFD transmit interval in milliseconds; must be set together with `BFD_RECEIVE_MS` and is rejected for `NETWORK_MODE=gobgp` |
-| `BFD_RECEIVE_MS` | `0` | FRR-only BFD receive interval in milliseconds; must be set together with `BFD_TRANSMIT_MS` and is rejected for `NETWORK_MODE=gobgp` |
-| `underlay_subnet` | — | Underlay CIDR for FRR mode (e.g. `192.168.4.0/24`) |
-| `underlay_ip` | — | Underlay loopback / router-ID for GoBGP mode |
-| `asn_server` | — | Local BGP autonomous system number |
-| `provision_vni` | — | VXLAN VNI for the provisioning network. GoBGP rejects `asn_server > 65535` together with `provision_vni > 65535` because 4-octet ASN RD/RT local-admin values are 16-bit. |
-| `provision_ip` | — | IP/mask on the provisioning bridge (e.g. `10.100.0.20/24`) |
-| `provision_gateway` | — | Gateway VTEP IP for VXLAN BUM flooding and kernel route; optional with `EVPN_TYPE5_ONLY=true` |
-| `overlay_subnet` | — | Overlay CIDR (e.g. `2a01:598:40a:5481::/64`) |
-| `dns_resolver` | — | Comma-separated DNS server IPs |
+BOOTy selects the ramdisk network stack from the vars: GoBGP with
+`NETWORK_MODE=gobgp`, FRR with `asn_server` and `underlay_subnet` or
+`underlay_ip`, static with `STATIC_IP`, otherwise DHCP. Bond and VLAN keys
+(`BOND_INTERFACES`, `VLANS`) add link layers below the stack. Netplan files
+from the provisioner override these keys.
+
+[docs/configuration.md](docs/configuration.md#common-network) lists the
+network keys in the Common network, GoBGP and EVPN, and FRR sections. [docs/networking.md](docs/networking.md)
+describes the stack selection, the peer modes and the EVPN route modes.
 
 The checked-in `topology-lacp.clab.yml` file is retained for compatibility with
 older `clab-lacp-*` target names. It uses a Linux bridge and validates
@@ -567,18 +542,10 @@ can not be read or decoded, provisioning fails with `load checkpoint`. Remove
 
 ### Rescue Mode
 
-`RESCUE_MODE` sets what BOOTy does after a failed provisioning:
-
-| Mode | Behavior |
-|------|----------|
-| `reboot` | Default. Reboot and let the external orchestration retry. |
-| `retry` | Run provisioning again after 30 s, at most 3 times, then reboot. |
-| `shell` | Start a shell on the console. |
-| `wait` | Keep the ramdisk running for manual work. Default with `CAPRF_LEGACY_COMPAT=true`. |
-
-In `shell` and `wait` modes, BOOTy installs `RESCUE_SSH_PUBKEY` and
-`RESCUE_PASSWORD_HASH` for root, starts `dropbear`, and mounts the found disks
-when `RESCUE_AUTO_MOUNT=true`.
+`RESCUE_MODE` sets what BOOTy does after a failed provisioning: `reboot`
+(default), `retry`, `shell` or `wait` (default with
+`CAPRF_LEGACY_COMPAT=true`). In `shell` and `wait` modes, BOOTy can give SSH
+access with `RESCUE_SSH_PUBKEY` and mount the found disks.
 
 ```bash
 export RESCUE_MODE=wait
@@ -586,10 +553,8 @@ export RESCUE_SSH_PUBKEY="ssh-ed25519 AAAAC3NzaC1... admin@ops"
 export RESCUE_AUTO_MOUNT=true
 ```
 
-In standby mode, `RESCUE_MODE` also applies to failed `provision` commands.
-BOOTy acknowledges a failed command to the controller with the error message.
-`RESCUE_TIMEOUT` is parsed, but no code uses it. See
-[Rescue](docs/configuration.md#rescue).
+[Rescue modes](docs/caprf-integration.md#rescue-modes) describes each mode.
+[Rescue](docs/configuration.md#rescue) lists the keys.
 
 ### Dry-Run Mode
 
@@ -1262,44 +1227,30 @@ flavor.
 ## Development
 
 ```bash
-# Build binary
-make build
+make build       # Build the binary
+make test        # Unit tests with the race detector and the coverage gate
+make lint        # golangci-lint for the Linux build
+make fmt-check   # Check the formatting. "make fmt" rewrites the files.
 
-# Run unit tests with coverage (40% coverage gate)
-make test
+# E2E tests without KVM (Linux). Some tests build the initramfs with Docker.
+make test-e2e
 
-# Run linter (golangci-lint v2)
-make lint
+# ContainerLab E2E (Linux, root): start a topology, then run its tests.
+make clab-test-image
+make clab-up && make test-e2e-integration
+make clab-type5-up && make test-e2e-type5
 
-# Format code
-make fmt
-
-# Verify formatting without rewriting
-make fmt-check
-
-# E2E tests — ContainerLab (Linux only)
-make clab-test-image                         # Generate the shared test disk image
-make clab-up && make test-e2e-integration       # FRR/EVPN topology
-make clab-gobgp-up && make test-e2e-gobgp        # GoBGP topology
-make clab-boot-up && make test-e2e-boot          # Boot orchestrator
-make clab-dhcp-up && make test-e2e-dhcp          # DHCP mode topology
-make clab-bond-up && make test-e2e-bond          # Bond mode topology
-make clab-lacp-up && make test-e2e-lacp          # Backward-compatible alias for bond mode
-make clab-static-up && make test-e2e-static      # Static IP topology
-make clab-multi-nic-up && make test-e2e-multi-nic # Multi-NIC discovery and config
-
-# E2E tests — KVM/QEMU vrnetlab (Linux + KVM)
-make clab-vrnetlab-up && make test-e2e-vrnetlab   # Full EVPN boot flow
-make clab-gobgp-vrnetlab-up && make test-e2e-gobgp-vrnetlab  # GoBGP with FRR fabric + QEMU VMs
-
-# Linux-only E2E (disk/mount/loop device, requires root)
+# Disk, mount and loop device E2E (Linux, root)
 sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m ./test/e2e/linux/...
-sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestType5Netlink' ./pkg/network/gobgp/
-sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestDHCPNetlink' ./pkg/network/
+
+# KVM E2E (Linux, root, QEMU). BOOTY_KERNEL and BOOTY_INITRAMFS select the
+# kernel and the initramfs. .github/workflows/kvm-matrix.yml shows the CI setup.
+make test-kvm
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for coding standards, test requirements,
-and the PR process.
+[CONTRIBUTING.md](CONTRIBUTING.md#testing) lists all ContainerLab and
+vrnetlab topologies and the test levels.
+[docs/e2e-test-matrix.md](docs/e2e-test-matrix.md) describes the E2E suites.
 
 ## Project Structure
 

@@ -344,9 +344,12 @@ These keys write the Ubuntu overlayroot configuration into the target root.
 
 ## Rescue
 
+[Rescue modes](caprf-integration.md#rescue-modes) describes what each mode
+does.
+
 | Key | Default | Values | Description |
 |-----|---------|--------|-------------|
-| `RESCUE_MODE` | `reboot`, `wait` in legacy compat | `reboot`, `retry`, `shell`, `wait` | Action after a failed provisioning. `retry` waits 30 s between up to 3 retries, then reboots. `shell` drops to a shell on the console. `wait` keeps the ramdisk running. Standby mode applies it to failed `provision` commands. |
+| `RESCUE_MODE` | `reboot`, `wait` in legacy compat | `reboot`, `retry`, `shell`, `wait` | Action after a failed provisioning, also for a failed standby `provision` command. |
 | `RESCUE_SSH_PUBKEY` | (unset) | SSH public key | Authorized key for root in `shell` and `wait` modes. BOOTy starts `dropbear`. |
 | `RESCUE_PASSWORD_HASH` | (unset) | crypt(3) hash | Root password hash in `shell` and `wait` modes. |
 | `RESCUE_AUTO_MOUNT` | `false` | boolean | Mount the found disks in `shell` and `wait` modes. |
