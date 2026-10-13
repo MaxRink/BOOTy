@@ -122,10 +122,17 @@ func TestWaitForConnectivityContextCancel(t *testing.T) {
 	cmd := newMockFRRCommander()
 	mgr := NewManager(cmd)
 
+	// A loopback server that never answers: hermetic, also with an HTTP
+	// proxy in the environment (Go never proxies loopback addresses).
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
-	err := mgr.WaitForConnectivity(ctx, "http://192.0.2.1:9999/unreachable", 30*time.Second)
+	err := mgr.WaitForConnectivity(ctx, srv.URL+"/unreachable", 30*time.Second)
 	if err == nil {
 		t.Fatal("expected context cancel error")
 	}
@@ -716,5 +723,90 @@ func TestWaitForHTTPWithFRRSkipTLSVerify(t *testing.T) {
 
 	if err := waitForHTTPWithFRR(context.Background(), srv.URL, 5*time.Second, nil); err != nil {
 		t.Fatalf("waitForHTTPWithFRR() = %v, want success with verification off", err)
+	}
+}
+
+// Legacy evidence: wait_for_network in common.sh restarts FRR after every
+// failed 20 second round, and restart_frr keeps an Established session.
+func TestWaitForHTTPWithFRRLegacyRecovery(t *testing.T) {
+	tests := []struct {
+		name         string
+		summary      string
+		wantRestarts bool
+	}{
+		{name: "restart without session", summary: `{"default":{"ipv4Unicast":{"peers":{"eth0":{"state":"Active"}}}}}`, wantRestarts: true},
+		{name: "keep established session", summary: `{"default":{},"Vrf_underlay":{"ipv4Unicast":{"peers":{"eth0":{"state":"Established"}}}}}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origInterval := legacyFRRRestartInterval
+			legacyFRRRestartInterval = time.Millisecond
+			t.Cleanup(func() { legacyFRRRestartInterval = origInterval })
+			restarts := 0
+			origRun := runFRRDaemonCommand
+			runFRRDaemonCommand = func(context.Context, string, ...string) error {
+				restarts++
+				return nil
+			}
+			t.Cleanup(func() { runFRRDaemonCommand = origRun })
+
+			cmd := newMockFRRCommander()
+			cmd.setResult("vtysh -c", []byte(tt.summary), nil)
+			mgr := NewManager(cmd)
+			mgr.cfg.LegacyFRRRecovery = true
+			mgr.frrStartMethod = frrStartSystemctl
+
+			srv := httptest.NewServer(http.NotFoundHandler())
+			target := srv.URL
+			srv.Close()
+			if err := waitForHTTPWithFRR(context.Background(), target, 2500*time.Millisecond, mgr); err == nil {
+				t.Fatal("waitForHTTPWithFRR() = nil for a closed server")
+			}
+			if got := restarts > 0; got != tt.wantRestarts {
+				t.Fatalf("restarts = %d, want restarts %v", restarts, tt.wantRestarts)
+			}
+		})
+	}
+}
+
+// A caller deadline, as in legacy compat, must still dump the FRR state.
+func TestWaitForHTTPWithFRRDumpsStateOnCallerDeadline(t *testing.T) {
+	dumped := make(chan struct{}, 1)
+	orig := dumpFRRStateInBackground
+	dumpFRRStateInBackground = func(*Manager) { dumped <- struct{}{} }
+	t.Cleanup(func() { dumpFRRStateInBackground = orig })
+
+	mgr := NewManager(newMockFRRCommander())
+	srv := httptest.NewServer(http.NotFoundHandler())
+	target := srv.URL
+	srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if err := waitForHTTPWithFRR(ctx, target, time.Minute, mgr); err == nil {
+		t.Fatal("waitForHTTPWithFRR() = nil for a closed server")
+	}
+	select {
+	case <-dumped:
+	default:
+		t.Fatal("no FRR state dump at the caller deadline")
+	}
+}
+
+// NETWORK_WAIT_MAX_ATTEMPTS=0 in legacy compat gives a zero timeout: the
+// wait fails at once and does not dump the FRR state (about a minute).
+func TestWaitForConnectivityZeroTimeoutFailsAtOnce(t *testing.T) {
+	cmd := newMockFRRCommander()
+	mgr := NewManager(cmd)
+	mgr.cfg.LegacyFRRRecovery = true
+	start := time.Now()
+	err := mgr.WaitForConnectivity(context.Background(), "http://127.0.0.1:1/", 0)
+	if err == nil || !strings.Contains(err.Error(), "no attempt") {
+		t.Fatalf("err = %v, want the no-attempt timeout", err)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("took %s, want an immediate failure", d)
+	}
+	if len(cmd.calls) != 0 {
+		t.Fatalf("FRR commands ran: %v", cmd.calls)
 	}
 }

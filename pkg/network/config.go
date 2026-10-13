@@ -32,6 +32,11 @@ type Config struct {
 	// DHCP mode fields.
 	Interfaces []string // NICs to configure (default: auto-detect)
 
+	// LegacyFRRRecovery restarts FRR after every failed 20 second
+	// connectivity round unless a BGP session is established, like
+	// wait_for_network and restart_frr of the CAPRF legacy common.sh.
+	LegacyFRRRecovery bool
+
 	// FRR/EVPN mode fields (from kernel cmdline or /deploy/vars).
 	UnderlaySubnet   string // e.g. "192.168.4.0/24"
 	UnderlayIP       string // Direct underlay IP (if no subnet)

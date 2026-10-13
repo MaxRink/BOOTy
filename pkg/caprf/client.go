@@ -1510,6 +1510,15 @@ func applyIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 		}
 		return true, nil
 	}
+	if key == "NETWORK_WAIT_MAX_ATTEMPTS" {
+		// Keep an explicit 0 apart from an unset value.
+		var n int
+		if err := setIntField(&n, value); err != nil {
+			return true, fmt.Errorf("invalid %s: %w", key, err)
+		}
+		cfg.Network.WaitMaxAttempts = &n
+		return true, nil
+	}
 	return false, nil
 }
 

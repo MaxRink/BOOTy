@@ -95,3 +95,43 @@ func TestSetLegacyRamdiskHostnameFailureIsLogged(t *testing.T) {
 		t.Fatalf("logs = %q, want the warning", logs.String())
 	}
 }
+
+func TestNetworkWait(t *testing.T) {
+	tests := []struct {
+		name         string
+		cfg          config.MachineConfig
+		wantAttempts int
+		wantTimeout  time.Duration
+	}{
+		{name: "default", wantAttempts: 3, wantTimeout: 5 * time.Minute},
+		{name: "attempts ignored outside compat", cfg: config.MachineConfig{Network: config.NetworkConfig{WaitMaxAttempts: new(2)}}, wantAttempts: 3, wantTimeout: 5 * time.Minute},
+		{name: "legacy default", cfg: config.MachineConfig{LegacyCompat: true}, wantAttempts: 1, wantTimeout: 300 * time.Second},
+		{name: "legacy attempts", cfg: config.MachineConfig{LegacyCompat: true, Network: config.NetworkConfig{WaitMaxAttempts: new(3)}}, wantAttempts: 1, wantTimeout: 60 * time.Second},
+		{name: "legacy explicit zero", cfg: config.MachineConfig{LegacyCompat: true, Network: config.NetworkConfig{WaitMaxAttempts: new(0)}}, wantAttempts: 1, wantTimeout: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			attempts, timeout := networkWait(&tt.cfg)
+			if attempts != tt.wantAttempts || timeout != tt.wantTimeout {
+				t.Fatalf("networkWait() = %d, %s, want %d, %s", attempts, timeout, tt.wantAttempts, tt.wantTimeout)
+			}
+		})
+	}
+}
+
+type blockingConnectivityMode struct{ *connectivityTestMode }
+
+func (blockingConnectivityMode) WaitForConnectivity(ctx context.Context, _ string, _ time.Duration) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// Legacy compat bounds the whole wait, also for modes such as GoBGP that wait
+// in two phases.
+func TestWaitForConnectivityLegacyCompatBoundsTheWait(t *testing.T) {
+	cfg := &config.MachineConfig{LegacyCompat: true}
+	err := waitForConnectivity(context.Background(), cfg, blockingConnectivityMode{&connectivityTestMode{}}, "http://example.com/init", 50*time.Millisecond)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("waitForConnectivity() = %v, want context.DeadlineExceeded", err)
+	}
+}

@@ -318,6 +318,7 @@ root is mounted.
 | `DISK_SELECTION` | `prefer-nvme` | `lsblk` selects the first large enough disk in legacy `lsblk` order. Preset by `CAPRF_LEGACY_COMPAT` |
 | `WIPE_ALL_DISKS` | `false` | Wipe every disk, not only the target, like `wipe_all_disks`. Preset by `CAPRF_LEGACY_COMPAT` |
 | `DISCARD_NVME` | `false` | `blkdiscard` every NVMe disk before a wipe of all disks. Preset by `CAPRF_LEGACY_COMPAT` |
+| `NETWORK_WAIT_MAX_ATTEMPTS` | unset (15) | CAPRF legacy compat only: 20 second network wait rounds before the run fails (0-100000). `0` means no round: the run fails at once, like the legacy provisioner |
 | `BOOTY_ALLOW_REMOVABLE` | `false` | Allow USB/removable media as provisioning target |
 | `MACHINE_EXTRA_KERNEL_PARAMS` | — | Additional kernel cmdline parameters |
 | `EXTRA_KERNEL_PARAMS` | — | Additional kernel cmdline parameters, read by the CAPRF legacy provisioner. Appended to `MACHINE_EXTRA_KERNEL_PARAMS` |
@@ -503,6 +504,12 @@ With the variable set, BOOTy keeps the legacy behaviour where the two differ:
   `provision.sh`, also when it is a data partition after the root. That
   partition then gets `e2fsck` and `resize2fs`, and the root filesystem keeps
   its size. BOOTy otherwise grows the root partition.
+- The network wait follows `wait_for_network`: `NETWORK_WAIT_MAX_ATTEMPTS`
+  rounds of 20 seconds (default 15, about 5 minutes) on one network setup.
+  In FRR mode, FRR restarts after each failed round unless a BGP session is
+  established. The limit covers the whole wait, also the GoBGP session wait.
+  Then BOOTy reports the error. BOOTy otherwise sets up the network up to 3
+  times and waits up to 5 minutes each time.
 
 Without the variable, BOOTy keeps its own defaults.
 

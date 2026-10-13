@@ -1,5 +1,9 @@
 package config
 
+// MaxNetworkWaitAttempts bounds NETWORK_WAIT_MAX_ATTEMPTS (about 23 days of
+// 20 second rounds), so the wait time cannot overflow.
+const MaxNetworkWaitAttempts = 100000
+
 // NetworkConfig defines how BOOTy configures network connectivity in the
 // ramdisk. It supports multiple network modes: EVPN/BGP (via FRR or GoBGP),
 // static IP assignment, LACP bonding, and DHCP fallback.
@@ -22,6 +26,13 @@ type NetworkConfig struct {
 	// Example: "8.8.8.8,8.8.4.4"
 	// Default: ""
 	DNSResolvers string `yaml:"dnsResolvers" json:"dnsResolvers"`
+
+	// WaitMaxAttempts is the number of 20 second connectivity rounds in
+	// CAPRF legacy compat mode, like NETWORK_WAIT_MAX_ATTEMPTS of the legacy
+	// provisioner. Ignored outside legacy compat. Unset (nil) means 15
+	// rounds, about 5 minutes. An explicit 0 means no round: the run fails
+	// at once, like ${NETWORK_WAIT_MAX_ATTEMPTS:-15} with the value 0.
+	WaitMaxAttempts *int `yaml:"waitMaxAttempts,omitempty" json:"waitMaxAttempts,omitempty"`
 
 	// Sub-sections grouped by network concern.
 	BGP    BGPConfig    `yaml:"bgp"    json:"bgp"`

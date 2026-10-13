@@ -812,11 +812,11 @@ func (noopNetworkMode) Teardown(context.Context) error { return nil }
 // ensureNetworkConnectivity retries network setup up to 3 times on connectivity failure.
 // It returns the active network mode so callers can tear down the latest instance.
 func ensureNetworkConnectivity(ctx context.Context, cfg *config.MachineConfig, netMode network.Mode, target string) (network.Mode, error) {
-	const maxRetries = 3
+	maxRetries, timeout := networkWait(cfg)
 	logTarget := network.RedactHTTPURLForLog(target)
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		slog.Info("waiting for network connectivity", "target", logTarget, "attempt", attempt)
-		if err := netMode.WaitForConnectivity(ctx, target, 5*time.Minute); err == nil {
+		slog.Info("waiting for network connectivity", "target", logTarget, "attempt", attempt, "timeout", timeout)
+		if err := waitForConnectivity(ctx, cfg, netMode, target, timeout); err == nil {
 			slog.Info("network connectivity established", "target", logTarget)
 			return netMode, nil
 		}
@@ -834,7 +834,40 @@ func ensureNetworkConnectivity(ctx context.Context, cfg *config.MachineConfig, n
 		}
 	}
 	slog.Error("network connectivity failed after all retries", "attempts", maxRetries)
+	if maxRetries == 1 {
+		return netMode, fmt.Errorf("network connectivity timeout after %s", timeout)
+	}
 	return netMode, fmt.Errorf("network connectivity timeout after %d attempts", maxRetries)
+}
+
+// waitForConnectivity runs one connectivity wait. Legacy compat bounds the
+// whole call with the timeout: GoBGP otherwise waits for the underlay and
+// then for the target, each up to the timeout.
+func waitForConnectivity(ctx context.Context, cfg *config.MachineConfig, netMode network.Mode, target string, timeout time.Duration) error {
+	if cfg.LegacyCompat {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	if err := netMode.WaitForConnectivity(ctx, target, timeout); err != nil {
+		return fmt.Errorf("wait for %s: %w", network.RedactHTTPURLForLog(target), err)
+	}
+	return nil
+}
+
+// networkWait returns the number of network setups and the connectivity
+// timeout of each. Legacy compat follows wait_for_network in the CAPRF
+// common.sh: NETWORK_WAIT_MAX_ATTEMPTS rounds of 20 seconds (default 15)
+// on one network setup, and then the run fails.
+func networkWait(cfg *config.MachineConfig) (int, time.Duration) {
+	if !cfg.LegacyCompat {
+		return 3, 5 * time.Minute
+	}
+	rounds := 15
+	if n := cfg.Network.WaitMaxAttempts; n != nil {
+		rounds = *n // an explicit 0 fails at once, like the legacy loop
+	}
+	return 1, time.Duration(rounds) * 20 * time.Second
 }
 
 // setupNetworkMode detects and configures the appropriate network mode.
@@ -912,42 +945,43 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 
 func networkConfigFromMachineConfig(cfg *config.MachineConfig) *network.Config {
 	return &network.Config{
-		UnderlaySubnet:   cfg.Network.EVPN.UnderlaySubnet,
-		UnderlayIP:       cfg.Network.EVPN.UnderlayIP,
-		OverlaySubnet:    cfg.Network.EVPN.OverlaySubnet,
-		IPMISubnet:       cfg.Network.IPMI.Subnet,
-		ASN:              cfg.Network.BGP.ASN,
-		ProvisionVNI:     cfg.Network.EVPN.ProvisionVNI,
-		ProvisionIP:      cfg.Network.EVPN.ProvisionIP,
-		ProvisionGateway: cfg.Network.EVPN.ProvisionGateway,
-		DNSResolvers:     cfg.Network.DNSResolvers,
-		DCGWIPs:          cfg.Network.EVPN.DCGWIPs,
-		LeafASN:          cfg.Network.EVPN.LeafASN,
-		LocalASN:         cfg.Network.EVPN.LocalASN,
-		OverlayAggregate: cfg.Network.EVPN.OverlayAggregate,
-		VPNRT:            cfg.Network.EVPN.VPNRT,
-		StaticIP:         cfg.Network.Static.IP,
-		StaticGateway:    cfg.Network.Static.Gateway,
-		StaticIface:      cfg.Network.Static.Iface,
-		BondInterfaces:   cfg.Network.Bond.Interfaces,
-		BondMode:         cfg.Network.Bond.Mode,
-		VRFName:          cfg.Network.VRF.Name,
-		VRFTableID:       cfg.Network.VRF.TableID,
-		BGPKeepalive:     cfg.Network.BGP.Keepalive,
-		BGPHold:          cfg.Network.BGP.Hold,
-		BFDTransmitMS:    cfg.Network.BGP.BFDTransmitMS,
-		BFDReceiveMS:     cfg.Network.BGP.BFDReceiveMS,
-		NetworkMode:      cfg.Network.Mode,
-		BGPPeerMode:      network.ParsePeerMode(cfg.Network.BGP.PeerMode),
-		BGPInterfaces:    cfg.Network.BGP.Interfaces,
-		BGPNeighbors:     cfg.Network.BGP.Neighbors,
-		BGPRemoteASN:     cfg.Network.BGP.RemoteASN,
-		BGPUnderlayAF:    cfg.Network.BGP.UnderlayAF,
-		BGPOverlayType:   cfg.Network.BGP.OverlayType,
-		EVPNL2Enabled:    cfg.Network.EVPN.L2Enabled,
-		EVPNType5Only:    cfg.Network.EVPN.Type5Only,
-		BGPAuthPassword:  cfg.Network.BGP.AuthPassword,
-		BGPMinPeers:      cfg.Network.BGP.MinPeers,
+		UnderlaySubnet:    cfg.Network.EVPN.UnderlaySubnet,
+		UnderlayIP:        cfg.Network.EVPN.UnderlayIP,
+		OverlaySubnet:     cfg.Network.EVPN.OverlaySubnet,
+		IPMISubnet:        cfg.Network.IPMI.Subnet,
+		ASN:               cfg.Network.BGP.ASN,
+		ProvisionVNI:      cfg.Network.EVPN.ProvisionVNI,
+		ProvisionIP:       cfg.Network.EVPN.ProvisionIP,
+		ProvisionGateway:  cfg.Network.EVPN.ProvisionGateway,
+		LegacyFRRRecovery: cfg.LegacyCompat,
+		DNSResolvers:      cfg.Network.DNSResolvers,
+		DCGWIPs:           cfg.Network.EVPN.DCGWIPs,
+		LeafASN:           cfg.Network.EVPN.LeafASN,
+		LocalASN:          cfg.Network.EVPN.LocalASN,
+		OverlayAggregate:  cfg.Network.EVPN.OverlayAggregate,
+		VPNRT:             cfg.Network.EVPN.VPNRT,
+		StaticIP:          cfg.Network.Static.IP,
+		StaticGateway:     cfg.Network.Static.Gateway,
+		StaticIface:       cfg.Network.Static.Iface,
+		BondInterfaces:    cfg.Network.Bond.Interfaces,
+		BondMode:          cfg.Network.Bond.Mode,
+		VRFName:           cfg.Network.VRF.Name,
+		VRFTableID:        cfg.Network.VRF.TableID,
+		BGPKeepalive:      cfg.Network.BGP.Keepalive,
+		BGPHold:           cfg.Network.BGP.Hold,
+		BFDTransmitMS:     cfg.Network.BGP.BFDTransmitMS,
+		BFDReceiveMS:      cfg.Network.BGP.BFDReceiveMS,
+		NetworkMode:       cfg.Network.Mode,
+		BGPPeerMode:       network.ParsePeerMode(cfg.Network.BGP.PeerMode),
+		BGPInterfaces:     cfg.Network.BGP.Interfaces,
+		BGPNeighbors:      cfg.Network.BGP.Neighbors,
+		BGPRemoteASN:      cfg.Network.BGP.RemoteASN,
+		BGPUnderlayAF:     cfg.Network.BGP.UnderlayAF,
+		BGPOverlayType:    cfg.Network.BGP.OverlayType,
+		EVPNL2Enabled:     cfg.Network.EVPN.L2Enabled,
+		EVPNType5Only:     cfg.Network.EVPN.Type5Only,
+		BGPAuthPassword:   cfg.Network.BGP.AuthPassword,
+		BGPMinPeers:       cfg.Network.BGP.MinPeers,
 	}
 }
 

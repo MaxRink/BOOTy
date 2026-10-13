@@ -147,9 +147,15 @@ them on:
   ConnectX Ethernet function. It skips quietly without `mstconfig` or such a
   NIC.
 - For provisioning, the ramdisk takes the `HOSTNAME`.
+- The network wait follows the legacy `wait_for_network`:
+  `NETWORK_WAIT_MAX_ATTEMPTS` rounds of 20 seconds on one network setup.
 
 [CAPRF legacy migration](caprf-legacy-migration.md) describes all
 behaviour changes of this mode.
+
+| Key | Default | Values | Effect |
+|-----|---------|--------|--------|
+| `NETWORK_WAIT_MAX_ATTEMPTS` | (unset, 15 rounds) | integer 0-100000 | Legacy compat only: the number of 20 second connectivity rounds before the run fails. `0` means no round: the run fails at once, like `${NETWORK_WAIT_MAX_ATTEMPTS:-15}` in the legacy provisioner. In FRR mode, FRR restarts after each failed round unless a BGP session is established. Ignored without `CAPRF_LEGACY_COMPAT`. |
 
 ## Disk and image
 
@@ -405,4 +411,4 @@ BOOTy parses these keys, but no code acts on the value:
   that starts with `LUKS_`. The `pkg/disk/luks` library is not part of the
   provisioning flow.
 - Planned (#581): `DISK_MIRRORING_MODE`.
-- Planned (#622): `NETWORK_WAIT_MAX_ATTEMPTS`.
+

@@ -4,6 +4,7 @@ package frr
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -710,12 +711,17 @@ const (
 var (
 	runFRRDaemonCommand = runDaemonCmd
 	frrRestartInterval  = 120 * time.Second
-	frrDaemonStartDelay = 500 * time.Millisecond
-	frrDaemonStopWait   = 3 * time.Second
-	frrDaemonKillWait   = time.Second
-	findFRRDaemonPIDs   = findFRRDaemonPIDsFromProc
-	signalFRRProcess    = syscall.Kill
-	frrInitScriptPath   = "/usr/lib/frr/frrinit.sh"
+	// legacyFRRRestartInterval is the round length of the CAPRF legacy
+	// wait_for_network.
+	legacyFRRRestartInterval = 20 * time.Second
+	// dumpFRRStateInBackground logs the FRR state without blocking the caller.
+	dumpFRRStateInBackground = func(m *Manager) { go m.DumpFRRState() }
+	frrDaemonStartDelay      = 500 * time.Millisecond
+	frrDaemonStopWait        = 3 * time.Second
+	frrDaemonKillWait        = time.Second
+	findFRRDaemonPIDs        = findFRRDaemonPIDsFromProc
+	signalFRRProcess         = syscall.Kill
+	frrInitScriptPath        = "/usr/lib/frr/frrinit.sh"
 )
 
 // startFRR launches FRR daemons using the best available method.
@@ -757,6 +763,33 @@ func (m *Manager) stopFRR(ctx context.Context) error {
 		}
 		return stopFRRBestEffort(ctx)
 	}
+}
+
+// bgpEstablished reports an Established IPv4 unicast BGP session in any VRF,
+// like the jq filter of restart_frr in the CAPRF legacy common.sh.
+func (m *Manager) bgpEstablished(ctx context.Context) bool {
+	out, err := m.commander.Run(ctx, "vtysh", "-c", "show bgp vrf all summary json")
+	if err != nil {
+		return false
+	}
+	var vrfs map[string]struct {
+		IPv4Unicast struct {
+			Peers map[string]struct {
+				State string `json:"state"`
+			} `json:"peers"`
+		} `json:"ipv4Unicast"`
+	}
+	if err := json.Unmarshal(out, &vrfs); err != nil {
+		return false
+	}
+	for _, vrf := range vrfs {
+		for _, peer := range vrf.IPv4Unicast.Peers {
+			if peer.State == "Established" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (m *Manager) restartFRR(ctx context.Context) error {
@@ -1047,7 +1080,25 @@ func (m *Manager) addBGPPeer(ctx context.Context, vrfName string, asn uint32, ni
 	return nil
 }
 
-// waitForHTTPWithFRR polls target, restarting FRR every 120s if needed.
+// recoverFRR restarts FRR for connectivity recovery. With legacy it keeps an
+// established BGP session like restart_frr, so the EVPN overlay can converge.
+func recoverFRR(ctx context.Context, log *slog.Logger, mgr *Manager, legacy bool) {
+	if legacy && mgr.bgpEstablished(ctx) {
+		log.Info("bgp session established, keeping FRR running")
+		return
+	}
+	log.Info("restarting FRR daemons for connectivity recovery")
+	restart := restartFRRBestEffort
+	if mgr != nil {
+		restart = mgr.restartFRR
+	}
+	if err := restart(ctx); err != nil {
+		log.Warn("failed to restart FRR daemons", "error", err)
+	}
+}
+
+// waitForHTTPWithFRR polls target, restarting FRR every 120s if needed, or
+// every 20s with LegacyFRRRecovery.
 func waitForHTTPWithFRR(ctx context.Context, target string, timeout time.Duration, mgr *Manager) error {
 	log := slog.Default().With("component", "frr")
 	if mgr != nil {
@@ -1057,12 +1108,21 @@ func waitForHTTPWithFRR(ctx context.Context, target string, timeout time.Duratio
 		return fmt.Errorf("empty connectivity target URL")
 	}
 	logTarget := network.RedactHTTPURLForLog(target)
+	if timeout <= 0 {
+		// NETWORK_WAIT_MAX_ATTEMPTS=0 in legacy compat: no round, the run
+		// fails at once like the legacy loop, without the FRR state dump.
+		return fmt.Errorf("network connectivity timeout after %s (no attempt)", timeout)
+	}
 
 	deadline := time.Now().Add(timeout)
 	client := network.NewHTTPClient(10 * time.Second)
 	attempt := 0
 	lastRestart := time.Now()
 	restartInterval := frrRestartInterval
+	legacy := mgr != nil && mgr.cfg.LegacyFRRRecovery
+	if legacy {
+		restartInterval = legacyFRRRestartInterval
+	}
 
 	for time.Now().Before(deadline) {
 		attempt++
@@ -1083,19 +1143,18 @@ func waitForHTTPWithFRR(ctx context.Context, target string, timeout time.Duratio
 			"target", logTarget, "attempt", attempt, "error", redact.Wrap(err, target))
 
 		if time.Since(lastRestart) >= restartInterval {
-			log.Info("Restarting FRR daemons for connectivity recovery")
-			if mgr != nil {
-				if err := mgr.restartFRR(ctx); err != nil {
-					log.Warn("failed to restart FRR daemons", "error", err)
-				}
-			} else if err := restartFRRBestEffort(ctx); err != nil {
-				log.Warn("failed to restart FRR daemons", "error", err)
-			}
+			recoverFRR(ctx, log, mgr, legacy)
 			lastRestart = time.Now()
 		}
 
 		select {
 		case <-ctx.Done():
+			if mgr != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				// A caller deadline is a timeout too: keep the diagnostics,
+				// but do not delay the failure report past the deadline.
+				log.Warn("connectivity deadline reached, dumping FRR state for diagnostics")
+				dumpFRRStateInBackground(mgr)
+			}
 			return fmt.Errorf("connectivity check canceled: %w", ctx.Err())
 		case <-time.After(1 * time.Second):
 		}

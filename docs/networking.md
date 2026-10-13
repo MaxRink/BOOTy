@@ -358,9 +358,15 @@ runs the full network setup again. After 3 failed attempts, the network
 setup fails (see [Stack selection](#stack-selection) for the failure
 behaviour).
 
-Logs show the target without credentials, query string and fragment.
+With `CAPRF_LEGACY_COMPAT=true` the wait follows the legacy
+`wait_for_network` instead: one network setup and `NETWORK_WAIT_MAX_ATTEMPTS`
+rounds of 20 seconds (unset: 15 rounds, about 5 minutes). The limit covers
+the whole wait, also the GoBGP peer wait. In FRR mode FRR restarts after each
+failed round unless a BGP session is established. `0` means no round: the
+run fails at once, without the FRR state dump. Then BOOTy reports the error
+and waits.
 
-Planned (#622): use the legacy network wait in CAPRF legacy compat.
+Logs show the target without credentials, query string and fragment.
 
 ## DNS
 
