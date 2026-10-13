@@ -1155,6 +1155,14 @@ func isMountPoint(path string) bool {
 	return false
 }
 
+// SetUnmountFuncForTest replaces the unmount syscall and returns a function
+// that restores it. Tests only.
+func SetUnmountFuncForTest(fn func(target string, flags int) error) func() {
+	old := unmountFunc
+	unmountFunc = fn
+	return func() { unmountFunc = old }
+}
+
 // Unmount unmounts a filesystem.
 func (m *Manager) Unmount(target string) error {
 	if err := unmountFunc(target, 0); err != nil {

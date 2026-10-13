@@ -97,6 +97,8 @@ type Orchestrator struct {
 	bestImageURL     string // resolved by verify-image, reused by stream-image
 	nvmeTargetDevice string
 	firmwareChanged  bool // true if any step changed firmware values requiring hard reboot
+	// separateBootMounted is true while mount-boot owns a separate /boot mount.
+	separateBootMounted bool
 }
 
 // NewOrchestrator creates an Orchestrator with the given dependencies.
@@ -2164,11 +2166,21 @@ func bootEFIMountPoint() string {
 }
 
 func (o *Orchestrator) mountBoot(ctx context.Context) error {
+	// A separate /boot must be mounted before the ESP at /boot/efi.
+	if err := o.mountSeparateBoot(ctx); err != nil {
+		return err
+	}
 	if strings.TrimSpace(o.bootPartition) == "" {
 		o.log.Info("skipping boot partition mount; no boot partition detected")
 		return nil
 	}
 	mountpoint := bootEFIMountPoint()
+	// A separate /boot comes from the image and may hold an efi symlink.
+	if o.separateBootMounted {
+		if err := ensureTargetParentWithinRoot(newroot, mountpoint); err != nil {
+			return fmt.Errorf("esp mountpoint %s: %w", mountpoint, err)
+		}
+	}
 	if isMountPoint(mountpoint) {
 		source, err := mountedFromExpectedSource(mountpoint, o.bootPartition, "boot partition")
 		if err != nil {
@@ -2879,7 +2891,7 @@ func (o *Orchestrator) teardownChroot(_ context.Context) error {
 		return nil
 	}
 	bindErr := o.disk.TeardownChrootBindMounts(newroot)
-	bootErr := o.unmountBoot()
+	bootErr := errors.Join(o.unmountBoot(), o.unmountSeparateBoot())
 	sharedErr := o.unmountSharedData()
 	unmountErr := o.disk.Unmount(newroot)
 	return errors.Join(bindErr, bootErr, sharedErr, unmountErr)
