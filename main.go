@@ -1010,8 +1010,22 @@ func networkModeWithResolvers(ctx context.Context, netCfg *network.Config, mode 
 	return wrapLinkLayerMode(mode, cleanup), nil
 }
 
+// resolveLinkMatch is network.ResolveLinkMatch; tests replace it.
+var resolveLinkMatch = network.ResolveLinkMatch
+
 func prepareLinkLayers(ctx context.Context, netCfg *network.Config) (*linkLayerCleanup, error) {
 	cleanup := &linkLayerCleanup{}
+	if err := network.ApplyLinkRenames(ctx, netCfg.LinkRenames); err != nil {
+		return nil, fmt.Errorf("netplan set-name: %w", err)
+	}
+	if netCfg.StaticIface == "" && netCfg.StaticMatch != nil {
+		name, err := resolveLinkMatch(ctx, *netCfg.StaticMatch)
+		if err != nil {
+			slog.Warn("netplan match for the static address did not select one NIC, using the first NIC", "error", err)
+		} else {
+			netCfg.StaticIface = name
+		}
+	}
 	if netCfg.IsBondMode() {
 		slog.Info("setting up LACP bond")
 		bondMode, err := setupBondLayer(ctx, netCfg)
@@ -1228,6 +1242,10 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	if src.StaticIP != "" {
 		dst.StaticIP = src.StaticIP
 		dst.StaticIface = src.StaticIface
+		dst.StaticMatch = src.StaticMatch
+	}
+	if len(src.LinkRenames) > 0 {
+		dst.LinkRenames = src.LinkRenames
 	}
 	if src.StaticGateway != "" {
 		dst.StaticGateway = src.StaticGateway

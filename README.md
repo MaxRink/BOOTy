@@ -1140,7 +1140,11 @@ and uses the derived network config, with netplan values overriding
 ```
 
 The netplan parser supports ethernets, bonds, bridges, VLANs, tunnels
-(VXLAN/GRE), dummy devices, VRFs, and static routes. When an FRR config
+(VXLAN/GRE), dummy devices, VRFs, and static routes. Ethernets with a
+`match` block (`name` with shell globs such as `enp*s4`, `macaddress`) and
+`set-name` work like netplan: BOOTy renames the single matching NIC before
+the network starts. A `match` without `set-name` selects the NIC for a
+static address when exactly one NIC matches. When an FRR config
 file is also present, BOOTy extracts BGP parameters (ASN, router-ID,
 peers, EVPN settings) from it, including the GoBGP EVPN route mode. A netplan config with an ASN and
 a VNI selects the GoBGP stack. [docs/networking.md](docs/networking.md)

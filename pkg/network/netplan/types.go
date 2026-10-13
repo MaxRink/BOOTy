@@ -37,6 +37,7 @@ type EthernetConfig struct {
 	EmbeddedSwitchMode          string        `yaml:"embedded-switch-mode,omitempty"`
 	DelayVirtualFunctionsRebind *bool         `yaml:"delay-virtual-functions-rebind,omitempty"`
 	IPv6AddressGeneration       string        `yaml:"ipv6-address-generation,omitempty"`
+	SetName                     string        `yaml:"set-name,omitempty"`
 }
 
 // MatchConfig matches physical devices by name or MAC.

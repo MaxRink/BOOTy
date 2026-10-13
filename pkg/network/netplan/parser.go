@@ -139,7 +139,7 @@ func extractTunnels(np *Config, cfg *network.Config) {
 			cfg.UnderlayIP = provision.Local
 		}
 		if provision.Link != "" && cfg.VXLANLink == "" {
-			cfg.VXLANLink = provision.Link
+			cfg.VXLANLink = ethernetName(np, provision.Link)
 		}
 		return
 	}
@@ -216,12 +216,7 @@ func extractEthernets(np *Config, cfg *network.Config) (dhcpCount int, dnsList [
 		if eth.Nameservers != nil {
 			dnsList = append(dnsList, eth.Nameservers.Addresses...)
 		}
-		if cfg.StaticIP == "" {
-			if addr := firstAddress(eth.Addresses); addr != "" {
-				cfg.StaticIP = addr
-				cfg.StaticIface = ethernetStaticIface(name, &eth)
-			}
-		}
+		applyEthernetMatch(name, &eth, cfg)
 		for _, r := range eth.Routes {
 			if r.To == "default" && r.Via != "" && cfg.StaticGateway == "" {
 				cfg.StaticGateway = r.Via
@@ -238,7 +233,7 @@ func extractEthernets(np *Config, cfg *network.Config) (dhcpCount int, dnsList [
 func extractVLANs(np *Config, cfg *network.Config, dnsList []string) []string {
 	for _, vlanName := range slices.Sorted(maps.Keys(np.Network.VLANs)) {
 		v := np.Network.VLANs[vlanName]
-		vc := network.VLANConfig{ID: v.ID, Parent: v.Link}
+		vc := network.VLANConfig{ID: v.ID, Parent: ethernetName(np, v.Link)}
 		if len(v.Addresses) > 0 {
 			vc.Address = v.Addresses[0]
 		}
@@ -263,7 +258,11 @@ func extractBonds(np *Config, cfg *network.Config) {
 		if len(bond.Interfaces) == 0 {
 			continue
 		}
-		cfg.BondInterfaces = strings.Join(bond.Interfaces, ",")
+		members := make([]string, len(bond.Interfaces))
+		for i, m := range bond.Interfaces {
+			members[i] = ethernetName(np, m)
+		}
+		cfg.BondInterfaces = strings.Join(members, ",")
 		if bond.Parameters != nil && bond.Parameters.Mode != "" {
 			cfg.BondMode = bond.Parameters.Mode
 		}
@@ -308,14 +307,46 @@ func firstAddress(addresses []string) string {
 	return ""
 }
 
+// ethernetName returns the kernel name of a netplan ethernet ID. Bonds,
+// VLANs and tunnels refer to an ethernet by its ID; with set-name the NIC
+// is renamed before BOOTy uses it, like netplan does.
+func ethernetName(np *Config, id string) string {
+	if eth, ok := np.Network.Ethernets[id]; ok && eth.Match != nil && eth.SetName != "" {
+		return eth.SetName
+	}
+	return id
+}
+
+// applyEthernetMatch records netplan set-name renames and the first static
+// address with the NIC or match it belongs to.
+func applyEthernetMatch(name string, eth *EthernetConfig, cfg *network.Config) {
+	if eth.Match != nil && eth.SetName != "" {
+		cfg.LinkRenames = append(cfg.LinkRenames, network.LinkMatch{Name: eth.Match.Name, MAC: eth.Match.MAC, SetName: eth.SetName})
+	}
+	if cfg.StaticIP != "" {
+		return
+	}
+	addr := firstAddress(eth.Addresses)
+	if addr == "" {
+		return
+	}
+	cfg.StaticIP = addr
+	cfg.StaticIface = ethernetStaticIface(name, eth)
+	if cfg.StaticIface == "" && eth.Match != nil {
+		cfg.StaticMatch = &network.LinkMatch{Name: eth.Match.Name, MAC: eth.Match.MAC}
+	}
+}
+
 func ethernetStaticIface(name string, eth *EthernetConfig) string {
 	if eth.Match == nil {
 		return name
 	}
-	if eth.Match.Name == "" {
-		return ""
+	if eth.SetName != "" {
+		return eth.SetName
 	}
-	if strings.ContainsAny(eth.Match.Name, "*?[]") {
+	// A glob or a MAC must be resolved against the NICs; a literal name
+	// alone names the NIC.
+	if eth.Match.Name == "" || eth.Match.MAC != "" || strings.ContainsAny(eth.Match.Name, "*?[]") {
 		return ""
 	}
 	return eth.Match.Name

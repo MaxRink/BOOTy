@@ -1346,3 +1346,30 @@ func TestMergeNetplanConfigRemoteASNFollowsNeighbors(t *testing.T) {
 		t.Fatalf("merge without netplan peers = %d, want the vars value 65500", dst.BGPRemoteASN)
 	}
 }
+
+// The static address of a netplan match without set-name goes to the NIC
+// that the match selects; without a single match BOOTy keeps the first NIC.
+func TestPrepareLinkLayersResolvesStaticMatch(t *testing.T) {
+	orig := resolveLinkMatch
+	t.Cleanup(func() { resolveLinkMatch = orig })
+	for _, tt := range []struct {
+		name string
+		nic  string
+		err  error
+		want string
+	}{
+		{"unique match", "enp1s4", nil, "enp1s4"},
+		{"several matches", "", errors.New("selects 2 NICs"), ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			resolveLinkMatch = func(context.Context, network.LinkMatch) (string, error) { return tt.nic, tt.err }
+			netCfg := &network.Config{StaticIP: "10.0.0.5/24", StaticMatch: &network.LinkMatch{Name: "enp*"}}
+			if _, err := prepareLinkLayers(context.Background(), netCfg); err != nil {
+				t.Fatalf("prepareLinkLayers: %v", err)
+			}
+			if netCfg.StaticIface != tt.want {
+				t.Fatalf("StaticIface = %q, want %q", netCfg.StaticIface, tt.want)
+			}
+		})
+	}
+}

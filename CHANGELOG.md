@@ -31,6 +31,9 @@ behaviour.
 
 ### Behaviour changes in all modes
 
+- Netplan `set-name` renames the single NIC that its `match` selects, and a glob
+  or MAC `match` selects the NIC of a static address, like `netplan apply`.
+  Before, BOOTy ignored `set-name` and used the first NIC (#641).
 - A provisioner netplan file or `frr.conf` that exists but does not parse
   (malformed YAML, invalid values such as an out-of-range ASN) now fails the
   network setup and the run. Before, BOOTy fell back to the vars. Unknown YAML

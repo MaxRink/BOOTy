@@ -61,6 +61,13 @@ type Config struct {
 	StaticIP      string // IP/mask to assign (e.g. "10.0.0.5/24")
 	StaticGateway string // Default gateway IP
 	StaticIface   string // Interface name (default: auto-detect first physical NIC)
+	// StaticMatch selects the static NIC like a netplan match block when
+	// StaticIface is empty. Without a single match, the first NIC is used.
+	StaticMatch *LinkMatch
+
+	// LinkRenames renames NICs before the network starts, like netplan
+	// set-name.
+	LinkRenames []LinkMatch
 
 	// LACP bonding fields.
 	BondInterfaces string // Comma-separated NICs to bond (e.g. "eth0,eth1")
