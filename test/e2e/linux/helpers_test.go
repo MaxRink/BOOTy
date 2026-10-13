@@ -12,6 +12,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/telekom/BOOTy/test/e2e/loopdev"
 )
 
 func failOrSkipUnsupportedHost(t *testing.T, format string, args ...any) {
@@ -72,13 +74,12 @@ func createLoopDevice(t *testing.T, sizeGB int) string {
 		t.Fatalf("sfdisk: %s: %v", out, err)
 	}
 
-	// Attach loopback device with partition scanning.
-	out, err := exec.CommandContext(ctx, "losetup", "--find", "--show", "--partscan", f.Name()).Output()
+	// Attach loopback device with partition scanning and wait for p1, p2.
+	loopDev, err := loopdev.Attach(f.Name(), 2)
 	if err != nil {
 		os.Remove(f.Name())
-		t.Fatalf("losetup: %v", err)
+		t.Fatal(err)
 	}
-	loopDev := strings.TrimSpace(string(out))
 
 	t.Cleanup(func() {
 		exec.CommandContext(ctx, "losetup", "-d", loopDev).Run() //nolint:errcheck
@@ -108,12 +109,11 @@ func createRawLoopDevice(t *testing.T, sizeMB int) string {
 		t.Fatalf("truncate: %s: %v", out, err)
 	}
 
-	out, err := exec.CommandContext(ctx, "losetup", "--find", "--show", "--partscan", f.Name()).Output()
+	loopDev, err := loopdev.Attach(f.Name(), 0)
 	if err != nil {
 		os.Remove(f.Name())
-		t.Fatalf("losetup: %v", err)
+		t.Fatal(err)
 	}
-	loopDev := strings.TrimSpace(string(out))
 
 	t.Cleanup(func() {
 		exec.CommandContext(ctx, "losetup", "-d", loopDev).Run() //nolint:errcheck

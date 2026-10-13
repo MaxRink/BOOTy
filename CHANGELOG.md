@@ -138,6 +138,9 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 
 - KVM scenarios `caprf-legacy-compat`, `caprf-native-parity` and `kexec-persist`
   (#585, #648, #607)
+- e2e: loop device partition nodes are awaited, created without udev and
+  checked before use, which fixes the ContainerLab disk image and Linux E2E
+  "partition not found" flakes (#674)
 - KVM: no `linux-image-generic` install (#640); legacy compat suite gets 40 min (#658)
 - ContainerLab: explicit `EVPN_L2_ENABLED` node in the GoBGP lab (#593)
 - Stronger tests: GoBGP, CAPRF and DHCP (#646), EVPN Type-2/Type-3 (#644), A/B

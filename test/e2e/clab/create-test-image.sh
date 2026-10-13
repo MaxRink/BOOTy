@@ -61,13 +61,38 @@ echo "==> Setting up loop device with partition scanning"
 LOOP_DEV=$(losetup --find --show --partscan "${IMAGE_RAW}")
 echo "    Loop device: ${LOOP_DEV}"
 
-# Wait for partition devices to appear.
-for _ in $(seq 1 30); do
-    if [ -b "${LOOP_DEV}p2" ]; then
-        break
-    fi
+# Wait for the partition nodes. --partscan returns before the kernel and
+# udev create them, and without udev (containers) they never appear in /dev:
+# re-read the table while sysfs lacks a partition and (re)create the node from
+# its sysfs major:minor.
+for iter in $(seq 1 100); do
+    missing=0
+    for n in 1 2; do
+        part="${LOOP_DEV}p${n}"
+        sysdev="/sys/class/block/$(basename "${part}")/dev"
+        if [ ! -r "${sysdev}" ]; then
+            missing=1
+            continue
+        fi
+        want="$(cat "${sysdev}" 2>/dev/null)" || { missing=1; continue; }
+        # A node left from an earlier loop device can point elsewhere. Give
+        # udev and devtmpfs about a second before creating the node here.
+        if [ "${iter}" -gt 3 ] && { [ "$(stat -c '%Hr:%Lr' "${part}" 2>/dev/null)" != "${want}" ] || [ ! -b "${part}" ]; }; then
+            rm -f "${part}"
+            mknod "${part}" b "${want%%:*}" "${want##*:}" 2>/dev/null || true
+        fi
+        # The node must match sysfs, and a partition that the kernel still
+        # adds or removes cannot be read.
+        if [ "$(stat -c '%Hr:%Lr' "${part}" 2>/dev/null)" != "${want}" ] ||
+            ! blockdev --getsize64 "${part}" >/dev/null 2>&1; then
+            missing=1
+        fi
+    done
+    [ "${missing}" -eq 0 ] && break
+    partx --update "${LOOP_DEV}" 2>/dev/null || true
     partprobe "${LOOP_DEV}" 2>/dev/null || true
-    sleep 0.5
+    udevadm settle --timeout=2 2>/dev/null || true
+    sleep 0.3
 done
 
 if [ ! -b "${LOOP_DEV}p1" ] || [ ! -b "${LOOP_DEV}p2" ]; then

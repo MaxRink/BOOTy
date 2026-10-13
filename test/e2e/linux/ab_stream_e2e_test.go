@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/telekom/BOOTy/pkg/image"
+	"github.com/telekom/BOOTy/test/e2e/loopdev"
 )
 
 func TestStreamABCopiesBootAndInactiveRootPartitions(t *testing.T) {
@@ -299,16 +300,17 @@ func createPartitionedRawImage(t *testing.T, partitions []testPartition) rawImag
 		t.Fatalf("sfdisk %s:\n%s\n%v", path, out, err)
 	}
 
-	loop := strings.TrimSpace(runCmd(t, "losetup", "--find", "--show", "--partscan", path))
+	loop, err := loopdev.Attach(path, len(partitions))
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
 		_ = exec.Command("losetup", "-d", loop).Run()
 	})
-	runCmd(t, "partprobe", loop)
 
 	partDevs := make([]string, len(partitions))
 	for i, part := range partitions {
 		dev := fmt.Sprintf("%sp%d", loop, i+1)
-		waitForDevicePath(t, dev, 5*time.Second)
 		partDevs[i] = dev
 		if len(part.payload) > 0 {
 			writePartitionPrefix(t, dev, part.payload)
@@ -382,16 +384,4 @@ func assertPartitionPrefix(t *testing.T, dev string, want []byte) {
 func assertPartitionPrefixZeroed(t *testing.T, dev string, size int) {
 	t.Helper()
 	assertPartitionPrefix(t, dev, make([]byte, size))
-}
-
-func waitForDevicePath(t *testing.T, dev string, timeout time.Duration) {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(dev); err == nil {
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	t.Fatalf("device %s did not appear within %s", dev, timeout)
 }

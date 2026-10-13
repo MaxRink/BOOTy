@@ -15,9 +15,11 @@ import (
 	"os"
 	"os/exec"
 	"testing"
+	"time"
 
 	"github.com/telekom/BOOTy/pkg/disk"
 	"github.com/telekom/BOOTy/pkg/image"
+	"github.com/telekom/BOOTy/test/e2e/loopdev"
 )
 
 func TestImageStreamRawToDevice(t *testing.T) {
@@ -160,18 +162,8 @@ func TestImageStreamToFormattedPartition(t *testing.T) {
 	loopDev := createLoopDevice(t, 1)
 	ctx := context.Background()
 
-	// Find the root partition device.
-	var rootPart string
-	for _, suffix := range []string{"p2", "2"} {
-		dev := loopDev + suffix
-		if _, err := os.Stat(dev); err == nil {
-			rootPart = dev
-			break
-		}
-	}
-	if rootPart == "" {
-		t.Fatal("could not find root partition device")
-	}
+	// createLoopDevice waited for the partition nodes.
+	rootPart := loopDev + "p2"
 
 	runCmd(t, "mkfs.ext4", "-F", rootPart)
 
@@ -333,8 +325,11 @@ func TestEndToEndDiskProvisioningFlow(t *testing.T) {
 		t.Fatalf("sfdisk re-partition: %s: %v", out, err)
 	}
 
-	// Re-read partitions.
+	// Re-read partitions and wait for the new nodes.
 	exec.CommandContext(ctx, "partprobe", loopDev).Run() //nolint:errcheck
+	if err := loopdev.WaitPartitions(loopDev, 2, 30*time.Second); err != nil {
+		t.Fatal(err)
+	}
 
 	mgr := disk.NewManager(nil)
 	parts, err := mgr.ParsePartitions(ctx, loopDev)

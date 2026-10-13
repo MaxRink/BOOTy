@@ -16,6 +16,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/telekom/BOOTy/test/e2e/loopdev"
 )
 
 const testEFIFallbackPayload = "BOOTy KVM e2e EFI fallback\n"
@@ -618,6 +620,13 @@ func writeFile(t *testing.T, path, content string) {
 // waitForDevice polls for a device node to appear, with a timeout.
 func waitForDevice(t *testing.T, devPath string, timeout time.Duration) {
 	t.Helper()
+	if loop, part, ok := loopdev.SplitPartition(devPath); ok {
+		// Also creates missing nodes and re-reads the partition table.
+		if err := loopdev.WaitPartitions(loop, part, max(timeout, 30*time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	for time.Now().Before(deadline) {
