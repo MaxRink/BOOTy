@@ -354,7 +354,11 @@ func (o *Orchestrator) RescueAction(state *rescue.RetryState) rescue.Action {
 }
 
 func (o *Orchestrator) reportInit(ctx context.Context) error {
-	return o.provider.ReportStatus(ctx, config.StatusInit, "provisioning started")
+	message := "provisioning started"
+	if config.IsDeprovisionMode(o.cfg.Mode) {
+		message = "deprovisioning started"
+	}
+	return o.provider.ReportStatus(ctx, config.StatusInit, message)
 }
 
 func (o *Orchestrator) collectInventory(ctx context.Context) error {

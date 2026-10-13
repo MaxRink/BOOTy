@@ -1999,18 +1999,26 @@ func TestProvisionReportsErrorOnStepFailure(t *testing.T) {
 }
 
 func TestReportInit(t *testing.T) {
-	cfg := &config.MachineConfig{}
-	provider := &mockProvider{}
-	o := newTestOrchestrator(t, cfg, provider)
+	for mode, want := range map[string]string{
+		"":                 "provisioning started",
+		"provision":        "provisioning started",
+		"deprovision":      "deprovisioning started",
+		"hard":             "deprovisioning started",
+		"soft-deprovision": "deprovisioning started",
+		"decommission":     "deprovisioning started",
+	} {
+		provider := &mockProvider{}
+		o := newTestOrchestrator(t, &config.MachineConfig{Mode: mode}, provider)
 
-	if err := o.reportInit(context.Background()); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(provider.statuses) != 1 {
-		t.Fatalf("expected 1 status report, got %d", len(provider.statuses))
-	}
-	if provider.statuses[0].status != config.StatusInit {
-		t.Errorf("expected StatusInit, got %v", provider.statuses[0].status)
+		if err := o.reportInit(context.Background()); err != nil {
+			t.Fatalf("mode %q: unexpected error: %v", mode, err)
+		}
+		if len(provider.statuses) != 1 {
+			t.Fatalf("mode %q: expected 1 status report, got %d", mode, len(provider.statuses))
+		}
+		if got := provider.statuses[0]; got.status != config.StatusInit || got.message != want {
+			t.Errorf("mode %q: status %v %q, want init %q", mode, got.status, got.message, want)
+		}
 	}
 }
 

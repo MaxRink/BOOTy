@@ -137,6 +137,8 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 - disk: NVMe namespaces attach to the right controller ID (#610)
 - disk: hidden NVMe multipath path nodes are skipped (#632)
 - A kernel module that never loads is logged at WARN (#631)
+- provision: deprovision runs report `deprovisioning started` to `INIT_URL`,
+  not `provisioning started` (#663)
 
 ### CI, build and tests
 
