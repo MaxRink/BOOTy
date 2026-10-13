@@ -4921,7 +4921,7 @@ func TestValidateProvisionInputsHTTPInsecure(t *testing.T) {
 
 // Legacy evidence: provision.sh logs "nic_firmware nic=<nic> version=<v>"
 // for every NIC, also without firmware reporting.
-func TestCollectFirmwareLegacyCompatLogsNICFirmware(t *testing.T) {
+func TestCollectFirmwareLogNICsLogsNICFirmware(t *testing.T) {
 	previousCollect := collectFirmwareFn
 	collectFirmwareFn = func() (*firmware.Report, error) {
 		return &firmware.Report{NICs: []firmware.NICFirmware{{Interface: "ens1f0", Version: "22.39.1002", Driver: "mlx5_core"}}}, nil
@@ -4932,16 +4932,33 @@ func TestCollectFirmwareLegacyCompatLogsNICFirmware(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
 	t.Cleanup(func() { slog.SetDefault(previous) })
 
-	provider := &mockProvider{}
-	o := newTestOrchestrator(t, &config.MachineConfig{LegacyCompat: true}, provider)
-	if err := o.collectFirmware(context.Background()); err != nil {
-		t.Fatalf("collectFirmware() = %v", err)
-	}
-	if !strings.Contains(logs.String(), "nic=ens1f0 version=22.39.1002") {
-		t.Fatalf("logs = %q, want the NIC firmware line", logs.String())
-	}
-	if len(provider.firmwareReports) != 0 {
-		t.Fatalf("firmware reports = %d, want none without FIRMWARE_REPORT", len(provider.firmwareReports))
+	explicitOff := &config.MachineConfig{LegacyCompat: true}
+	explicitOff.Provision.Firmware.LogNICs = new(false)
+	native := &config.MachineConfig{}
+	native.Provision.Firmware.LogNICs = new(true)
+	for name, tt := range map[string]struct {
+		cfg  *config.MachineConfig
+		want bool
+	}{
+		"default":                         {cfg: &config.MachineConfig{}},
+		"native":                          {cfg: native, want: true},
+		"preset":                          {cfg: withPresets(&config.MachineConfig{LegacyCompat: true}), want: true},
+		"explicit false wins over preset": {cfg: withPresets(explicitOff)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			logs.Reset()
+			provider := &mockProvider{}
+			o := newTestOrchestrator(t, tt.cfg, provider)
+			if err := o.collectFirmware(context.Background()); err != nil {
+				t.Fatalf("collectFirmware() = %v", err)
+			}
+			if got := strings.Contains(logs.String(), "nic=ens1f0 version=22.39.1002"); got != tt.want {
+				t.Fatalf("NIC firmware line logged = %v, want %v (logs %q)", got, tt.want, logs.String())
+			}
+			if len(provider.firmwareReports) != 0 {
+				t.Fatalf("firmware reports = %d, want none without FIRMWARE_REPORT", len(provider.firmwareReports))
+			}
+		})
 	}
 }
 

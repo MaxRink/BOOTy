@@ -127,21 +127,40 @@ func TestSetupMellanoxStepDefaultIsOptIn(t *testing.T) {
 	}
 }
 
-// The orchestrator step must take the legacy path in compat mode.
-func TestSetupMellanoxStepLegacyCompat(t *testing.T) {
-	withPCIDevices(t, map[string][3]string{"0000:3b:00.0": {"0x15b3", "0x1017", "0x020000"}})
-	o, cmd := newTestOrchestratorWithCommander(t, &config.MachineConfig{LegacyCompat: true}, &mockProvider{})
-	cmd.setResult("mstconfig -d", []byte("NUM_OF_VFS 8\n"), nil)
+// The orchestrator step takes the legacy path with NUM_VFS_MODE=raise, set
+// natively or by the preset, and the default path with an explicit set.
+func TestSetupMellanoxStepNumVFsMode(t *testing.T) {
+	explicitSet := &config.MachineConfig{LegacyCompat: true}
+	explicitSet.Provision.Firmware.NumVFsMode = config.NumVFsModeSet
+	native := &config.MachineConfig{}
+	native.Provision.Firmware.NumVFsMode = config.NumVFsModeRaise
+	for name, tt := range map[string]struct {
+		cfg   *config.MachineConfig
+		raise bool
+	}{
+		"native raise":                  {cfg: native, raise: true},
+		"preset":                        {cfg: withPresets(&config.MachineConfig{LegacyCompat: true}), raise: true},
+		"explicit set wins over preset": {cfg: withPresets(explicitSet)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			withPCIDevices(t, map[string][3]string{"0000:3b:00.0": {"0x15b3", "0x1017", "0x020000"}})
+			o, cmd := newTestOrchestratorWithCommander(t, tt.cfg, &mockProvider{})
+			cmd.setResult("mstconfig -d", []byte("NUM_OF_VFS 8\n"), nil)
 
-	if err := o.setupMellanox(context.Background()); err != nil {
-		t.Fatalf("setupMellanox() = %v", err)
-	}
-	want := []string{"-d 0000:3b:00.0 q", "-y -d 0000:3b:00.0 s NUM_OF_VFS=32"}
-	if got := mstCalls(cmd.calls); !reflect.DeepEqual(got, want) {
-		t.Fatalf("mstconfig calls = %v, want %v", got, want)
-	}
-	if !o.FirmwareChanged() {
-		t.Fatal("FirmwareChanged() = false after NUM_OF_VFS changed")
+			if err := o.setupMellanox(context.Background()); err != nil {
+				t.Fatalf("setupMellanox() = %v", err)
+			}
+			var want []string
+			if tt.raise {
+				want = []string{"-d 0000:3b:00.0 q", "-y -d 0000:3b:00.0 s NUM_OF_VFS=32"}
+			}
+			if got := mstCalls(cmd.calls); !reflect.DeepEqual(got, want) {
+				t.Fatalf("mstconfig calls = %v, want %v", got, want)
+			}
+			if o.FirmwareChanged() != tt.raise {
+				t.Fatalf("FirmwareChanged() = %v, want %v", o.FirmwareChanged(), tt.raise)
+			}
+		})
 	}
 }
 

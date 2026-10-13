@@ -99,7 +99,8 @@ values are false.
 | `REGION` | (unset) | Kubernetes label value | Kubelet node label `topology.kubernetes.io/region`. |
 | `PROVIDER_ID` | (unset) | string without white space | Kubelet `--provider-id`. Cloud-init also uses it as the instance ID. |
 | `POST_PROVISION_CMDS` | (unset) | commands separated by `;` | Commands that run in the target root chroot near the end of provisioning. Each command can contain only letters, digits, white space and `_ . / : = , @ % + -`. A failed command fails the provisioning. |
-| `NUM_VFS` | `0` | integer | Number of SR-IOV VFs to set with `mstconfig` on each Mellanox NIC. `0` skips the step. A positive value fails the run when no Mellanox NIC or `mstconfig` device is found. In legacy compat, `0` means 32 and missing NICs or `mstconfig` are skipped. See [CAPRF legacy compatibility](#caprf-legacy-compatibility). |
+| `NUM_VFS` | `0` | integer | Number of SR-IOV VFs to set with `mstconfig` on each Mellanox NIC. `0` skips the step. A positive value fails the run when no Mellanox NIC or `mstconfig` device is found. With `NUM_VFS_MODE=raise`, `0` means 32 and missing NICs or `mstconfig` are skipped. |
+| `NUM_VFS_MODE` | `set` | `set`, `raise` | How `setup-mellanox` applies `NUM_VFS`. `set`: only with `NUM_VFS` > 0, sets `SRIOV_EN` and `NUM_OF_VFS`, fails without a Mellanox NIC. `raise`: on every provision, raises `NUM_OF_VFS` to `NUM_VFS` (32 when `0`) with `mstconfig` on each ConnectX-4/5/6/6 Dx/6 Lx/7 Ethernet function, like `setup_mellanox_num_of_vfs`; skips quietly without `mstconfig` or such a NIC; a failed `mstconfig` query or set fails the run. A change forces a reboot instead of kexec. YAML `provision.firmware.numVFsMode`. Preset: `raise`. |
 
 ## CAPRF endpoints, authentication and transport
 
@@ -146,13 +147,12 @@ defaults.
 | Write the installed OS `resolv.conf` | `WRITE_RESOLV_CONF` | `provision.writeResolvConf` | `true` | `false` |
 | Ramdisk host name for provisioning | `RAMDISK_HOSTNAME` | `ramdiskHostname` | `false` | `true` |
 | GRUB kernel parameters like `provision.sh`, no getty units | `GRUB_CMDLINE_MODE` | `provision.grubCmdlineMode` | `resolved` | `append` |
+| `nic_firmware` log lines on every provision | `NIC_FIRMWARE_LOG` | `provision.firmware.logNICs` | `false` | `true` |
+| Raise `NUM_OF_VFS` on every ConnectX NIC | `NUM_VFS_MODE` | `provision.firmware.numVFsMode` | `set` | `raise` |
 
-These behaviours do not have their own option yet. Only the preset turns
-them on:
+This behaviour does not have its own option yet. Only the preset turns it
+on:
 
-- `setup-mellanox` raises `NUM_OF_VFS` to 32 (or `NUM_VFS`) on every
-  ConnectX Ethernet function. It skips quietly without `mstconfig` or such a
-  NIC.
 - The network wait follows the legacy `wait_for_network`:
   `NETWORK_WAIT_MAX_ATTEMPTS` rounds of 20 seconds on one network setup.
 
@@ -290,7 +290,8 @@ default and `iso` build flavors contain the FRR daemons.
 | `HEALTH_CHECK_URL` | (unset) | URL | Receives the check results as JSON. |
 | `INVENTORY_ENABLED` | `false` | boolean | Collect the hardware inventory. Failures are logged only. |
 | `INVENTORY_URL` | (unset) | URL | Receives the inventory JSON. |
-| `FIRMWARE_REPORT` | `false` | boolean | Collect BIOS, BMC, NIC and storage controller firmware versions. Legacy compat logs the NIC firmware versions also without it. |
+| `FIRMWARE_REPORT` | `false` | boolean | Collect BIOS, BMC, NIC and storage controller firmware versions. `NIC_FIRMWARE_LOG=true` logs the NIC firmware versions also without it. |
+| `NIC_FIRMWARE_LOG` | `false` | boolean | Log a `nic_firmware` line with the firmware version of every NIC on each provision, like `provision.sh`. Does not need `FIRMWARE_REPORT`. YAML `provision.firmware.logNICs`. Preset: `true`. |
 | `FIRMWARE_URL` | (unset) | URL | Receives the firmware report. A failed POST fails provisioning. |
 | `FIRMWARE_MIN_BIOS` | (unset) | version string | Minimum BIOS version. Applies only with `FIRMWARE_REPORT=true`. |
 | `FIRMWARE_MIN_BMC` | (unset) | version string | Minimum BMC version. Applies only with `FIRMWARE_REPORT=true`. No collector reports a BMC version today, so a set value always fails. |
@@ -395,7 +396,7 @@ parsed vars. Set them on the kernel command line, or in the vars file with
 | Variable | Default | Values | Description |
 |----------|---------|--------|-------------|
 | `BOOTY_RESUME` | `false` | Go `strconv.ParseBool` values, for example `true`, `1` | Save a checkpoint in `/tmp/booty-checkpoint.json` and skip completed steps when provisioning runs again in the same boot. An unreadable checkpoint fails provisioning. |
-| `BOOTY_ALLOW_REMOVABLE` | unset | exactly `true` | Accept removable disks in the default disk selection. The legacy compat disk selection ignores it. |
+| `BOOTY_ALLOW_REMOVABLE` | unset | exactly `true` | Accept removable disks in the default disk selection. `DISK_SELECTION=lsblk` ignores it. |
 | `BOOTY_NO_REBOOT` | unset | any non-empty value | Do not call the reboot syscall. It does not stop a power off. For test containers. |
 | `https_proxy`, `http_proxy`, `no_proxy` | unset | proxy URLs | Standard Go proxy settings for the HTTP clients. |
 

@@ -57,7 +57,9 @@ The variable changes these behaviours:
 - **GRUB and console.** The kernel parameters are written like
   `provision.sh`. BOOTy writes no getty units (`GRUB_CMDLINE_MODE=append`).
 - **Ramdisk hostname and NIC firmware log** are set and written like
-  `provision.sh`.
+  `provision.sh` (`RAMDISK_HOSTNAME=true`, `NIC_FIRMWARE_LOG=true`).
+- **Mellanox.** `NUM_OF_VFS` is raised on every ConnectX NIC like
+  `setup_mellanox_num_of_vfs` (`NUM_VFS_MODE=raise`).
 - **Machine commands.** Each file runs as a script in a chroot of the
   installed OS, like `run_script_in_chroot`.
 
@@ -121,8 +123,8 @@ Detail for these rows is in [Disk handling](disk.md).
 | `/etc/default/grub.d/10-caprf-kernel-params.cfg` with `GRUB_CMDLINE_LINUX="$GRUB_CMDLINE_LINUX ds=nocloud console=ttyS0,115200n8 <extra>"`. `ttyS1` on Lenovo. `update-grub` only when the image has it. | Same file, but `GRUB_CMDLINE_LINUX` does not keep the image value. `ds=` only with `CLOUDINIT_ENABLED=true`. One `console=` from the [serial console resolver](serial-console-resolution.md), plus a GRUB serial terminal and getty units. `update-grub` must exist. | Legacy line. `ttyS1` when DMI `sys_vendor` is `Lenovo`. Extra parameters verbatim, so several `console=` tokens can occur. `update-grub` only when the image has it. No getty units. | Merged (#594) | `GRUB_CMDLINE_MODE=append` |
 | Extra kernel parameters: `MACHINE_EXTRA_KERNEL_PARAMS` and `EXTRA_KERNEL_PARAMS` (from `additionalVars`) | Both read. `EXTRA_KERNEL_PARAMS` goes after `MACHINE_EXTRA_KERNEL_PARAMS`. `console=` tokens are merged into the resolved console. | Both read, same order, appended verbatim. A value with `"`, `\`, `$`, a backtick or a line break fails the run. | Merged (#594) | `GRUB_CMDLINE_MODE=append` |
 | `hostname "$HOSTNAME"` in the ramdisk | Not set in the ramdisk. `/etc/hostname` of the installed OS is written in both modes. | Set for provisioning. A failure is only logged. | Merged (#626) | `RAMDISK_HOSTNAME=true` |
-| `nic_firmware` log lines with the firmware version of every NIC (`ethtool`) | Only with `FIRMWARE_REPORT=true`, as a JSON report to `FIRMWARE_URL` | `nic_firmware` log lines on every provision, also without `FIRMWARE_REPORT` | Merged (#628) | None yet |
-| `setup_mellanox_num_of_vfs` on every provision: set `NUM_OF_VFS=32` when lower, skip quietly without `mstconfig` or ConnectX NIC | Only with `NUM_VFS` > 0: sets `SRIOV_EN` and `NUM_OF_VFS`. Fails without a Mellanox NIC. A change forces a reboot instead of kexec. | On every provision: raises `NUM_OF_VFS` to 32 (or `NUM_VFS`) with `mstconfig` in the ramdisk on each ConnectX-4/5/6/6 Dx/6 Lx/7 Ethernet function. Skips quietly without `mstconfig` or such a NIC. A failed `mstconfig` query or set fails the run. | Merged (#617) | None yet |
+| `nic_firmware` log lines with the firmware version of every NIC (`ethtool`) | Only with `FIRMWARE_REPORT=true`, as a JSON report to `FIRMWARE_URL` | `nic_firmware` log lines on every provision, also without `FIRMWARE_REPORT` | Merged (#628) | `NIC_FIRMWARE_LOG=true` |
+| `setup_mellanox_num_of_vfs` on every provision: set `NUM_OF_VFS=32` when lower, skip quietly without `mstconfig` or ConnectX NIC | Only with `NUM_VFS` > 0: sets `SRIOV_EN` and `NUM_OF_VFS`. Fails without a Mellanox NIC. A change forces a reboot instead of kexec. | On every provision: raises `NUM_OF_VFS` to 32 (or `NUM_VFS`) with `mstconfig` in the ramdisk on each ConnectX-4/5/6/6 Dx/6 Lx/7 Ethernet function. Skips quietly without `mstconfig` or such a NIC. A failed `mstconfig` query or set fails the run. | Merged (#617) | `NUM_VFS_MODE=raise` |
 | Machine commands: each file runs as a script in a chroot (`#!` line or `/bin/sh`), in CAPRF index order | Each file is one command. Shell syntax (`;`, `\|`, `&&`, `>`, `<`, `$(`, backtick) is rejected. Files run in CAPRF index order (`commands-<N>.sh` by number, other names after them by name). | Each file runs as a script: a `#!` line selects the interpreter, any other file runs with `/bin/sh`. Same order. | Merged (#587) | Not needed |
 | Machine files: `cp -rfv`, symlinks kept | Copied, symlinks skipped | Same as default | Planned (#629) | Not needed |
 

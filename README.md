@@ -413,6 +413,8 @@ root is mounted.
 | `LUKS_KEY_SIZE` | `512` | *(Planned, not accepted: a `LUKS_*` key in `/deploy/vars` fails the run)* LUKS2 key size in bits |
 | `LUKS_HASH` | `sha256` | *(Planned, not accepted: a `LUKS_*` key in `/deploy/vars` fails the run)* LUKS2 hash algorithm |
 | `NUM_VFS` | `0` | Number of SR-IOV virtual functions for Mellanox NICs (0 = skip) |
+| `NUM_VFS_MODE` | `set` | `raise` raises `NUM_OF_VFS` to `NUM_VFS` (32 when 0) on every ConnectX NIC and skips quietly without one. Preset by `CAPRF_LEGACY_COMPAT` |
+| `NIC_FIRMWARE_LOG` | `false` | Log the firmware version of every NIC on each provision. Preset by `CAPRF_LEGACY_COMPAT` |
 | `NVME_NAMESPACES` | — | JSON config for NVMe namespace creation (e.g. `[{"controller":"/dev/nvme0","namespaces":[{"label":"os","sizePct":100}]}]`) |
 | `CLOUDINIT_ENABLED` | `false` | Generate and inject cloud-init config |
 | `CLOUDINIT_DATASOURCE` | `nocloud` | Cloud-init datasource type: `nocloud` or `configdrive` |
@@ -468,7 +470,7 @@ With the variable set, BOOTy keeps the legacy behaviour where the two differ:
 - `setup-mellanox` raises `NUM_OF_VFS` to 32 (or `NUM_VFS`) with `mstconfig`
   on every ConnectX-4/5/6/6 Dx/6 Lx/7 Ethernet function, like
   `setup_mellanox_num_of_vfs`, and skips quietly without `mstconfig` or such
-  NICs. Without the variable `NUM_VFS` stays opt-in.
+  NICs (`NUM_VFS_MODE=raise`). Without it `NUM_VFS` stays opt-in.
 - Without `DISK_DEVICE` or `DISK_SERIAL`, the target disk is the first disk
   (`DISK_SELECTION=lsblk`) of at least `MIN_DISK_SIZE_GB` in `lsblk` order, NVMe and virtio disks
   first, then SCSI/SATA disks, like `_select_single_disk`. BOOTy otherwise
@@ -506,7 +508,7 @@ With the variable set, BOOTy keeps the legacy behaviour where the two differ:
 - For provisioning, the ramdisk takes the machine `HOSTNAME`, like
   `hostname "$HOSTNAME"` in `provision.sh` (`RAMDISK_HOSTNAME=true`).
 - BOOTy logs the firmware version of every NIC (`nic_firmware`), like
-  `provision.sh`, also without `FIRMWARE_REPORT`.
+  `provision.sh`, also without `FIRMWARE_REPORT` (`NIC_FIRMWARE_LOG=true`).
 - `grow-partition` grows the last GPT Linux filesystem partition, like
   `provision.sh`, also when it is a data partition after the root. That
   partition then gets `e2fsck` and `resize2fs`, and the root filesystem keeps
@@ -669,8 +671,9 @@ driver information when sysfs has none. Storage controller firmware comes from
 `/sys/class/scsi_host/*/firmware_rev`. The minimum versions apply only with
 `FIRMWARE_REPORT=true`. An unknown version or a version below the minimum
 fails provisioning after BOOTy posts the report. A failed POST also fails
-provisioning. With `CAPRF_LEGACY_COMPAT=true`, BOOTy logs the NIC firmware
-versions also without `FIRMWARE_REPORT`.
+provisioning. With `NIC_FIRMWARE_LOG=true` (preset by
+`CAPRF_LEGACY_COMPAT=true`), BOOTy logs the NIC firmware versions also without
+`FIRMWARE_REPORT`.
 
 ### Image Verification
 
@@ -935,8 +938,8 @@ For each detected Mellanox device, BOOTy runs
 firmware and needs a hard reboot, so BOOTy skips kexec when SR-IOV changed.
 When `NUM_VFS` is positive, missing Mellanox NICs, missing `/dev/mst` pciconf
 devices, or `mstconfig` failures abort provisioning instead of silently
-continuing without the requested firmware change. In CAPRF legacy compat the
-rules differ: see
+continuing without the requested firmware change. With `NUM_VFS_MODE=raise`
+(preset by `CAPRF_LEGACY_COMPAT`) the rules differ: see
 [CAPRF legacy migration](docs/caprf-legacy-migration.md#installed-os-configuration).
 
 ### Secure Erase

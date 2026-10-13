@@ -148,3 +148,33 @@ func TestGRUBCmdlineModeAndLegacyPreset(t *testing.T) {
 		t.Fatal("Validate() accepted provision.grubCmdlineMode=replace")
 	}
 }
+
+func TestNICFirmwareOptionsAndLegacyPreset(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		cfg       Config
+		wantLog   bool
+		wantRaise bool
+	}{
+		{name: "default"},
+		{name: "native", cfg: Config{Provision: ProvisionConfig{Firmware: FirmwareConfig{LogNICs: new(true), NumVFsMode: "Raise"}}}, wantLog: true, wantRaise: true},
+		{name: "preset", cfg: Config{LegacyCompat: true}, wantLog: true, wantRaise: true},
+		{name: "explicit options win over preset", cfg: Config{LegacyCompat: true, Provision: ProvisionConfig{Firmware: FirmwareConfig{LogNICs: new(false), NumVFsMode: "set"}}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := tt.cfg
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("Validate() = %v", err)
+			}
+			if got := BoolOr(cfg.Provision.Firmware.LogNICs, false); got != tt.wantLog {
+				t.Errorf("LogNICs = %v, want %v", got, tt.wantLog)
+			}
+			if got := cfg.Provision.Firmware.NumVFsMode == NumVFsModeRaise; got != tt.wantRaise {
+				t.Errorf("NumVFsMode = %q, want raise %v", cfg.Provision.Firmware.NumVFsMode, tt.wantRaise)
+			}
+		})
+	}
+	if err := (&Config{Provision: ProvisionConfig{Firmware: FirmwareConfig{NumVFsMode: "max"}}}).Validate(); err == nil {
+		t.Fatal("Validate() accepted provision.firmware.numVFsMode=max")
+	}
+}

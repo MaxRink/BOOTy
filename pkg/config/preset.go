@@ -22,6 +22,12 @@ const (
 	GRUBCmdlineAppend   = "append"
 )
 
+// Values of FirmwareConfig.NumVFsMode.
+const (
+	NumVFsModeSet   = "set"
+	NumVFsModeRaise = "raise"
+)
+
 // Values of DiskConfig.Selection.
 const (
 	DiskSelectionPreferNVMe = "prefer-nvme"
@@ -56,6 +62,8 @@ func (c *Config) applyLegacyCompatPreset() {
 	presetBool(&c.Provision.WriteResolvConf, false)
 	presetBool(&c.RamdiskHostname, true)
 	presetString(&c.Provision.GRUBCmdlineMode, GRUBCmdlineAppend)
+	presetBool(&c.Provision.Firmware.LogNICs, true)
+	presetString(&c.Provision.Firmware.NumVFsMode, NumVFsModeRaise)
 }
 
 // presetString sets an unset (blank) string option.

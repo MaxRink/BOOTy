@@ -2530,6 +2530,23 @@ func TestParseVarsGRUBCmdlineMode(t *testing.T) {
 	}
 }
 
+func TestParseVarsNICFirmwareOptions(t *testing.T) {
+	cfg, err := ParseVars(strings.NewReader("NIC_FIRMWARE_LOG=true\nNUM_VFS_MODE=raise\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !config.BoolOr(cfg.Provision.Firmware.LogNICs, false) || cfg.Provision.Firmware.NumVFsMode != config.NumVFsModeRaise {
+		t.Fatalf("firmware options = %v %q", cfg.Provision.Firmware.LogNICs, cfg.Provision.Firmware.NumVFsMode)
+	}
+	cfg, err = ParseVars(strings.NewReader("CAPRF_LEGACY_COMPAT=true\nNIC_FIRMWARE_LOG=false\nNUM_VFS_MODE=set\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.BoolOr(cfg.Provision.Firmware.LogNICs, true) || cfg.Provision.Firmware.NumVFsMode != config.NumVFsModeSet {
+		t.Fatalf("explicit options must win over the preset: %v %q", cfg.Provision.Firmware.LogNICs, cfg.Provision.Firmware.NumVFsMode)
+	}
+}
+
 func TestParseVarsLifecycleActions(t *testing.T) {
 	tests := []struct {
 		vars         string

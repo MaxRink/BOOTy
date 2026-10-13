@@ -12,6 +12,7 @@ func applyParityVar(cfg *config.MachineConfig, key, value string) bool {
 		"DISK_SELECTION":           &cfg.Provision.Disk.Selection,
 		"PROVISIONER_FILES_TARGET": &cfg.ProvisionerFilesTarget,
 		"GRUB_CMDLINE_MODE":        &cfg.Provision.GRUBCmdlineMode,
+		"NUM_VFS_MODE":             &cfg.Provision.Firmware.NumVFsMode,
 	}
 	if ptr, ok := strFields[key]; ok {
 		*ptr = value
@@ -27,6 +28,7 @@ func applyParityVar(cfg *config.MachineConfig, key, value string) bool {
 		"IMAGE_ALLOW_INSECURE_HTTP": &cfg.Provision.Image.AllowInsecureHTTP,
 		"WRITE_RESOLV_CONF":         &cfg.Provision.WriteResolvConf,
 		"RAMDISK_HOSTNAME":          &cfg.RamdiskHostname,
+		"NIC_FIRMWARE_LOG":          &cfg.Provision.Firmware.LogNICs,
 	}
 	if ptr, ok := boolFields[key]; ok {
 		b := parseBoolVar(value)

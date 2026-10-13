@@ -392,7 +392,7 @@ func (o *Orchestrator) collectInventory(ctx context.Context) error {
 }
 
 func (o *Orchestrator) collectFirmware(ctx context.Context) error {
-	if o.cfg.LegacyCompat {
+	if config.BoolOr(o.cfg.Provision.Firmware.LogNICs, false) {
 		o.logNICFirmware()
 	}
 	if !o.cfg.Provision.Firmware.Enabled {
@@ -641,7 +641,7 @@ func (o *Orchestrator) createEFIBootEntry(ctx context.Context) error {
 
 func (o *Orchestrator) setupMellanox(ctx context.Context) error {
 	setup := o.config.SetupMellanox
-	if o.cfg.LegacyCompat {
+	if o.cfg.Provision.Firmware.NumVFsMode == config.NumVFsModeRaise {
 		setup = o.config.setupMellanoxLegacy
 	}
 	changed, err := setup(ctx, o.cfg.Provision.Disk.NumVFs)

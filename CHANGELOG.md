@@ -89,8 +89,8 @@ behaviour.
 | `/deploy/file-system` applied to the ramdisk, target `resolv.conf` not written | #588 | `PROVISIONER_FILES_TARGET=ramdisk`, `WRITE_RESOLV_CONF=false` (#652) |
 | Ramdisk hostname set to `HOSTNAME` | #626 | `RAMDISK_HOSTNAME=true` (#652) |
 | Legacy GRUB drop-in, no getty units | #594 | `GRUB_CMDLINE_MODE=append` (#653) |
-| `nic_firmware` log line per NIC | #628 | none yet |
-| Mellanox: raise `NUM_OF_VFS` to `NUM_VFS` | #617 | none yet |
+| `nic_firmware` log line per NIC | #628 | `NIC_FIRMWARE_LOG=true` (#656) |
+| Mellanox: raise `NUM_OF_VFS` to `NUM_VFS` | #617 | `NUM_VFS_MODE=raise` (#656) |
 | `grow-partition` grows the last GPT Linux partition | #625 | none yet |
 | Network wait like `wait_for_network` | #622 | none |
 | `MODE=decommission` powers off after success | #586 | `SUCCESS_ACTION` |
@@ -111,6 +111,7 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 - `PROVISIONER_FILES_TARGET` (`target`|`ramdisk`), `WRITE_RESOLV_CONF`,
   `RAMDISK_HOSTNAME` (#652)
 - `GRUB_CMDLINE_MODE` (`resolved`|`append`) (#653)
+- `NIC_FIRMWARE_LOG`, `NUM_VFS_MODE` (`set`|`raise`) (#656)
 - `CAPRF_LEGACY_COMPAT` parity (#585, #588, #589, #590, #591, #594, #617, #622,
   #625, #626, #628)
 - NIC firmware versions are read from ethtool when sysfs has none (#628)

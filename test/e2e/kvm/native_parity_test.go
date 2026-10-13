@@ -73,16 +73,43 @@ func TestNativeParityProvisionSuccessActionPowerOffQEMU(t *testing.T) {
 	vars["IMAGE_ALLOW_INSECURE_HTTP"] = "true"
 	vars["DISK_DEVICE"] = "/dev/vda"
 	vars["SUCCESS_ACTION"] = "poweroff"
+	// The NIC firmware options ride along to save a VM run.
+	vars["NIC_FIRMWARE_LOG"] = "true"
+	vars["NUM_VFS_MODE"] = "raise"
 	initramfs := buildProvisionInitramfs(t, vars)
 
 	output := runQEMUProvision(t, findKernel(t), initramfs, targetDisk, 6*time.Minute)
 	t.Logf("native poweroff provision output tail:\n%s", tail(output, 3000))
+	requireNICFirmwareOptions(t, output)
 
 	assertProvisionSucceeded(t, output)
 	caprf.requireStatuses(t, "init", "success")
 	requirePowerOff(t, output)
 	if strings.Contains(string(output), "attempting kexec") {
 		t.Fatalf("SUCCESS_ACTION=poweroff must not kexec. tail:\n%s", tail(output, 4000))
+	}
+}
+
+// requireNICFirmwareOptions checks NIC_FIRMWARE_LOG=true (a nic_firmware
+// line for eth0) and NUM_VFS_MODE=raise (the legacy Mellanox step runs and
+// skips quietly without a ConnectX NIC or mstconfig). Without the options
+// BOOTy logs no NIC firmware and reports the SR-IOV setup as disabled.
+func requireNICFirmwareOptions(t *testing.T, output []byte) {
+	t.Helper()
+	text := string(output)
+	nicLine := false
+	for _, line := range strings.Split(text, "\n") {
+		if strings.Contains(line, "nic_firmware") && strings.Contains(line, "nic=eth0") && strings.Contains(line, "version=") {
+			nicLine = true
+			break
+		}
+	}
+	if !nicLine {
+		t.Errorf("NIC_FIRMWARE_LOG=true did not log the NIC firmware of eth0")
+	}
+	if strings.Contains(text, "mellanox SR-IOV setup disabled") ||
+		(!strings.Contains(text, "mellanox: mstconfig not found, skipping") && !strings.Contains(text, "mellanox: no ConnectX Ethernet NICs found, skipping")) {
+		t.Errorf("NUM_VFS_MODE=raise did not take the legacy Mellanox step")
 	}
 }
 
