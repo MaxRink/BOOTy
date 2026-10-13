@@ -1234,7 +1234,7 @@ func TestMachineFilesAndCommandsNoopE2E(t *testing.T) {
 	if err := c.CopyMachineFiles(context.Background()); err != nil {
 		t.Fatalf("CopyMachineFiles: %v", err)
 	}
-	if err := c.RunMachineCommands(context.Background()); err != nil {
+	if err := c.RunMachineCommands(context.Background(), false); err != nil {
 		t.Fatalf("RunMachineCommands: %v", err)
 	}
 }

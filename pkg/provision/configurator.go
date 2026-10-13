@@ -3,6 +3,8 @@
 package provision
 
 import (
+	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -14,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -44,7 +47,12 @@ var (
 	installEFIFallbackWithChroot = true
 	provisionerFilesDir          = "/deploy/file-system"
 	ramdiskRoot                  = "/"
+	machineCommandsDir           = "/deploy/machine-commands"
 )
+
+// machineCommandsChrootDir is where legacy-compat machine command scripts
+// are staged inside the target root while they run.
+const machineCommandsChrootDir = "/tmp/booty-machine-commands"
 
 var managedEFIVendors = [...]string{"ubuntu", "debian"}
 
@@ -993,39 +1001,183 @@ func copyTreeDestination(srcBase, destRoot, path string, validatedParents map[st
 	return destPath, nil
 }
 
-// RunMachineCommands executes commands from /deploy/machine-commands/ in chroot.
-func (c *Configurator) RunMachineCommands(ctx context.Context) error {
-	cmdDir := "/deploy/machine-commands"
-	if _, err := os.Stat(cmdDir); os.IsNotExist(err) {
-		slog.Info("no machine commands directory found", "path", cmdDir)
+// RunMachineCommands executes commands from /deploy/machine-commands/ in
+// chroot, in the order of the CAPRF MachineConfig.Commands list.
+//
+// By default each file must hold one command without shell metacharacters.
+// With legacyCompat each file runs as a script, like run_script_in_chroot in
+// the CAPRF legacy provision.sh: a file with a "#!" line runs with that
+// interpreter, any other file runs with /bin/sh.
+func (c *Configurator) RunMachineCommands(ctx context.Context, legacyCompat bool) error {
+	entries, err := os.ReadDir(machineCommandsDir)
+	if os.IsNotExist(err) {
+		slog.Info("no machine commands directory found", "path", machineCommandsDir)
 		return nil
 	}
-	entries, err := os.ReadDir(cmdDir)
 	if err != nil {
 		return fmt.Errorf("reading machine-commands dir: %w", err)
 	}
+	names := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
+		if !entry.IsDir() {
+			names = append(names, entry.Name())
 		}
-		data, err := os.ReadFile(filepath.Join(cmdDir, entry.Name()))
+	}
+	slices.SortStableFunc(names, compareMachineCommandNames)
+	for _, name := range names {
+		data, err := os.ReadFile(filepath.Join(machineCommandsDir, name))
 		if err != nil {
-			return fmt.Errorf("reading command file %s: %w", entry.Name(), err)
+			return fmt.Errorf("reading command file %s: %w", name, err)
 		}
-		cmd := strings.TrimSpace(string(data))
-		if cmd == "" {
-			continue
+		if legacyCompat {
+			err = c.runMachineCommandScript(ctx, name, data)
+		} else {
+			err = c.runMachineCommand(ctx, name, string(data))
 		}
-		if err := validateProvisionCommand(cmd); err != nil {
-			return fmt.Errorf("machine command %s rejected: %w", entry.Name(), err)
-		}
-		slog.Info("running machine command", "file", entry.Name(), "command", redactCommand(cmd))
-		out, err := c.disk.ChrootRun(ctx, c.rootDir, cmd)
 		if err != nil {
-			return fmt.Errorf("machine command %s: %s: %w", entry.Name(), redactCommand(string(out)), err)
+			return err
 		}
 	}
 	return nil
+}
+
+func (c *Configurator) runMachineCommand(ctx context.Context, name, content string) error {
+	cmd := strings.TrimSpace(content)
+	if cmd == "" {
+		return nil
+	}
+	if err := validateProvisionCommand(cmd); err != nil {
+		return fmt.Errorf("machine command %s rejected: %w", name, err)
+	}
+	slog.Info("running machine command", "file", name, "command", redactCommand(cmd))
+	out, err := c.disk.ChrootRun(ctx, c.rootDir, cmd)
+	if err != nil {
+		return fmt.Errorf("machine command %s: %s: %w", name, redactCommand(string(out)), err)
+	}
+	return nil
+}
+
+// runMachineCommandScript copies the script into the target root, runs it
+// there and removes it again.
+func (c *Configurator) runMachineCommandScript(ctx context.Context, name string, content []byte) (retErr error) {
+	if strings.TrimSpace(string(content)) == "" {
+		return nil
+	}
+	scriptPath := filepath.Join(machineCommandsChrootDir, name)
+	// os.Root keeps every path operation inside the target root, also when
+	// the image or the script itself plants symlinks.
+	root, err := os.OpenRoot(c.rootDir)
+	if err != nil {
+		return fmt.Errorf("machine command %s: open target root: %w", name, err)
+	}
+	defer root.Close() //nolint:errcheck // directory handle
+	rel := strings.TrimPrefix(scriptPath, "/")
+	if err := writeScriptInRoot(root, rel, content); err != nil {
+		return fmt.Errorf("machine command %s: write script: %w", name, err)
+	}
+	defer func() {
+		// The script may hold credentials: a leftover copy fails the step.
+		if err := root.Remove(rel); err != nil && !os.IsNotExist(err) {
+			retErr = errors.Join(retErr, fmt.Errorf("machine command %s: remove staged script: %w", name, err))
+		}
+	}()
+
+	argv := []string{scriptPath}
+	if !bytes.HasPrefix(content, []byte("#!")) {
+		argv = []string{"/bin/sh", scriptPath}
+	}
+	slog.Info("running machine command script", "file", name)
+	// Stream the output to the log while the script runs, like the legacy
+	// `run_script_in_chroot ... | while read line; do log ...; done`.
+	err = runStreamingCommand(ctx, func(line string) {
+		slog.Info("machine command output", "file", name, "line", redactCommand(line))
+	}, c.rootDir, argv)
+	if err != nil {
+		return &redactedCommandError{msg: fmt.Sprintf("machine command %s: %s", name, redactCommand(err.Error())), err: err}
+	}
+	return nil
+}
+
+// redactedCommandError shows a redacted message but keeps the cause for
+// errors.Is and errors.As, for example context.Canceled.
+type redactedCommandError struct {
+	msg string
+	err error
+}
+
+func (e *redactedCommandError) Error() string { return e.msg }
+
+func (e *redactedCommandError) Unwrap() error { return e.err }
+
+// writeScriptInRoot replaces rel inside root with a new executable file.
+func writeScriptInRoot(root *os.Root, rel string, content []byte) error {
+	// The staging directory lives in /tmp. Create a missing /tmp with the
+	// usual shared sticky mode, never root-only.
+	if _, err := root.Stat("tmp"); os.IsNotExist(err) {
+		if err := root.Mkdir("tmp", 0o755); err != nil {
+			return fmt.Errorf("create /tmp: %w", err)
+		}
+		if err := root.Chmod("tmp", os.ModeSticky|0o777); err != nil {
+			return fmt.Errorf("chmod /tmp: %w", err)
+		}
+	}
+	if err := root.MkdirAll(filepath.Dir(rel), 0o700); err != nil {
+		return fmt.Errorf("create %s: %w", filepath.Dir(rel), err)
+	}
+	if err := root.Remove(rel); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove existing %s: %w", rel, err)
+	}
+	f, err := root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o700)
+	if err != nil {
+		return fmt.Errorf("create %s: %w", rel, err)
+	}
+	if _, err := f.Write(content); err != nil {
+		_ = f.Close()
+		_ = root.Remove(rel)
+		return fmt.Errorf("write %s: %w", rel, err)
+	}
+	if err := f.Close(); err != nil {
+		_ = root.Remove(rel)
+		return fmt.Errorf("close %s: %w", rel, err)
+	}
+	return nil
+}
+
+// compareMachineCommandNames orders CAPRF "commands-<index>.sh" files by
+// index, so commands-10.sh runs after commands-2.sh. Other names sort after
+// them by name.
+func compareMachineCommandNames(a, b string) int {
+	ai, aok := machineCommandIndex(a)
+	bi, bok := machineCommandIndex(b)
+	switch {
+	case aok && bok:
+		return cmp.Compare(ai, bi)
+	case aok:
+		return -1
+	case bok:
+		return 1
+	default:
+		return strings.Compare(a, b)
+	}
+}
+
+func machineCommandIndex(name string) (int, bool) {
+	digits, ok := strings.CutPrefix(name, "commands-")
+	if !ok {
+		return 0, false
+	}
+	digits, ok = strings.CutSuffix(digits, ".sh")
+	if !ok {
+		return 0, false
+	}
+	if digits == "" || strings.Trim(digits, "0123456789") != "" {
+		return 0, false
+	}
+	n, err := strconv.Atoi(digits)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
 }
 
 // RunPostProvisionCmds executes custom commands in the chroot after provisioning.

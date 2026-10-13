@@ -25,7 +25,7 @@ and reads its input from the `/deploy` directory of the ramdisk:
 | `/deploy/file-system/` | Provisioner files (CAPRF `provisionerConfig.files`) | Copied into the installed OS. With `PROVISIONER_FILES_TARGET=ramdisk` (preset by `CAPRF_LEGACY_COMPAT=true`), copied into the ramdisk instead. |
 | `/deploy/file-system/etc/netplan/*.yaml`, `/deploy/file-system/etc/frr/frr.conf` | Network input | Network setup in all modes. See [Netplan and FRR config input](networking.md#netplan-and-frr-config-input). |
 | `/deploy/machine-files/` | Machine files | `copy-machine-files` step: copied into the installed OS. |
-| `/deploy/machine-commands/` | One command per file | `run-machine-commands` step: run in a chroot of the installed OS. |
+| `/deploy/machine-commands/` | One command per file. With `CAPRF_LEGACY_COMPAT=true`, one script per file (`#!` line or `/bin/sh`). | `run-machine-commands` step: run in a chroot of the installed OS, in CAPRF index order. |
 
 ### `/deploy/vars` format
 

@@ -516,6 +516,10 @@ With the variable set, BOOTy keeps the legacy behaviour where the two differ:
   established. The limit covers the whole wait, also the GoBGP session wait.
   Then BOOTy reports the error. BOOTy otherwise sets up the network up to 3
   times and waits up to 5 minutes each time.
+- Each file in `/deploy/machine-commands` runs as a script in the target
+  root, like `run_script_in_chroot`. A file with a `#!` line uses that
+  interpreter, any other file runs with `/bin/sh`. Without the variable each
+  file must hold one command without shell metacharacters.
 
 Without the variable, BOOTy keeps its own defaults.
 

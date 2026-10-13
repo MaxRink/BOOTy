@@ -562,7 +562,7 @@ func TestCopyMachineFilesNotExist(t *testing.T) {
 func TestRunMachineCommandsNotExist(t *testing.T) {
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
-	if err := c.RunMachineCommands(context.Background()); err != nil {
+	if err := c.RunMachineCommands(context.Background(), false); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

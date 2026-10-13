@@ -469,7 +469,7 @@ func TestConfiguratorConfigureGRUB_UnsafeParamsRejected(t *testing.T) {
 func TestConfiguratorRunMachineCommands_NoDirNoOp(t *testing.T) {
 	cmd := newMockCommander()
 	c := newTestConfigurator(t, cmd)
-	if err := c.RunMachineCommands(context.Background()); err != nil {
+	if err := c.RunMachineCommands(context.Background(), false); err != nil {
 		t.Fatalf("expected nil when machine-commands dir absent: %v", err)
 	}
 }

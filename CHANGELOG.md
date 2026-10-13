@@ -94,6 +94,7 @@ behaviour.
 | `grow-partition` grows the last GPT Linux partition | #625 | none yet |
 | Network wait like `wait_for_network` | #622 | none |
 | `MODE=decommission` powers off after success | #586 | `SUCCESS_ACTION` |
+| Machine commands run as scripts in the target chroot, in numeric order | #587 | none yet |
 
 The preset fills only unset options, so an explicit value (also an explicit
 default) wins. `SUCCESS_ACTION=poweroff` is rejected with

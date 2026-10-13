@@ -2874,7 +2874,7 @@ func (o *Orchestrator) copyMachineFiles(ctx context.Context) error {
 }
 
 func (o *Orchestrator) runMachineCommands(ctx context.Context) error {
-	return o.config.RunMachineCommands(ctx)
+	return o.config.RunMachineCommands(ctx, o.cfg.LegacyCompat)
 }
 
 func (o *Orchestrator) runPostProvisionCmds(ctx context.Context) error {
