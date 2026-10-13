@@ -73,7 +73,7 @@ jobs:
   kvm-tests:
     name: KVM ${{ matrix.scenario }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 75
     strategy:
       matrix:
         include:
@@ -144,6 +144,8 @@ jobs:
             test_regex: "^TestLegacyCompat"
             privileged: true
             setup: ""
+            # About 1.5 minutes per QEMU run and more than ten runs.
+            go_timeout: 40m
           - scenario: caprf-native-parity
             qemu_extra: ""
             test_tag: e2e
@@ -337,9 +339,9 @@ jobs:
             exit 1
           fi
           if [ "${{ matrix.privileged }}" = "true" ] || [ "${{ matrix.scenario }}" = "luks-verify" ]; then
-            test_cmd=(sudo -E env "PATH=$PATH:/usr/sbin:/sbin" go test -tags ${{ matrix.test_tag }} -run ${{ matrix.test_regex }} -race -count=1 -v -timeout 15m ./test/e2e/kvm/...)
+            test_cmd=(sudo -E env "PATH=$PATH:/usr/sbin:/sbin" go test -tags ${{ matrix.test_tag }} -run ${{ matrix.test_regex }} -race -count=1 -v -timeout ${{ matrix.go_timeout || '15m' }} ./test/e2e/kvm/...)
           else
-            test_cmd=(go test -tags ${{ matrix.test_tag }} -run ${{ matrix.test_regex }} -race -count=1 -v -timeout 15m ./test/e2e/kvm/...)
+            test_cmd=(go test -tags ${{ matrix.test_tag }} -run ${{ matrix.test_regex }} -race -count=1 -v -timeout ${{ matrix.go_timeout || '15m' }} ./test/e2e/kvm/...)
           fi
           if ! "${test_cmd[@]}" 2>&1 | tee "${log_file}"; then
             {
