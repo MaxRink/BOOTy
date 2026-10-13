@@ -2513,6 +2513,23 @@ func TestParseVarsFilesOptions(t *testing.T) {
 	}
 }
 
+func TestParseVarsGRUBCmdlineMode(t *testing.T) {
+	for vars, want := range map[string]bool{
+		"GRUB_CMDLINE_MODE=append\n":                             true,
+		"CAPRF_LEGACY_COMPAT=true\n":                             true,
+		"CAPRF_LEGACY_COMPAT=true\nGRUB_CMDLINE_MODE=resolved\n": false,
+		"HOSTNAME=x\n": false,
+	} {
+		cfg, err := ParseVars(strings.NewReader(vars))
+		if err != nil {
+			t.Fatalf("ParseVars(%q): %v", vars, err)
+		}
+		if got := cfg.LegacyGRUBCmdline(); got != want {
+			t.Errorf("ParseVars(%q): LegacyGRUBCmdline() = %v, want %v", vars, got, want)
+		}
+	}
+}
+
 func TestParseVarsLifecycleActions(t *testing.T) {
 	tests := []struct {
 		vars         string

@@ -122,3 +122,29 @@ func TestFilesOptionsAndLegacyPreset(t *testing.T) {
 		t.Fatal("Validate() accepted provisionerFilesTarget=both")
 	}
 }
+
+func TestGRUBCmdlineModeAndLegacyPreset(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		cfg  Config
+		want bool
+	}{
+		{name: "default"},
+		{name: "native append", cfg: Config{Provision: ProvisionConfig{GRUBCmdlineMode: "Append"}}, want: true},
+		{name: "preset", cfg: Config{LegacyCompat: true}, want: true},
+		{name: "explicit resolved wins over preset", cfg: Config{LegacyCompat: true, Provision: ProvisionConfig{GRUBCmdlineMode: "resolved"}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := tt.cfg
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("Validate() = %v", err)
+			}
+			if got := cfg.LegacyGRUBCmdline(); got != tt.want {
+				t.Fatalf("LegacyGRUBCmdline() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+	if err := (&Config{Provision: ProvisionConfig{GRUBCmdlineMode: "replace"}}).Validate(); err == nil {
+		t.Fatal("Validate() accepted provision.grubCmdlineMode=replace")
+	}
+}

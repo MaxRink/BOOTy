@@ -2735,10 +2735,13 @@ func (o *Orchestrator) configureKubelet(_ context.Context) error {
 // configure-grub so an ambiguous console fails the provisioning run before the
 // boot configuration is written.
 func (o *Orchestrator) configureSerialConsole(_ context.Context) error {
-	if o.cfg.LegacyCompat {
-		// The legacy provisioner only sets console= on the kernel command
-		// line and leaves the getty units of the image alone.
-		o.log.Info("legacy compat: serial console comes from the kernel command line only")
+	if o.cfg.LegacyGRUBCmdline() {
+		// Like the legacy provisioner: console= only on the kernel command
+		// line, the getty units of the image stay as they are.
+		if o.cfg.Provision.SerialConsole != "" {
+			o.log.Warn("serial console override ignored with GRUB_CMDLINE_MODE=append", "MACHINE_SERIAL_CONSOLE", o.cfg.Provision.SerialConsole)
+		}
+		o.log.Info("serial console comes from the kernel command line only")
 		return nil
 	}
 	return o.config.ConfigureSerialConsole(o.cfg)

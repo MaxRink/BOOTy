@@ -142,6 +142,9 @@ func (c *Config) validateEnums() []string {
 			return validateEnumLower(c.ProvisionerFilesTarget, "provisionerFilesTarget", ProvisionerFilesTarget, ProvisionerFilesRamdisk)
 		},
 		func() string {
+			return validateEnumLower(c.Provision.GRUBCmdlineMode, "provision.grubCmdlineMode", GRUBCmdlineResolved, GRUBCmdlineAppend)
+		},
+		func() string {
 			return validateEnumLower(c.FailureAction, "failureAction", FailureActionReboot, FailureActionWait)
 		},
 		func() string {
@@ -290,6 +293,7 @@ func (c *Config) normalize() {
 		&c.FailureAction,
 		&c.Provision.Disk.Selection,
 		&c.ProvisionerFilesTarget,
+		&c.Provision.GRUBCmdlineMode,
 	}
 	for _, f := range lowerFields {
 		if *f != "" {

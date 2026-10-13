@@ -405,7 +405,7 @@ func formatKubeletExtraArgs(args []string) string {
 
 // ConfigureGRUB writes GRUB kernel parameters and runs update-grub via chroot.
 //
-// With CAPRF_LEGACY_COMPAT it follows the legacy provisioner instead: it
+// With GRUB_CMDLINE_MODE=append it follows the legacy provisioner instead: it
 // appends "ds=nocloud console=ttyS0,115200n8" (ttyS1 on Lenovo) and the
 // extra parameters verbatim, so several console= tokens can appear, and it
 // skips update-grub when the image has none. The rest of this comment
@@ -416,7 +416,7 @@ func formatKubeletExtraArgs(args []string) string {
 // console= parameter is emitted: operator-supplied console tokens are folded
 // into the resolution instead of being appended a second time.
 func (c *Configurator) ConfigureGRUB(ctx context.Context, cfg *config.MachineConfig) error {
-	if cfg != nil && cfg.LegacyCompat {
+	if cfg != nil && cfg.LegacyGRUBCmdline() {
 		return c.configureGRUBLegacy(ctx, cfg)
 	}
 	grubLine, consoleParam, err := c.grubCmdlineEntry(cfg)

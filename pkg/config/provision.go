@@ -33,6 +33,19 @@ type ProvisionConfig struct {
 	// Default: "" (resolve from firmware evidence)
 	SerialConsole string `yaml:"serialConsole" json:"serialConsole"`
 
+	// GRUBCmdlineMode selects how BOOTy writes the kernel parameters to
+	// /etc/default/grub.d/10-caprf-kernel-params.cfg.
+	// "resolved": the serial console resolver picks at most one console;
+	// for that console BOOTy writes console=, a GRUB serial terminal and
+	// getty units (none with SerialConsole "none"); update-grub must exist.
+	// "append": like provision.sh of the CAPRF legacy provisioner, append
+	// "ds=nocloud console=ttyS0,115200n8 <ExtraKernelParams>" (ttyS1 on
+	// Lenovo) to the image GRUB_CMDLINE_LINUX, run update-grub only when
+	// the image has it, and write no getty units. SerialConsole is ignored.
+	// Valid values: "resolved", "append". Preset by legacyCompat: "append".
+	// Default: "" (resolved)
+	GRUBCmdlineMode string `yaml:"grubCmdlineMode" json:"grubCmdlineMode"`
+
 	// FailureDomain maps to topology.kubernetes.io/zone for the provisioned node.
 	// Default: ""
 	FailureDomain string `yaml:"failureDomain" json:"failureDomain"`

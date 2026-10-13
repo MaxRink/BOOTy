@@ -16,6 +16,12 @@ const (
 	ProvisionerFilesRamdisk = "ramdisk"
 )
 
+// Values of ProvisionConfig.GRUBCmdlineMode.
+const (
+	GRUBCmdlineResolved = "resolved"
+	GRUBCmdlineAppend   = "append"
+)
+
 // Values of DiskConfig.Selection.
 const (
 	DiskSelectionPreferNVMe = "prefer-nvme"
@@ -49,6 +55,7 @@ func (c *Config) applyLegacyCompatPreset() {
 	presetString(&c.ProvisionerFilesTarget, ProvisionerFilesRamdisk)
 	presetBool(&c.Provision.WriteResolvConf, false)
 	presetBool(&c.RamdiskHostname, true)
+	presetString(&c.Provision.GRUBCmdlineMode, GRUBCmdlineAppend)
 }
 
 // presetString sets an unset (blank) string option.

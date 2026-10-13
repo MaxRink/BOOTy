@@ -327,6 +327,7 @@ root is mounted.
 | `BOOTY_ALLOW_REMOVABLE` | `false` | Allow USB/removable media as provisioning target |
 | `MACHINE_EXTRA_KERNEL_PARAMS` | — | Additional kernel cmdline parameters |
 | `EXTRA_KERNEL_PARAMS` | — | Additional kernel cmdline parameters, read by the CAPRF legacy provisioner. Appended to `MACHINE_EXTRA_KERNEL_PARAMS` |
+| `GRUB_CMDLINE_MODE` | `resolved` | `append` writes the GRUB kernel parameters like the legacy `provision.sh` and no getty units. Preset by `CAPRF_LEGACY_COMPAT` |
 | `MACHINE_SERIAL_CONSOLE` | — | Pin the serial console of the provisioned system (e.g. `ttyS1,115200n8`), or `none` to disable it. Overrides ACPI SPCR / device-tree / sysfs evidence. Alias: `SERIAL_CONSOLE` |
 | `INIT_URL` | — | CAPRF init status endpoint |
 | `SUCCESS_URL` | — | CAPRF success status endpoint |
@@ -478,7 +479,7 @@ With the variable set, BOOTy keeps the legacy behaviour where the two differ:
   console=ttyS0,115200n8 <extra>"` in `10-caprf-kernel-params.cfg`, with
   `ttyS1` on Lenovo hosts, and `update-grub` runs only when the image has it.
   BOOTy does not resolve the console from firmware and does not write getty
-  units in this mode.
+  units in this mode (`GRUB_CMDLINE_MODE=append`).
 - Transport follows the legacy `curl --insecure` calls: CAPRF callbacks and
   image URLs may use plain HTTP (`INSECURE_TRANSPORT=true`,
   `IMAGE_ALLOW_INSECURE_HTTP=true`), and TLS certificates are not verified

@@ -11,6 +11,7 @@ func applyParityVar(cfg *config.MachineConfig, key, value string) bool {
 		"FAILURE_ACTION":           &cfg.FailureAction,
 		"DISK_SELECTION":           &cfg.Provision.Disk.Selection,
 		"PROVISIONER_FILES_TARGET": &cfg.ProvisionerFilesTarget,
+		"GRUB_CMDLINE_MODE":        &cfg.Provision.GRUBCmdlineMode,
 	}
 	if ptr, ok := strFields[key]; ok {
 		*ptr = value

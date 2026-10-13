@@ -92,8 +92,9 @@ values are false.
 | `FAILURE_ACTION` | `reboot` | `reboot`, `wait` | End of a failed run. `wait`: report the error to `ERROR_URL` and keep the ramdisk running. Applies to a failed deprovision, a failure before the mode runs (vars file, network, JWT exchange) and exhausted JWT renewal. For a failed provision it is the default of `RESCUE_MODE`; an explicit `RESCUE_MODE` wins. YAML `failureAction`. Preset: `wait`. |
 | `MACHINE_EXTRA_KERNEL_PARAMS` | (unset) | kernel parameters | Extra kernel parameters for the installed OS GRUB configuration. A `console=` token is folded into the serial console resolution. |
 | `EXTRA_KERNEL_PARAMS` | (unset) | kernel parameters | Extra kernel parameters that the legacy provisioner reads. BOOTy appends them after `MACHINE_EXTRA_KERNEL_PARAMS`, whatever the line order. |
-| `MACHINE_SERIAL_CONSOLE` | (unset) | for example `ttyS1,115200n8`, `ttyS0`, `none` | Serial console of the installed OS. It overrides the firmware evidence (ACPI SPCR, device tree, sysfs). `none` configures no serial console. Legacy compat ignores it. Alias: `SERIAL_CONSOLE`. |
+| `MACHINE_SERIAL_CONSOLE` | (unset) | for example `ttyS1,115200n8`, `ttyS0`, `none` | Serial console of the installed OS. It overrides the firmware evidence (ACPI SPCR, device tree, sysfs). `none` configures no serial console. `GRUB_CMDLINE_MODE=append` ignores it and logs a warning. Alias: `SERIAL_CONSOLE`. |
 | `SERIAL_CONSOLE` | (unset) | see above | Alias of `MACHINE_SERIAL_CONSOLE`. |
+| `GRUB_CMDLINE_MODE` | `resolved` | `resolved`, `append` | How BOOTy writes `10-caprf-kernel-params.cfg`. `resolved`: the [serial console resolver](serial-console-resolution.md) picks at most one console; for that console BOOTy writes `console=`, a GRUB serial terminal and getty units (none with `MACHINE_SERIAL_CONSOLE=none`); `update-grub` must exist. `append`: like `provision.sh`, `GRUB_CMDLINE_LINUX="$GRUB_CMDLINE_LINUX ds=nocloud console=ttyS0,115200n8 <extra>"` (`ttyS1` when DMI `sys_vendor` is `Lenovo`), extra parameters verbatim, `update-grub` only when the image has it, no getty units, `MACHINE_SERIAL_CONSOLE` ignored. YAML `provision.grubCmdlineMode`. Preset: `append`. |
 | `FAILURE_DOMAIN` | (unset) | Kubernetes label value | Kubelet node label `topology.kubernetes.io/zone`. |
 | `REGION` | (unset) | Kubernetes label value | Kubelet node label `topology.kubernetes.io/region`. |
 | `PROVIDER_ID` | (unset) | string without white space | Kubelet `--provider-id`. Cloud-init also uses it as the instance ID. |
@@ -144,11 +145,11 @@ defaults.
 | Provisioner files into the ramdisk, like `copy_files` | `PROVISIONER_FILES_TARGET` | `provisionerFilesTarget` | `target` | `ramdisk` |
 | Write the installed OS `resolv.conf` | `WRITE_RESOLV_CONF` | `provision.writeResolvConf` | `true` | `false` |
 | Ramdisk host name for provisioning | `RAMDISK_HOSTNAME` | `ramdiskHostname` | `false` | `true` |
+| GRUB kernel parameters like `provision.sh`, no getty units | `GRUB_CMDLINE_MODE` | `provision.grubCmdlineMode` | `resolved` | `append` |
 
 These behaviours do not have their own option yet. Only the preset turns
 them on:
 
-- `MACHINE_SERIAL_CONSOLE` is ignored.
 - `setup-mellanox` raises `NUM_OF_VFS` to 32 (or `NUM_VFS`) on every
   ConnectX Ethernet function. It skips quietly without `mstconfig` or such a
   NIC.

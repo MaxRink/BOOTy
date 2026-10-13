@@ -86,9 +86,9 @@ behaviour.
 | No TLS verification (never for `TOKEN_URL` or crash upload) | #589 | `SKIP_TLS_VERIFY=true` (#650) |
 | Plain HTTP image URLs | #589 | `IMAGE_ALLOW_INSECURE_HTTP=true` |
 | Export every vars entry to the environment | #589 | `EXPORT_VARS=true` (#650) |
-| `/deploy/file-system` applied to the ramdisk, target `resolv.conf` not written | #588 | none yet |
-| Ramdisk hostname set to `HOSTNAME` | #626 | none yet |
-| Legacy GRUB drop-in, no getty units | #594 | none yet |
+| `/deploy/file-system` applied to the ramdisk, target `resolv.conf` not written | #588 | `PROVISIONER_FILES_TARGET=ramdisk`, `WRITE_RESOLV_CONF=false` (#652) |
+| Ramdisk hostname set to `HOSTNAME` | #626 | `RAMDISK_HOSTNAME=true` (#652) |
+| Legacy GRUB drop-in, no getty units | #594 | `GRUB_CMDLINE_MODE=append` (#653) |
 | `nic_firmware` log line per NIC | #628 | none yet |
 | Mellanox: raise `NUM_OF_VFS` to `NUM_VFS` | #617 | none yet |
 | `grow-partition` grows the last GPT Linux partition | #625 | none yet |
@@ -108,6 +108,9 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   the preset mechanism (#648)
 - `DISK_SELECTION` (`prefer-nvme`|`lsblk`), `WIPE_ALL_DISKS`, `DISCARD_NVME` (#649)
 - `SKIP_TLS_VERIFY`, `EXPORT_VARS` (#650)
+- `PROVISIONER_FILES_TARGET` (`target`|`ramdisk`), `WRITE_RESOLV_CONF`,
+  `RAMDISK_HOSTNAME` (#652)
+- `GRUB_CMDLINE_MODE` (`resolved`|`append`) (#653)
 - `CAPRF_LEGACY_COMPAT` parity (#585, #588, #589, #590, #591, #594, #617, #622,
   #625, #626, #628)
 - NIC firmware versions are read from ethtool when sysfs has none (#628)

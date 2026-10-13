@@ -3,7 +3,9 @@
 package provision
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,7 +28,7 @@ func writeFixture(t *testing.T, path, content string, mode os.FileMode) {
 // GRUB_CMDLINE_LINUX="$GRUB_CMDLINE_LINUX ds=nocloud $CONSOLE_PARAMS $EXTRA_KERNEL_PARAMS"
 // to /etc/default/grub.d/10-caprf-kernel-params.cfg, with ttyS1 on Lenovo
 // and ttyS0 elsewhere, and runs update-grub only when the image has it.
-func TestConfigureGRUBLegacyCompat(t *testing.T) {
+func TestConfigureGRUBAppendMode(t *testing.T) {
 	tests := []struct {
 		name       string
 		vendor     string
@@ -55,7 +57,8 @@ func TestConfigureGRUBLegacyCompat(t *testing.T) {
 			if tt.updateGRUB {
 				writeFixture(t, filepath.Join(c.rootDir, "usr", "sbin", "update-grub"), "#!/bin/sh\n", 0o755)
 			}
-			cfg := &config.MachineConfig{LegacyCompat: true}
+			cfg := &config.MachineConfig{}
+			cfg.Provision.GRUBCmdlineMode = config.GRUBCmdlineAppend
 			cfg.Provision.ExtraKernelParams = tt.extra
 
 			if err := c.ConfigureGRUB(context.Background(), cfg); err != nil {
@@ -81,9 +84,9 @@ func TestConfigureGRUBLegacyCompat(t *testing.T) {
 	}
 }
 
-func TestConfigureGRUBLegacyCompatRejectsUnsafeParams(t *testing.T) {
+func TestConfigureGRUBAppendModeRejectsUnsafeParams(t *testing.T) {
 	c := newTestConfigurator(t, newMockCommander())
-	cfg := &config.MachineConfig{LegacyCompat: true}
+	cfg := withPresets(&config.MachineConfig{LegacyCompat: true})
 	cfg.Provision.ExtraKernelParams = `quiet" ; rm -rf /`
 	if err := c.ConfigureGRUB(context.Background(), cfg); err == nil {
 		t.Fatal("ConfigureGRUB() accepted a quote that breaks the grub drop-in")
@@ -91,13 +94,33 @@ func TestConfigureGRUBLegacyCompatRejectsUnsafeParams(t *testing.T) {
 }
 
 // The legacy provisioner does not write getty units.
-func TestConfigureSerialConsoleSkippedInLegacyCompat(t *testing.T) {
-	o := newTestOrchestrator(t, &config.MachineConfig{LegacyCompat: true}, &mockProvider{})
+func TestConfigureSerialConsoleSkippedInAppendMode(t *testing.T) {
+	o := newTestOrchestrator(t, withPresets(&config.MachineConfig{LegacyCompat: true}), &mockProvider{})
 	if err := o.configureSerialConsole(context.Background()); err != nil {
 		t.Fatalf("configureSerialConsole() = %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(o.config.rootDir, "etc", "systemd")); !os.IsNotExist(err) {
-		t.Fatalf("legacy compat wrote getty configuration: %v", err)
+		t.Fatalf("GRUB_CMDLINE_MODE=append wrote getty configuration: %v", err)
+	}
+}
+
+// Append mode ignores MACHINE_SERIAL_CONSOLE and says so.
+func TestConfigureSerialConsoleAppendModeWarnsAboutOverride(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	cfg := &config.MachineConfig{}
+	cfg.Provision.GRUBCmdlineMode = config.GRUBCmdlineAppend
+	cfg.Provision.SerialConsole = "ttyS1,115200n8"
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	if err := o.configureSerialConsole(context.Background()); err != nil {
+		t.Fatalf("configureSerialConsole() = %v", err)
+	}
+	got := logs.String()
+	if !strings.Contains(got, "level=WARN") || !strings.Contains(got, "serial console override ignored") || !strings.Contains(got, "MACHINE_SERIAL_CONSOLE=ttyS1,115200n8") {
+		t.Fatalf("logs = %q, want a warning with the ignored override", got)
 	}
 }
 
@@ -141,7 +164,8 @@ func TestFindUpdateGRUB(t *testing.T) {
 				t.Fatalf("findUpdateGRUB() = %q, want %q", got, tt.want)
 			}
 			if tt.want == "" {
-				cfg := &config.MachineConfig{LegacyCompat: true}
+				cfg := &config.MachineConfig{}
+				cfg.Provision.GRUBCmdlineMode = config.GRUBCmdlineAppend
 				if err := c.ConfigureGRUB(context.Background(), cfg); err != nil {
 					t.Fatalf("ConfigureGRUB() = %v, want a skip without update-grub", err)
 				}
@@ -150,5 +174,29 @@ func TestFindUpdateGRUB(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// An explicit GRUB_CMDLINE_MODE=resolved wins over the preset: BOOTy writes
+// its own resolved line instead of appending to the image value.
+func TestConfigureGRUBResolvedWinsOverPreset(t *testing.T) {
+	cfg := &config.MachineConfig{LegacyCompat: true}
+	cfg.Provision.GRUBCmdlineMode = config.GRUBCmdlineResolved
+	cfg.Provision.SerialConsole = "ttyS0,115200n8"
+	withPresets(cfg)
+	if cfg.LegacyGRUBCmdline() {
+		t.Fatal("explicit resolved mode lost against the preset")
+	}
+	c := newTestConfigurator(t, newMockCommander())
+	writeFixture(t, filepath.Join(c.rootDir, "usr", "sbin", "update-grub"), "#!/bin/sh\n", 0o755)
+	if err := c.ConfigureGRUB(context.Background(), cfg); err != nil {
+		t.Fatalf("ConfigureGRUB() = %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(c.rootDir, "etc", "default", "grub.d", "10-caprf-kernel-params.cfg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "$GRUB_CMDLINE_LINUX") {
+		t.Fatalf("resolved mode appended to the image value: %q", data)
 	}
 }

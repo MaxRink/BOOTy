@@ -15,6 +15,23 @@ import (
 // to /etc/default/grub.d/10-caprf-kernel-params.cfg, runs update-grub and
 // leaves the getty units of the image alone.
 func TestLegacyCompatGRUBKernelParamsQEMU(t *testing.T) {
+	testAppendGRUBKernelParams(t, func(f *fakeCAPRF) map[string]string { return f.vars("provision") })
+}
+
+// GRUB_CMDLINE_MODE=append writes the same drop-in without
+// CAPRF_LEGACY_COMPAT. The default resolved mode writes a different line,
+// so the test fails when BOOTy ignores the option.
+func TestNativeParityGRUBCmdlineAppendQEMU(t *testing.T) {
+	testAppendGRUBKernelParams(t, func(f *fakeCAPRF) map[string]string {
+		vars := f.nativeVars("provision")
+		vars["GRUB_CMDLINE_MODE"] = "append"
+		vars["SUCCESS_ACTION"] = "poweroff"
+		return vars
+	})
+}
+
+func testAppendGRUBKernelParams(t *testing.T, varsFor func(*fakeCAPRF) map[string]string) {
+	t.Helper()
 	requireRoot(t)
 	qemuAvailable(t)
 	requireProvisionTools(t)
@@ -26,7 +43,7 @@ func TestLegacyCompatGRUBKernelParamsQEMU(t *testing.T) {
 	targetDisk := filepath.Join(t.TempDir(), "legacy-grub-target.qcow2")
 	run(t, "create target disk", "qemu-img", "create", "-f", "qcow2", targetDisk, "2G")
 
-	vars := caprf.vars("provision")
+	vars := varsFor(caprf)
 	vars["IMAGE"] = caprf.baseURL + "/image.gz"
 	vars["IMAGE_ALLOW_INSECURE_HTTP"] = "true"
 	vars["DISK_DEVICE"] = "/dev/vda"
@@ -50,6 +67,6 @@ func TestLegacyCompatGRUBKernelParamsQEMU(t *testing.T) {
 		t.Fatalf("update-grub did not run: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(rootMount, "etc", "systemd", "system", "serial-getty@ttyS0.service.d")); err == nil {
-		t.Fatal("legacy compat wrote a serial getty drop-in")
+		t.Fatal("append mode wrote a serial getty drop-in")
 	}
 }

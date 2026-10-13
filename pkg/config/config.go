@@ -121,6 +121,12 @@ func (c *Config) ProvisionerFilesInRamdisk() bool {
 	return c.ProvisionerFilesTarget == ProvisionerFilesRamdisk
 }
 
+// LegacyGRUBCmdline reports whether the kernel parameters are appended to
+// the image GRUB_CMDLINE_LINUX like the CAPRF legacy provisioner.
+func (c *Config) LegacyGRUBCmdline() bool {
+	return c.Provision.GRUBCmdlineMode == GRUBCmdlineAppend
+}
+
 // WaitOnFailure reports whether BOOTy reports a failed run and keeps the
 // ramdisk running instead of rebooting.
 func (c *Config) WaitOnFailure() bool {
