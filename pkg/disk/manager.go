@@ -1253,7 +1253,19 @@ func (m *Manager) CheckFilesystem(ctx context.Context, device string) error {
 		return fmt.Errorf("check filesystem %s: vfat fsck is not supported; vfat is supported for ESP mount/format only", device)
 	}
 
-	out, err := m.cmd.Run(ctx, "e2fsck", "-fy", device)
+	return m.runE2fsck(ctx, device, "-fy")
+}
+
+// CheckExtFilesystemPreen runs `e2fsck -p -f`, like the CAPRF legacy
+// provision.sh. Preen mode repairs only what is safe without questions and
+// fails on other errors.
+func (m *Manager) CheckExtFilesystemPreen(ctx context.Context, device string) error {
+	slog.Info("checking filesystem in preen mode", "device", device)
+	return m.runE2fsck(ctx, device, "-p", "-f")
+}
+
+func (m *Manager) runE2fsck(ctx context.Context, device string, flags ...string) error {
+	out, err := m.cmd.Run(ctx, "e2fsck", append(flags, device)...)
 	if err != nil {
 		if errors.Is(err, executil.ErrNotFound) {
 			slog.Warn("e2fsck not found, skipping filesystem check", "device", device)

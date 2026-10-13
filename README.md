@@ -492,6 +492,10 @@ With the variable set, BOOTy keeps the legacy behaviour where the two differ:
   `hostname "$HOSTNAME"` in `provision.sh`.
 - BOOTy logs the firmware version of every NIC (`nic_firmware`), like
   `provision.sh`, also without `FIRMWARE_REPORT`.
+- `grow-partition` grows the last GPT Linux filesystem partition, like
+  `provision.sh`, also when it is a data partition after the root. That
+  partition then gets `e2fsck` and `resize2fs`, and the root filesystem keeps
+  its size. BOOTy otherwise grows the root partition.
 
 Without the variable, BOOTy keeps its own defaults.
 

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -213,5 +214,67 @@ func TestLegacyCompatDecommissionWipesAndPowersOffQEMU(t *testing.T) {
 	signatures := strings.TrimSpace(string(runOutput(t, "list disk signatures", "wipefs", "--noheadings", wiped)))
 	if signatures != "" {
 		t.Fatalf("decommission left disk signatures:\n%s", signatures)
+	}
+}
+
+// Legacy evidence: provision.sh grows the last GPT Linux partition with
+// growpart and resize2fs, also when it is a data partition after the root.
+func TestLegacyCompatGrowsLastLinuxPartitionQEMU(t *testing.T) {
+	requireRoot(t)
+	qemuAvailable(t)
+	requireProvisionTools(t)
+
+	rawDisk := createChrootCapableTestDiskImage(t, 512)
+	// Append a 64 MiB ext4 data partition after the root.
+	run(t, "extend image", "truncate", "-s", "+64M", rawDisk)
+	run(t, "relocate backup GPT", "sfdisk", "--relocate", "gpt-bak-std", rawDisk)
+	appendPart := exec.Command("sfdisk", "--append", rawDisk)
+	appendPart.Stdin = strings.NewReader("type=0FC63DAF-8483-4772-8E79-3D69D8477DE4\n")
+	if out, err := appendPart.CombinedOutput(); err != nil {
+		t.Fatalf("append data partition: %v\n%s", err, out)
+	}
+	loopDev := strings.TrimSpace(string(runOutput(t, "attach image", "losetup", "--find", "--show", "--partscan", rawDisk)))
+	t.Cleanup(func() { _ = exec.Command("losetup", "-d", loopDev).Run() })
+	waitForDevice(t, loopDev+"p3", 5*time.Second)
+	run(t, "format data partition", "mkfs.ext4", "-F", "-q", loopDev+"p3")
+	run(t, "detach image", "losetup", "-d", loopDev)
+
+	caprf := startFakeCAPRF(t, compressGzip(t, rawDisk))
+	targetDisk := filepath.Join(t.TempDir(), "legacy-compat-grow.qcow2")
+	run(t, "create target disk", "qemu-img", "create", "-f", "qcow2", targetDisk, "2G")
+
+	vars := caprf.vars("provision")
+	vars["IMAGE"] = caprf.baseURL + "/image.gz"
+	vars["IMAGE_ALLOW_INSECURE_HTTP"] = "true"
+	vars["DISK_DEVICE"] = "/dev/vda"
+	output := runQEMUProvision(t, findKernel(t), buildProvisionInitramfs(t, vars), targetDisk, 6*time.Minute)
+	t.Logf("legacy compat grow output tail:\n%s", tail(output, 3000))
+	assertProvisionSucceeded(t, output)
+	caprf.requireStatuses(t, "init", "success")
+
+	rawTarget := filepath.Join(t.TempDir(), "target.raw")
+	run(t, "convert target disk", "qemu-img", "convert", "-O", "raw", targetDisk, rawTarget)
+	table := string(runOutput(t, "read target partitions", "sfdisk", "--dump", rawTarget))
+	sizes := map[string]int64{}
+	for _, line := range strings.Split(table, "\n") {
+		node, rest, ok := strings.Cut(line, " : ")
+		if !ok {
+			continue
+		}
+		for _, field := range strings.Split(rest, ",") {
+			if v, found := strings.CutPrefix(strings.TrimSpace(field), "size="); found {
+				sectors, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+				if err != nil {
+					t.Fatalf("parse partition size %q: %v", v, err)
+				}
+				sizes[node[len(node)-1:]] = sectors * 512
+			}
+		}
+	}
+	if sizes["2"] > 500<<20 {
+		t.Fatalf("root partition grew to %d bytes, want the original size. table:\n%s", sizes["2"], table)
+	}
+	if sizes["3"] < 1<<30 {
+		t.Fatalf("last Linux partition has %d bytes, want it grown to the disk end. table:\n%s", sizes["3"], table)
 	}
 }
