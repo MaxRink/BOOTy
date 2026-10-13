@@ -320,6 +320,7 @@ root is mounted.
 | `RAMDISK_HOSTNAME` | `false` | Set `HOSTNAME` as the ramdisk host name for provisioning. Preset by `CAPRF_LEGACY_COMPAT` |
 | `FAILURE_ACTION` | `reboot` | `wait` reports a failed run and keeps the ramdisk running. Default of `RESCUE_MODE`. Preset by `CAPRF_LEGACY_COMPAT` |
 | `MIN_DISK_SIZE_GB` | `0` | Minimum disk size filter (0 = no minimum) |
+| `DISK_LINKS` | `true` | Create the udev `/dev/disk/by-uuid`, `by-partuuid`, `by-label` and `by-partlabel` links before the target chroot, so `update-grub` writes `root=UUID=` |
 | `DISK_SELECTION` | `prefer-nvme` | `lsblk` selects the first large enough disk in legacy `lsblk` order. Preset by `CAPRF_LEGACY_COMPAT` |
 | `WIPE_ALL_DISKS` | `false` | Wipe every disk, not only the target, like `wipe_all_disks`. Preset by `CAPRF_LEGACY_COMPAT` |
 | `DISCARD_NVME` | `false` | `blkdiscard` every NVMe disk before a wipe of all disks. Preset by `CAPRF_LEGACY_COMPAT` |

@@ -164,6 +164,12 @@ jobs:
             test_regex: "^TestNetworkPersistenceStaticIP$"
             privileged: true
             setup: ""
+          - scenario: disk-links-root-uuid
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestDiskLinksRootUUIDSurvivesDiskOrderQEMU$"
+            privileged: true
+            setup: ""
           - scenario: bootloader-smoke
             qemu_extra: ""
             test_tag: e2e

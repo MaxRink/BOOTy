@@ -29,6 +29,7 @@ func applyParityVar(cfg *config.MachineConfig, key, value string) bool {
 		"WRITE_RESOLV_CONF":         &cfg.Provision.WriteResolvConf,
 		"RAMDISK_HOSTNAME":          &cfg.RamdiskHostname,
 		"NIC_FIRMWARE_LOG":          &cfg.Provision.Firmware.LogNICs,
+		"DISK_LINKS":                &cfg.Provision.DiskLinks,
 	}
 	if ptr, ok := boolFields[key]; ok {
 		b := parseBoolVar(value)

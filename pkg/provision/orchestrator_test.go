@@ -47,6 +47,10 @@ func newTestOrchestratorWithCommander(t *testing.T, cfg *config.MachineConfig, p
 	cfg.Provision.Image.AllowInsecureHTTP = new(true)
 	o := NewOrchestrator(cfg, provider, mgr)
 	o.config.rootDir = t.TempDir()
+	// Never create links in the /dev of the machine running the tests.
+	oldDevDir := diskLinksDevDir
+	diskLinksDevDir = t.TempDir()
+	t.Cleanup(func() { diskLinksDevDir = oldDevDir })
 	withHermeticHostRoots(t, o.config)
 	return o, cmd
 }

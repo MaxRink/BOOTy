@@ -72,6 +72,10 @@ behaviour.
   (#589).
 - Filesystem resize runs only the tool for the detected filesystem (#639).
 - `sync()` runs before kexec, reboot and power off (#597, #623, #585).
+- Before the target chroot, BOOTy creates the `/dev/disk/by-uuid`,
+  `by-partuuid`, `by-label` and `by-partlabel` links, so `update-grub` writes
+  `root=UUID=` instead of `root=/dev/sdXN`. `DISK_LINKS=false` turns it off
+  (#671).
 
 ### Behaviour behind `CAPRF_LEGACY_COMPAT=true`
 

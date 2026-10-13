@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/telekom/BOOTy/pkg/disk"
 )
 
 // separateBootMountPoint is where a separate /boot filesystem of the image is
@@ -240,37 +242,11 @@ func isOctal(s string) bool {
 	return len(s) == 3
 }
 
-// unescapeBlkidValue removes the shell escaping of blkid -o export, which
-// writes a label "BOOT VOL" as BOOT\ VOL.
-func unescapeBlkidValue(value string) string {
-	var b strings.Builder
-	for i := 0; i < len(value); i++ {
-		if value[i] == '\\' && i+1 < len(value) {
-			i++
-		}
-		b.WriteByte(value[i])
-	}
-	return b.String()
-}
-
+// parseBlkidExport reads the identifiers of one device from blkid -o export.
 func parseBlkidExport(out string) blockIDs {
 	var ids blockIDs
-	for _, line := range strings.Split(out, "\n") {
-		// Keep trailing spaces: blkid escapes a label ending in a space as
-		// "LABEL=BOOT\\ ".
-		key, value, ok := strings.Cut(strings.TrimRight(line, "\r"), "=")
-		if !ok {
-			continue
-		}
-		value = unescapeBlkidValue(value)
-		switch key {
-		case "UUID":
-			ids.uuid = value
-		case "LABEL":
-			ids.label = value
-		case "PARTUUID":
-			ids.partUUID = value
-		}
+	for _, dev := range disk.ParseBlkidExport(out) {
+		ids.uuid, ids.label, ids.partUUID = dev["UUID"], dev["LABEL"], dev["PARTUUID"]
 	}
 	return ids
 }

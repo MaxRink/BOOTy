@@ -2496,6 +2496,23 @@ func TestParseVarsDiskOptions(t *testing.T) {
 	}
 }
 
+func TestParseVarsDiskLinks(t *testing.T) {
+	for vars, want := range map[string]*bool{
+		"":                   nil,
+		"DISK_LINKS=false\n": new(false),
+		"DISK_LINKS=true\n":  new(true),
+	} {
+		cfg, err := ParseVars(strings.NewReader(vars))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := cfg.Provision.DiskLinks
+		if (got == nil) != (want == nil) || (got != nil && *got != *want) {
+			t.Errorf("ParseVars(%q).DiskLinks = %v, want %v", vars, got, want)
+		}
+	}
+}
+
 func TestParseVarsFilesOptions(t *testing.T) {
 	cfg, err := ParseVars(strings.NewReader("PROVISIONER_FILES_TARGET=ramdisk\nWRITE_RESOLV_CONF=false\nRAMDISK_HOSTNAME=true\n"))
 	if err != nil {

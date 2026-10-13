@@ -195,6 +195,15 @@ jobs:
           CC: gcc
         run: go build -trimpath -ldflags "-s -w -linkmode external -extldflags '-static'" -o booty-${{ matrix.arch }}
 
+      - name: Vet for darwin (build tags)
+        if: matrix.arch == 'amd64'
+        # Linux-only files, also test files, need //go:build linux; a missing
+        # tag breaks local builds and tests on macOS.
+        env:
+          GOOS: darwin
+          CGO_ENABLED: "0"
+        run: go vet ./...
+
       - name: Upload binary
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

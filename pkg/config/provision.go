@@ -65,6 +65,14 @@ type ProvisionConfig struct {
 	// Default: nil (true)
 	WriteResolvConf *bool `yaml:"writeResolvConf,omitempty" json:"writeResolvConf,omitempty"`
 
+	// DiskLinks creates the /dev/disk/by-uuid, by-partuuid, by-label and
+	// by-partlabel links in the ramdisk before the target chroot, like udev
+	// on the installed system. update-grub then finds the root UUID and
+	// writes root=UUID= instead of root=/dev/sdXN, which breaks the boot
+	// when the disk order changes.
+	// Default: nil (true)
+	DiskLinks *bool `yaml:"diskLinks,omitempty" json:"diskLinks,omitempty"`
+
 	// DisableKexec skips kexec into the installed kernel and forces a hard reboot.
 	// Automatically set to true in dry-run mode.
 	// Default: false
