@@ -315,6 +315,9 @@ root is mounted.
 | `SUCCESS_ACTION` | `reboot` | `poweroff` powers off after a successful run instead of kexec or reboot. Preset by `CAPRF_LEGACY_COMPAT` |
 | `FAILURE_ACTION` | `reboot` | `wait` reports a failed run and keeps the ramdisk running. Default of `RESCUE_MODE`. Preset by `CAPRF_LEGACY_COMPAT` |
 | `MIN_DISK_SIZE_GB` | `0` | Minimum disk size filter (0 = no minimum) |
+| `DISK_SELECTION` | `prefer-nvme` | `lsblk` selects the first large enough disk in legacy `lsblk` order. Preset by `CAPRF_LEGACY_COMPAT` |
+| `WIPE_ALL_DISKS` | `false` | Wipe every disk, not only the target, like `wipe_all_disks`. Preset by `CAPRF_LEGACY_COMPAT` |
+| `DISCARD_NVME` | `false` | `blkdiscard` every NVMe disk before a wipe of all disks. Preset by `CAPRF_LEGACY_COMPAT` |
 | `BOOTY_ALLOW_REMOVABLE` | `false` | Allow USB/removable media as provisioning target |
 | `MACHINE_EXTRA_KERNEL_PARAMS` | — | Additional kernel cmdline parameters |
 | `EXTRA_KERNEL_PARAMS` | — | Additional kernel cmdline parameters, read by the CAPRF legacy provisioner. Appended to `MACHINE_EXTRA_KERNEL_PARAMS` |
@@ -458,7 +461,7 @@ With the variable set, BOOTy keeps the legacy behaviour where the two differ:
   `setup_mellanox_num_of_vfs`, and skips quietly without `mstconfig` or such
   NICs. Without the variable `NUM_VFS` stays opt-in.
 - Without `DISK_DEVICE` or `DISK_SERIAL`, the target disk is the first disk
-  of at least `MIN_DISK_SIZE_GB` in `lsblk` order, NVMe and virtio disks
+  (`DISK_SELECTION=lsblk`) of at least `MIN_DISK_SIZE_GB` in `lsblk` order, NVMe and virtio disks
   first, then SCSI/SATA disks, like `_select_single_disk`. BOOTy otherwise
   prefers NVMe and then the largest disk. Like the legacy script, this order
   does not skip removable media: a USB disk (SCSI major 8) can be selected
@@ -482,9 +485,9 @@ With the variable set, BOOTy keeps the legacy behaviour where the two differ:
   `/etc/resolv.conf` stays in place in the ramdisk; BOOTy does not replace it
   with resolvers from the vars or netplan.
 - `wipe-disks` wipes every disk, not only the target disk, for provisioning
-  and hard deprovisioning, like `wipe_all_disks`: `blkdiscard` on NVMe disks,
-  then signature wipes. `MODE=decommission` also runs `blkdiscard` on every
-  NVMe disk in this mode. Failures are logged and do not stop the run. This
+  and hard deprovisioning, like `wipe_all_disks` (`WIPE_ALL_DISKS=true`):
+  `blkdiscard` on NVMe disks (`DISCARD_NVME=true`), then signature wipes.
+  `MODE=decommission` also runs `blkdiscard` on every NVMe disk in this mode. Failures are logged and do not stop the run. This
   does not apply to dry-run, A/B preserve-existing upgrades, explicit RAID
   configs or a deprovision disk override (`DISK_DEVICE`); those keep the
   BOOTy wipe rules.
@@ -930,7 +933,7 @@ export SECURE_ERASE=true
 
 A missing `nvme` or `hdparm` tool fails provisioning, so BOOTy does not
 silently downgrade an explicit secure erase request. Deprovisioning,
-decommission and the legacy compat wipe of all disks do not read
+decommission and the wipe of all disks (`WIPE_ALL_DISKS=true`) do not read
 `SECURE_ERASE`.
 
 ### Post-Provision Commands

@@ -18,6 +18,21 @@ import (
 // The guest has a small virtio disk and a larger SCSI disk. BOOTy without
 // legacy compat would pick the larger SCSI disk.
 func TestLegacyCompatDiskSelectionQEMU(t *testing.T) {
+	testLsblkDiskSelection(t, func(f *fakeCAPRF) map[string]string { return f.vars("provision") })
+}
+
+// DISK_SELECTION=lsblk selects the same disk without CAPRF_LEGACY_COMPAT.
+func TestNativeParityDiskSelectionLsblkQEMU(t *testing.T) {
+	testLsblkDiskSelection(t, func(f *fakeCAPRF) map[string]string {
+		vars := f.nativeVars("provision")
+		vars["DISK_SELECTION"] = "lsblk"
+		vars["SUCCESS_ACTION"] = "poweroff"
+		return vars
+	})
+}
+
+func testLsblkDiskSelection(t *testing.T, varsFor func(*fakeCAPRF) map[string]string) {
+	t.Helper()
 	requireRoot(t)
 	qemuAvailable(t)
 	requireProvisionTools(t)
@@ -32,7 +47,7 @@ func TestLegacyCompatDiskSelectionQEMU(t *testing.T) {
 	run(t, "create virtio disk", "qemu-img", "create", "-f", "qcow2", virtioDisk, "2G")
 	run(t, "create scsi disk", "qemu-img", "create", "-f", "qcow2", scsiDisk, "4G")
 
-	vars := caprf.vars("provision")
+	vars := varsFor(caprf)
 	vars["IMAGE"] = caprf.baseURL + "/image.gz"
 	vars["IMAGE_ALLOW_INSECURE_HTTP"] = "true"
 	initramfs := buildProvisionInitramfs(t, vars)
@@ -60,7 +75,7 @@ func TestLegacyCompatDiskSelectionQEMU(t *testing.T) {
 	assertProvisionSucceeded(t, output)
 	caprf.requireStatuses(t, "init", "success")
 	if !strings.Contains(string(output), `msg="selected disk" device=/dev/vda`) {
-		t.Fatalf("legacy compat did not select the first virtio disk. tail:\n%s", tail(output, 4000))
+		t.Fatalf("BOOTy did not select the first virtio disk in lsblk order. tail:\n%s", tail(output, 4000))
 	}
 
 	rootMount, cleanup := mountQcow2(t, virtioDisk)

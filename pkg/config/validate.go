@@ -136,6 +136,9 @@ func (c *Config) validateEnums() []string {
 			return validateEnumLower(c.SuccessAction, "successAction", SuccessActionReboot, SuccessActionPowerOff)
 		},
 		func() string {
+			return validateEnumLower(c.Provision.Disk.Selection, "provision.disk.selection", DiskSelectionPreferNVMe, DiskSelectionLsblk)
+		},
+		func() string {
 			return validateEnumLower(c.FailureAction, "failureAction", FailureActionReboot, FailureActionWait)
 		},
 		func() string {
@@ -286,6 +289,7 @@ func (c *Config) normalize() {
 		&c.Rescue.Mode,
 		&c.SuccessAction,
 		&c.FailureAction,
+		&c.Provision.Disk.Selection,
 	}
 	for _, f := range lowerFields {
 		if *f != "" {

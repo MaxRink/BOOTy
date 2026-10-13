@@ -30,8 +30,10 @@ A vars file entry works only with `CAPRF_LEGACY_COMPAT=true`.
 See [docs/configuration.md](configuration.md) for each variable:
 
 - Target disk: `DISK_DEVICE`, `DISK_SERIAL`, `DISK_SERIAL_NUMBER`,
-  `MIN_DISK_SIZE_GB`, `BOOTY_ALLOW_REMOVABLE`
-- Wipe: `MODE`, `SECURE_ERASE`, `DRY_RUN`, `CAPRF_LEGACY_COMPAT`
+  `DISK_SELECTION`, `MIN_DISK_SIZE_GB`, `BOOTY_ALLOW_REMOVABLE`
+- Wipe: `MODE`, `SECURE_ERASE`, `WIPE_ALL_DISKS`, `DISCARD_NVME`, `DRY_RUN`,
+  `CAPRF_LEGACY_COMPAT` (presets `DISK_SELECTION=lsblk`,
+  `WIPE_ALL_DISKS=true` and `DISCARD_NVME=true`)
 - Layout: `PARTITION_LAYOUT`, `IMAGE_MODE`, `IMAGE_SOURCE_ROOT_LABEL`,
   `IMAGE_SOURCE_ROOT_PARTITION`
 - Root partition: `ROOT_PARTITION_LABEL`, `ROOT_PARTITION_NUMBER`
@@ -67,7 +69,8 @@ The `detect-disk` step uses the first rule that applies:
 1. `device` in `PARTITION_LAYOUT`.
 2. `DISK_DEVICE`. The path must exist and must be a block device.
 3. `DISK_SERIAL` or `DISK_SERIAL_NUMBER` (see [Serial Lookup](#serial-lookup)).
-4. Automatic detection (see below).
+4. Automatic detection (see below). `DISK_SELECTION` selects the rule:
+   `prefer-nvme` (default) or `lsblk`.
 
 If `PARTITION_LAYOUT` sets `device` and `DISK_DEVICE` has a different value,
 BOOTy stops with a `disk device conflict` error before it wipes a disk.
@@ -88,10 +91,10 @@ kind (NVMe or not NVMe), it takes the largest disk.
 
 Planned (#632): skip hidden NVMe multipath path nodes during disk discovery.
 
-### Legacy Compat Detection
+### lsblk Order Detection
 
-With `CAPRF_LEGACY_COMPAT=true`, automatic detection follows the CAPRF legacy
-scripts:
+With `DISK_SELECTION=lsblk` (preset by `CAPRF_LEGACY_COMPAT=true`), automatic
+detection follows the CAPRF legacy scripts:
 
 1. BOOTy runs `lsblk --nodeps --include 259,253` (NVMe and virtio disks), then
    `lsblk --nodeps --include 8` (SCSI and SATA disks).
@@ -120,8 +123,8 @@ this order:
 
 The match is exact after BOOTy trims white space. If no disk matches in sysfs,
 BOOTy compares the `SERIAL` column of `lsblk --nodeps --paths`. The serial
-lookup skips removable media unless `BOOTY_ALLOW_REMOVABLE=true`, also in legacy
-compat.
+lookup skips removable media unless `BOOTY_ALLOW_REMOVABLE=true`, also with
+`DISK_SELECTION=lsblk`.
 
 The lookup fails when:
 
@@ -140,11 +143,11 @@ in [Automatic Detection](#automatic-detection). This includes removable media.
 | Mode | Wipe behaviour |
 | --- | --- |
 | `provision` | Quick wipe of the target disk. With `SECURE_ERASE=true`, a hardware erase of the target disk. |
-| `provision` with `CAPRF_LEGACY_COMPAT=true` | All disks: `blkdiscard` on each NVMe disk, then a quick wipe of each disk. BOOTy logs failures and continues. `SECURE_ERASE` has no effect. `DISK_DEVICE` does not limit the wipe. |
+| `provision` with `WIPE_ALL_DISKS=true` | All disks: with `DISCARD_NVME=true`, `blkdiscard` on each NVMe disk, then a quick wipe of each disk. BOOTy logs failures and continues. `SECURE_ERASE` has no effect. `DISK_DEVICE` does not limit the wipe. |
 | `deprovision` (alias `hard`) | `DISK_DEVICE` set: wipe only that disk. `DISK_DEVICE` empty: quick wipe of all disks. A failed disk fails the run. |
-| `deprovision` with `CAPRF_LEGACY_COMPAT=true` | `DISK_DEVICE` empty: the legacy wipe of all disks (`blkdiscard` on NVMe, quick wipe, failures logged). `DISK_DEVICE` set: wipe only that disk. |
+| `deprovision` with `WIPE_ALL_DISKS=true` | `DISK_DEVICE` empty: the legacy wipe of all disks (`blkdiscard` on NVMe with `DISCARD_NVME=true`, quick wipe, failures logged). `DISK_DEVICE` set: wipe only that disk. |
 | `soft-deprovision` (alias `soft`) | No wipe. BOOTy renames `grub.cfg` to `grub.cfg.bak` in `/boot/grub` (Debian) and `/boot/grub2` (RHEL) on the root partition. A `grub.cfg.bak` that already exists counts as done, so a rerun succeeds. If neither directory has a `grub.cfg` or a `grub.cfg.bak`, or the root cannot be unmounted after the rename, the run fails and BOOTy reports the error to `ERROR_URL`. |
-| `decommission` | Quick wipe of all disks, best effort. BOOTy logs failures and continues. With legacy compat, `blkdiscard` runs on each NVMe disk first. `DISK_DEVICE` and `SECURE_ERASE` have no effect. Then BOOTy removes all EFI boot entries. |
+| `decommission` | Quick wipe of all disks, best effort. BOOTy logs failures and continues. With `DISCARD_NVME=true`, `blkdiscard` runs on each NVMe disk first. `DISK_DEVICE` and `SECURE_ERASE` have no effect. Then BOOTy removes all EFI boot entries. |
 | `dry-run` (or `DRY_RUN=true`) | No wipe. The dry-run checks do not write to disk. The disk check uses `DISK_DEVICE` or automatic detection and ignores `DISK_SERIAL`. |
 
 Exceptions in the `wipe-disks` step:
@@ -152,7 +155,7 @@ Exceptions in the `wipe-disks` step:
 - `IMAGE_MODE=ab` with `AB_PRESERVE_EXISTING=true` skips the wipe. BOOTy clears
   only the filesystem signatures of the target root slot before it streams the
   image. See [docs/ab-partitioning.md](ab-partitioning.md).
-- A RAID config disables the legacy compat wipe of all disks. BOOTy wipes the
+- A RAID config disables `WIPE_ALL_DISKS`. BOOTy wipes the
   RAID member disks in `setup-raid` and then quick-wipes the array device.
 - In deprovision modes, `DISK_DEVICE` must be an absolute `/dev/` path to a
   block device. `soft-deprovision` uses `DISK_DEVICE` or automatic detection to

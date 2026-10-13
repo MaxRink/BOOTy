@@ -1111,24 +1111,24 @@ func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
 }
 
 // wipeWithoutTargetSelection handles the wipe policies that do not depend on
-// the target disk: A/B preserve-existing skips the wipe, and legacy compat
+// the target disk: A/B preserve-existing skips the wipe, and WIPE_ALL_DISKS
 // wipes every disk.
 func (o *Orchestrator) wipeWithoutTargetSelection(ctx context.Context) (bool, error) {
 	if o.isABImageMode() && o.cfg.Provision.AB.PreserveExisting {
 		o.log.Info("A/B preserveExisting enabled, skipping whole-disk wipe")
 		return true, nil
 	}
-	if o.usesLegacyWipeAllDisks() {
-		return true, o.wipeAllDisksLegacy(ctx)
+	if o.usesWipeAllDisks() {
+		return true, o.wipeAllDisks(ctx)
 	}
 	return false, nil
 }
 
-// usesLegacyWipeAllDisks reports whether wipe-disks follows wipe_all_disks
-// of the CAPRF legacy scripts: provision and hard deprovision wipe every
-// disk, not only the target disk.
-func (o *Orchestrator) usesLegacyWipeAllDisks() bool {
-	if !o.cfg.LegacyCompat || o.cfg.Mode == "dry-run" || len(o.cfg.Provision.Disk.RAID) > 0 {
+// usesWipeAllDisks reports whether wipe-disks follows wipe_all_disks of the
+// CAPRF legacy scripts (WIPE_ALL_DISKS): provision and hard deprovision wipe
+// every disk, not only the target disk.
+func (o *Orchestrator) usesWipeAllDisks() bool {
+	if !config.BoolOr(o.cfg.Provision.Disk.WipeAllDisks, false) || o.cfg.Mode == "dry-run" || len(o.cfg.Provision.Disk.RAID) > 0 {
 		return false
 	}
 	if config.IsDeprovisionMode(o.cfg.Mode) {
@@ -1137,13 +1137,16 @@ func (o *Orchestrator) usesLegacyWipeAllDisks() bool {
 	return true
 }
 
-// wipeAllDisksLegacy discards NVMe disks and clears the signatures of every
-// disk. Like the legacy script it logs failures and never fails the run.
-func (o *Orchestrator) wipeAllDisksLegacy(ctx context.Context) error {
-	o.log.Info("legacy compat: wiping all disks")
-	o.disk.DiscardNVMeDisks(ctx)
+// wipeAllDisks discards NVMe disks with DISCARD_NVME and clears the
+// signatures of every disk. Like the legacy script it logs failures and
+// never fails the run.
+func (o *Orchestrator) wipeAllDisks(ctx context.Context) error {
+	o.log.Info("wiping all disks")
+	if config.BoolOr(o.cfg.Provision.Disk.DiscardNVMe, false) {
+		o.disk.DiscardNVMeDisks(ctx)
+	}
 	if err := o.disk.WipeAllDisks(ctx); err != nil {
-		o.log.Warn("legacy compat: disk wipe failed, continuing", "error", err)
+		o.log.Warn("disk wipe failed, continuing", "error", err)
 	}
 	return nil
 }

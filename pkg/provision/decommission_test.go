@@ -51,7 +51,7 @@ func TestDecommissionReportsSuccessWhenWipeAndEFIFail(t *testing.T) {
 	t.Cleanup(func() { efiFirmwarePath, efiVarsPath = oldFirmwarePath, oldVarsPath })
 
 	provider := &mockProvider{}
-	o, cmd := newTestOrchestratorWithCommander(t, &config.MachineConfig{Mode: "decommission", LegacyCompat: true}, provider)
+	o, cmd := newTestOrchestratorWithCommander(t, withPresets(&config.MachineConfig{Mode: "decommission", LegacyCompat: true}), provider)
 	sysfs := t.TempDir()
 	for _, name := range []string{"sda", "nvme0n1"} {
 		if err := os.MkdirAll(filepath.Join(sysfs, "block", name), 0o755); err != nil {
@@ -117,17 +117,27 @@ func TestEFIBootOrder(t *testing.T) {
 	}
 }
 
-func TestDecommissionDiscardsNVMeOnlyInLegacyCompat(t *testing.T) {
-	o, cmd := newTestOrchestratorWithCommander(t, &config.MachineConfig{Mode: "decommission"}, &mockProvider{})
-	sysfs := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(sysfs, "block", "nvme0n1"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	o.disk.SetSysfsRoot(sysfs)
-	if err := o.decommissionWipe(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if hasCall(cmd.calls, "blkdiscard", "/dev/nvme0n1") {
-		t.Fatal("decommission without legacy compat discarded an NVMe disk")
+func TestDecommissionDiscardsNVMeOnlyWithDiscardNVMe(t *testing.T) {
+	presetOff := &config.MachineConfig{Mode: "decommission", LegacyCompat: true}
+	presetOff.Provision.Disk.DiscardNVMe = new(false)
+	for name, tt := range map[string]struct {
+		cfg  *config.MachineConfig
+		want bool
+	}{
+		"default":             {cfg: &config.MachineConfig{Mode: "decommission"}},
+		"native":              {cfg: wipeAllCfg("decommission", nil, new(true)), want: true},
+		"preset":              {cfg: withPresets(&config.MachineConfig{Mode: "decommission", LegacyCompat: true}), want: true},
+		"explicit false wins": {cfg: withPresets(presetOff)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			o, cmd := newTestOrchestratorWithCommander(t, tt.cfg, &mockProvider{})
+			withFixtureDisks(t, o, "nvme0n1")
+			if err := o.decommissionWipe(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if got := hasCall(cmd.calls, "blkdiscard", "/dev/nvme0n1"); got != tt.want {
+				t.Fatalf("blkdiscard /dev/nvme0n1 = %v, want %v: %v", got, tt.want, cmd.calls)
+			}
+		})
 	}
 }

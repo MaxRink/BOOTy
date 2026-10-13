@@ -36,6 +36,31 @@ type DiskConfig struct {
 	// Default: 0 (no minimum)
 	MinSizeGB int `yaml:"minSizeGB" json:"minSizeGB"`
 
+	// Selection selects the target disk when Device and SerialNumber are unset.
+	// "prefer-nvme": NVMe disks first, then the largest disk; removable media
+	// are skipped unless BOOTY_ALLOW_REMOVABLE=true.
+	// "lsblk": the first disk of at least MinSizeGB in lsblk order, NVMe and
+	// virtio disks first, then SCSI/SATA disks, like _select_single_disk of
+	// the CAPRF legacy scripts. Removable media are not skipped.
+	// Valid values: "prefer-nvme", "lsblk". Preset by legacyCompat: "lsblk".
+	// Default: "" (prefer-nvme)
+	Selection string `yaml:"selection" json:"selection"`
+
+	// WipeAllDisks makes wipe-disks wipe every disk instead of the target
+	// disk, for provisioning and for hard deprovisioning without Device,
+	// like wipe_all_disks of the CAPRF legacy scripts. Failures are logged
+	// and do not stop the run. SecureErase has no effect then. It does not
+	// apply to dry-run, RAID configs and A/B preserve-existing upgrades.
+	// Preset by legacyCompat: true.
+	// Default: nil (false)
+	WipeAllDisks *bool `yaml:"wipeAllDisks,omitempty" json:"wipeAllDisks,omitempty"`
+
+	// DiscardNVMe runs blkdiscard on every NVMe disk before a wipe of all
+	// disks (WipeAllDisks or MODE=decommission). Failures are logged.
+	// Preset by legacyCompat: true.
+	// Default: nil (false)
+	DiscardNVMe *bool `yaml:"discardNVMe,omitempty" json:"discardNVMe,omitempty"`
+
 	// SecureErase uses ATA Secure Erase or NVMe Format instead of wipefs
 	// for disk sanitization before provisioning.
 	// Default: false (use wipefs)

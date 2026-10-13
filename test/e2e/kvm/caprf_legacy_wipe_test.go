@@ -15,6 +15,21 @@ import (
 // Legacy evidence: provision.sh calls wipe_all_disks, so a provision run
 // clears the signatures of every disk, not only of the target disk.
 func TestLegacyCompatProvisionWipesAllDisksQEMU(t *testing.T) {
+	testProvisionWipesAllDisks(t, func(f *fakeCAPRF) map[string]string { return f.vars("provision") })
+}
+
+// WIPE_ALL_DISKS=true wipes every disk without CAPRF_LEGACY_COMPAT.
+func TestNativeParityProvisionWipesAllDisksQEMU(t *testing.T) {
+	testProvisionWipesAllDisks(t, func(f *fakeCAPRF) map[string]string {
+		vars := f.nativeVars("provision")
+		vars["WIPE_ALL_DISKS"] = "true"
+		vars["SUCCESS_ACTION"] = "poweroff"
+		return vars
+	})
+}
+
+func testProvisionWipesAllDisks(t *testing.T, varsFor func(*fakeCAPRF) map[string]string) {
+	t.Helper()
 	requireRoot(t)
 	qemuAvailable(t)
 	requireProvisionTools(t)
@@ -29,7 +44,7 @@ func TestLegacyCompatProvisionWipesAllDisksQEMU(t *testing.T) {
 	otherDisk := filepath.Join(dir, "other.qcow2")
 	run(t, "convert second disk", "qemu-img", "convert", "-O", "qcow2", createTestDiskImage(t, 256), otherDisk)
 
-	vars := caprf.vars("provision")
+	vars := varsFor(caprf)
 	vars["IMAGE"] = caprf.baseURL + "/image.gz"
 	vars["IMAGE_ALLOW_INSECURE_HTTP"] = "true"
 	vars["DISK_DEVICE"] = "/dev/vda"

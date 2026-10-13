@@ -129,6 +129,9 @@ defaults.
 |-----------|----------|-------------|---------|--------------|
 | End of a successful run | `SUCCESS_ACTION` | `successAction` | `reboot` | `poweroff` |
 | End of a failed run | `FAILURE_ACTION` | `failureAction` | `reboot` | `wait` |
+| Target disk auto-detection | `DISK_SELECTION` | `provision.disk.selection` | `prefer-nvme` | `lsblk` |
+| Wipe every disk, not only the target | `WIPE_ALL_DISKS` | `provision.disk.wipeAllDisks` | `false` | `true` |
+| `blkdiscard` NVMe disks before a wipe of all disks | `DISCARD_NVME` | `provision.disk.discardNVMe` | `false` | `true` |
 
 These behaviours do not have their own option yet. Only the preset turns
 them on:
@@ -165,7 +168,10 @@ behaviour changes of this mode.
 | `DISK_SERIAL_NUMBER` | (unset) | serial number | Select the target disk by its exact serial number when `DISK_DEVICE` is unset. Alias: `DISK_SERIAL`; the last line wins. |
 | `DISK_SERIAL` | (unset) | serial number | Alias of `DISK_SERIAL_NUMBER`. |
 | `MIN_DISK_SIZE_GB` | `0` | integer, GiB | Smallest disk that auto-detection accepts. `0` means no limit. |
-| `SECURE_ERASE` | `false` | boolean | Provisioning only: erase the target disk with `nvme format --ses=1` or ATA Security Erase instead of a signature wipe. Deprovisioning, decommission and the legacy compat wipe of all disks ignore it. A missing `nvme` or `hdparm` tool fails the run. |
+| `DISK_SELECTION` | `prefer-nvme` | `prefer-nvme`, `lsblk` | Auto-detection rule when `DISK_DEVICE` and `DISK_SERIAL` are unset. `prefer-nvme`: NVMe first, then the largest disk, removable media skipped. `lsblk`: the first disk of at least `MIN_DISK_SIZE_GB` in `lsblk` order (NVMe and virtio, then SCSI/SATA), like `_select_single_disk`; removable media are not skipped. YAML `provision.disk.selection`. Preset: `lsblk`. |
+| `WIPE_ALL_DISKS` | `false` | boolean | `wipe-disks` wipes every disk, like `wipe_all_disks`: for provisioning, and for hard deprovisioning without `DISK_DEVICE`. Failures are logged and do not stop the run. `SECURE_ERASE` has no effect. Not for dry-run, RAID configs or A/B preserve-existing upgrades. YAML `provision.disk.wipeAllDisks`. Preset: `true`. |
+| `DISCARD_NVME` | `false` | boolean | Run `blkdiscard` on every NVMe disk before a wipe of all disks (`WIPE_ALL_DISKS=true` or `MODE=decommission`). Failures are logged. YAML `provision.disk.discardNVMe`. Preset: `true`. |
+| `SECURE_ERASE` | `false` | boolean | Provisioning only: erase the target disk with `nvme format --ses=1` or ATA Security Erase instead of a signature wipe. Deprovisioning, decommission and `WIPE_ALL_DISKS=true` ignore it. A missing `nvme` or `hdparm` tool fails the run. |
 | `ROOT_PARTITION_LABEL` | (unset) | GPT partition name | Root partition of a whole-disk image. Excludes `ROOT_PARTITION_NUMBER`. |
 | `ROOT_PARTITION_NUMBER` | `0` | 1-based partition number | Root partition of a whole-disk image when it has no stable label. |
 | `PARTITION_LAYOUT` | (unset) | JSON object | Declarative GPT layout with optional LVM. An invalid layout stops the parse. |

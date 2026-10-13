@@ -48,9 +48,10 @@ The variable changes these behaviours:
 - **Provisioner files and DNS.** `/deploy/file-system` goes into the ramdisk
   before the network starts, like `copy_files`, and not into the installed
   OS. BOOTy does not write the installed OS `resolv.conf`.
-- **Disks.** The target disk is selected like `_select_single_disk`, and
-  `wipe-disks` wipes every disk like `wipe_all_disks`. `decommission` also
-  discards NVMe disks.
+- **Disks.** The target disk is selected like `_select_single_disk`
+  (`DISK_SELECTION=lsblk`), and `wipe-disks` wipes every disk like
+  `wipe_all_disks` (`WIPE_ALL_DISKS=true`). `decommission` also discards NVMe
+  disks (`DISCARD_NVME=true`).
 - **GRUB and console.** The kernel parameters are written like
   `provision.sh`. BOOTy writes no getty units.
 - **Ramdisk hostname and NIC firmware log** are set and written like
@@ -84,8 +85,8 @@ Status values:
 | Failure before the task (network, JWT) or JWT renewal failure: `fail()` | Reboot | Report the error and wait | Merged (#585) | `FAILURE_ACTION=wait` |
 | `/deploy/vars` is a shell script that `source` runs | Parsed as data: no variable expansion, no command substitution | Same | Deliberately different | Not needed |
 | No target OS check | `TARGET_OS=linux` or `PROVISION_TARGET_OS=linux` required for provisioning | Same | Deliberately different | Not needed |
-| `MODE=decommission` (`force-clean`): `decommission_wipe`, `remove_all_efi_boot_entries`, power off | Wipe every disk with `sgdisk` and `wipefs`, remove every `BootOrder` entry, log failures and continue, reboot | Same, plus `blkdiscard` on every NVMe disk first, then power off | Merged (#586) | `SUCCESS_ACTION=poweroff`; NVMe discard: none yet |
-| Soft deprovision: rename `grub.cfg` | Rename `grub.cfg` to `grub.cfg.bak` in `/boot/grub` and `/boot/grub2`. An existing `grub.cfg.bak` counts as done. No config at all, or an unmount failure after the rename, is an error. | Same, the disk is selected like `_select_single_disk` | Merged (#590), `/boot/grub2` and errors in #635 | None yet |
+| `MODE=decommission` (`force-clean`): `decommission_wipe`, `remove_all_efi_boot_entries`, power off | Wipe every disk with `sgdisk` and `wipefs`, remove every `BootOrder` entry, log failures and continue, reboot | Same, plus `blkdiscard` on every NVMe disk first, then power off | Merged (#586) | `SUCCESS_ACTION=poweroff`, `DISCARD_NVME=true` |
+| Soft deprovision: rename `grub.cfg` | Rename `grub.cfg` to `grub.cfg.bak` in `/boot/grub` and `/boot/grub2`. An existing `grub.cfg.bak` counts as done. No config at all, or an unmount failure after the rename, is an error. | Same, the disk is selected like `_select_single_disk` | Merged (#590), `/boot/grub2` and errors in #635 | `DISK_SELECTION=lsblk` |
 
 ### Disks
 
@@ -93,8 +94,8 @@ Detail for these rows is in [Disk handling](disk.md).
 
 | Legacy behaviour | BOOTy default | BOOTy with `CAPRF_LEGACY_COMPAT=true` | Status | Native option (preset value) |
 |------------------|---------------|---------------------------------------|--------|------------------------------|
-| `wipe_all_disks` for provision and hard deprovision: `blkdiscard` on NVMe disks, then signature wipes on every disk | Provision wipes only the target disk; `SECURE_ERASE=true` erases it in hardware. Hard deprovision without `DISK_DEVICE` wipes every disk, without `blkdiscard`. | Every disk: `blkdiscard` on NVMe disks, then `sgdisk --zap-all` and `wipefs -af`. Failures are logged and do not stop the run. `SECURE_ERASE` has no effect. Not for dry-run, explicit RAID configs, or a deprovision with `DISK_DEVICE`. | Merged (#591) | None yet |
-| `_select_single_disk`: first disk of at least `MIN_DISK_SIZE_GB` in `lsblk` order, NVMe and virtio first, then SCSI/SATA. Removable media are not skipped. | Without `DISK_DEVICE` or `DISK_SERIAL`: NVMe first, then the largest disk. Removable media are skipped unless `BOOTY_ALLOW_REMOVABLE=true`. | Legacy order. A USB disk can be selected when no NVMe or virtio disk qualifies. | Merged (#590) | None yet |
+| `wipe_all_disks` for provision and hard deprovision: `blkdiscard` on NVMe disks, then signature wipes on every disk | Provision wipes only the target disk; `SECURE_ERASE=true` erases it in hardware. Hard deprovision without `DISK_DEVICE` wipes every disk, without `blkdiscard`. | Every disk: `blkdiscard` on NVMe disks, then `sgdisk --zap-all` and `wipefs -af`. Failures are logged and do not stop the run. `SECURE_ERASE` has no effect. Not for dry-run, explicit RAID configs, or a deprovision with `DISK_DEVICE`. | Merged (#591) | `WIPE_ALL_DISKS=true`, `DISCARD_NVME=true` |
+| `_select_single_disk`: first disk of at least `MIN_DISK_SIZE_GB` in `lsblk` order, NVMe and virtio first, then SCSI/SATA. Removable media are not skipped. | Without `DISK_DEVICE` or `DISK_SERIAL`: NVMe first, then the largest disk. Removable media are skipped unless `BOOTY_ALLOW_REMOVABLE=true`. | Legacy order. A USB disk can be selected when no NVMe or virtio disk qualifies. | Merged (#590) | `DISK_SELECTION=lsblk` |
 | Grow the last GPT Linux partition | Grow the root partition | Same as default | Planned (#625) | Not needed |
 | Mount a separate `/boot` from the image `fstab` when the root has no `/boot/grub` | Not mounted. `update-grub` writes `grub.cfg` on the root filesystem. | Same as default | Planned (#595) | Not needed |
 | `DISK_MIRRORING_MODE=raid-1`: RAID1 `/dev/md2` over two disks | Variable ignored. One disk. | Same as default | Planned (#581) | Not needed |

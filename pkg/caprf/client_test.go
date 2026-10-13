@@ -2469,6 +2469,29 @@ func TestParseVarsLegacyCompat(t *testing.T) {
 	}
 }
 
+func TestParseVarsDiskOptions(t *testing.T) {
+	cfg, err := ParseVars(strings.NewReader("DISK_SELECTION=lsblk\nWIPE_ALL_DISKS=true\nDISCARD_NVME=yes\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := cfg.Provision.Disk
+	if d.Selection != "lsblk" || !config.BoolOr(d.WipeAllDisks, false) || !config.BoolOr(d.DiscardNVMe, false) {
+		t.Fatalf("disk = %q %v %v, want lsblk true true", d.Selection, d.WipeAllDisks, d.DiscardNVMe)
+	}
+	// Explicit values win over the CAPRF_LEGACY_COMPAT preset.
+	cfg, err = ParseVars(strings.NewReader("WIPE_ALL_DISKS=false\nDISK_SELECTION=prefer-nvme\nCAPRF_LEGACY_COMPAT=true\nDISCARD_NVME=false\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d = cfg.Provision.Disk
+	if d.Selection != "prefer-nvme" || config.BoolOr(d.WipeAllDisks, true) || config.BoolOr(d.DiscardNVMe, true) {
+		t.Fatalf("disk = %q %v %v, want the explicit values", d.Selection, d.WipeAllDisks, d.DiscardNVMe)
+	}
+	if _, err := ParseVars(strings.NewReader("DISK_SELECTION=largest\n")); err == nil {
+		t.Fatal("ParseVars accepted DISK_SELECTION=largest")
+	}
+}
+
 func TestParseVarsLifecycleActions(t *testing.T) {
 	tests := []struct {
 		vars         string

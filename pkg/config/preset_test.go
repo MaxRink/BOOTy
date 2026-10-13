@@ -43,3 +43,39 @@ func TestLifecycleOptionsRejectUnknownValues(t *testing.T) {
 		}
 	}
 }
+
+func TestDiskOptionsAndLegacyPreset(t *testing.T) {
+	tests := []struct {
+		name          string
+		disk          DiskConfig
+		legacy        bool
+		wantSelection string
+		wantWipeAll   bool
+		wantDiscard   bool
+	}{
+		{name: "defaults"},
+		{name: "native", disk: DiskConfig{Selection: "LSBLK", WipeAllDisks: new(true), DiscardNVMe: new(true)}, wantSelection: "lsblk", wantWipeAll: true, wantDiscard: true},
+		{name: "preset", legacy: true, wantSelection: "lsblk", wantWipeAll: true, wantDiscard: true},
+		{
+			name: "explicit options win over preset", legacy: true,
+			disk:          DiskConfig{Selection: "prefer-nvme", WipeAllDisks: new(false), DiscardNVMe: new(false)},
+			wantSelection: "prefer-nvme",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := Config{LegacyCompat: tt.legacy, Provision: ProvisionConfig{Disk: tt.disk}}
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("Validate() = %v", err)
+			}
+			d := cfg.Provision.Disk
+			if d.Selection != tt.wantSelection || BoolOr(d.WipeAllDisks, false) != tt.wantWipeAll || BoolOr(d.DiscardNVMe, false) != tt.wantDiscard {
+				t.Fatalf("disk = %q %v %v, want %q %v %v", d.Selection, BoolOr(d.WipeAllDisks, false), BoolOr(d.DiscardNVMe, false),
+					tt.wantSelection, tt.wantWipeAll, tt.wantDiscard)
+			}
+		})
+	}
+	if err := (&Config{Provision: ProvisionConfig{Disk: DiskConfig{Selection: "largest"}}}).Validate(); err == nil {
+		t.Fatal("Validate() accepted provision.disk.selection=largest")
+	}
+}
