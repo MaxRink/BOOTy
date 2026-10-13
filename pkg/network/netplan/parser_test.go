@@ -1031,15 +1031,23 @@ func TestHasNetplanFiles(t *testing.T) {
 			for n, c := range tt.files {
 				writeFile(t, dir, n, c)
 			}
-			if got := HasNetplanFiles(dir); got != tt.want {
-				t.Errorf("got %v, want %v", got, tt.want)
+			if got, err := HasNetplanFiles(dir); err != nil || got != tt.want {
+				t.Errorf("got %v, %v, want %v", got, err, tt.want)
 			}
 		})
 	}
 }
 
 func TestHasNetplanFiles_NonexistentDir(t *testing.T) {
-	if HasNetplanFiles("/nonexistent/path") {
-		t.Error("expected false")
+	if got, err := HasNetplanFiles("/nonexistent/path"); got || err != nil {
+		t.Errorf("got %v, %v, want false, nil", got, err)
+	}
+}
+
+func TestHasNetplanFiles_NotADir(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "netplan")
+	writeFile(t, filepath.Dir(file), "netplan", "x")
+	if _, err := HasNetplanFiles(file); err == nil {
+		t.Error("HasNetplanFiles() on a file = nil error, want error")
 	}
 }

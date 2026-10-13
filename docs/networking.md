@@ -77,8 +77,13 @@ BOOTy reads provisioner netplan files when they exist:
 | `/deploy/file-system/etc/netplan/*.yaml` or `*.yml` | Netplan v2 (ethernets, bonds, bridges, VLANs, VXLAN tunnels, dummy devices, VRFs, routes) |
 | `/deploy/file-system/etc/frr/frr.conf` | Optional FRR config |
 
-If a netplan file does not parse, BOOTy logs a warning and uses the vars
-only. If the FRR config does not parse, BOOTy logs a warning and ignores it.
+Both inputs are optional: without netplan files BOOTy uses the vars only,
+and without `frr.conf` it uses the netplan values without FRR. A file that is
+present but cannot be read or parsed is an error and network setup stops.
+This covers a netplan path that is not a readable directory, a netplan file
+that does not parse, and an `frr.conf` that cannot be read or does not
+parse. BOOTy does not fall back to the vars in these cases, because that
+would bring up a different network than the operator configured.
 
 BOOTy takes these values from netplan:
 

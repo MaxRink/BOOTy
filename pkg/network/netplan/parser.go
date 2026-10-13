@@ -1,7 +1,9 @@
 package netplan
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"maps"
 	"os"
@@ -374,11 +376,15 @@ func joinUnique(items []string) string {
 	return strings.Join(result, ",")
 }
 
-// HasNetplanFiles returns true if the given directory contains .yaml files.
-func HasNetplanFiles(dir string) bool {
+// HasNetplanFiles reports whether dir contains .yaml or .yml files. A
+// missing dir has none; any other read error is returned.
+func HasNetplanFiles(dir string) (bool, error) {
 	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
 	if err != nil {
-		return false
+		return false, fmt.Errorf("read netplan dir %s: %w", dir, err)
 	}
 	for _, e := range entries {
 		if e.IsDir() {
@@ -386,8 +392,8 @@ func HasNetplanFiles(dir string) bool {
 		}
 		name := e.Name()
 		if strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".yml") {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }

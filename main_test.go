@@ -1281,6 +1281,57 @@ func TestLoadModulesWarnsWhenAModuleNeverLoads(t *testing.T) {
 	}
 }
 
+func TestDetectNetplanConfigRejectsMalformedFiles(t *testing.T) {
+	writeFile := func(t *testing.T, path, content string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	validNetplan := "network:\n  version: 2\n  ethernets:\n    eth0:\n      dhcp4: true\n"
+
+	t.Run("no netplan files", func(t *testing.T) {
+		cfg, err := detectNetplanConfig(t.TempDir(), "/nonexistent/frr.conf")
+		if cfg != nil || err != nil {
+			t.Fatalf("detectNetplanConfig() = %v, %v, want nil, nil", cfg, err)
+		}
+	})
+	t.Run("unreadable netplan dir", func(t *testing.T) {
+		notDir := filepath.Join(t.TempDir(), "netplan")
+		writeFile(t, notDir, "x")
+		if _, err := detectNetplanConfig(notDir, "/nonexistent/frr.conf"); err == nil {
+			t.Fatal("detectNetplanConfig() = nil error, want error for a netplan path that is not a dir")
+		}
+	})
+	t.Run("valid netplan without frr.conf", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, filepath.Join(dir, "50-booty.yaml"), validNetplan)
+		cfg, err := detectNetplanConfig(dir, filepath.Join(dir, "missing-frr.conf"))
+		if err != nil || cfg == nil {
+			t.Fatalf("detectNetplanConfig() = %v, %v, want a config", cfg, err)
+		}
+	})
+	t.Run("malformed netplan", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, filepath.Join(dir, "50-booty.yaml"), "network: [unclosed\n")
+		if _, err := detectNetplanConfig(dir, filepath.Join(dir, "frr.conf")); err == nil {
+			t.Fatal("detectNetplanConfig() = nil error, want parse error")
+		}
+	})
+	t.Run("malformed frr.conf", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, filepath.Join(dir, "50-booty.yaml"), validNetplan)
+		frr := filepath.Join(dir, "frr.conf")
+		writeFile(t, frr, "router bgp 99999999999\n")
+		if _, err := detectNetplanConfig(dir, frr); err == nil {
+			t.Fatal("detectNetplanConfig() = nil error, want FRR parse error")
+		}
+	})
+}
+
 // The FRR config sets the numbered peers and their remote ASN together.
 // An iBGP peer (remote ASN 0) must not keep an eBGP ASN from the vars.
 func TestMergeNetplanConfigRemoteASNFollowsNeighbors(t *testing.T) {
