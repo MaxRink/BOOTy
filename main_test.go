@@ -1185,16 +1185,16 @@ func (r *recordingReporter) ReportStatus(_ context.Context, status config.Status
 	return nil
 }
 
-func TestFailRunLegacyCompatReportsAndWaits(t *testing.T) {
+func TestFailRunFailureActionWaitReportsAndWaits(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	reporter := &recordingReporter{}
 	rebooted := make(chan struct{})
 	go func() {
-		failRun(ctx, &config.MachineConfig{LegacyCompat: true}, reporter, "setup failed", func() { close(rebooted) })
+		failRun(ctx, &config.MachineConfig{FailureAction: config.FailureActionWait}, reporter, "setup failed", func() { close(rebooted) })
 	}()
 	select {
 	case <-rebooted:
-		t.Fatal("legacy compat rebooted before the context ended")
+		t.Fatal("FAILURE_ACTION=wait rebooted before the context ended")
 	case <-time.After(100 * time.Millisecond):
 	}
 	cancel()
@@ -1214,11 +1214,11 @@ func TestFailRunLegacyCompatReportsAndWaits(t *testing.T) {
 	}
 }
 
-func TestTokenRenewalFatalLegacyCompatStopsTheTask(t *testing.T) {
+func TestTokenRenewalFatalFailureActionWaitStopsTheTask(t *testing.T) {
 	rebooted, stopped := false, false
-	tokenRenewalFatal(&config.MachineConfig{LegacyCompat: true}, func() { rebooted = true }, func() { stopped = true })
+	tokenRenewalFatal(&config.MachineConfig{FailureAction: config.FailureActionWait}, func() { rebooted = true }, func() { stopped = true })
 	if rebooted || !stopped {
-		t.Fatalf("legacy compat: rebooted=%v stopped=%v, want the task stopped without reboot", rebooted, stopped)
+		t.Fatalf("FAILURE_ACTION=wait: rebooted=%v stopped=%v, want the task stopped without reboot", rebooted, stopped)
 	}
 	rebooted, stopped = false, false
 	tokenRenewalFatal(&config.MachineConfig{}, func() { rebooted = true }, func() { stopped = true })

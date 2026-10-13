@@ -342,22 +342,41 @@ func TestValidateRejectsABPreserveWithDisableKexec(t *testing.T) {
 	}
 }
 
-// CAPRF_LEGACY_COMPAT powers off and never kexecs, so it cannot complete an
-// A/B preserve-existing upgrade either.
-func TestValidateRejectsABPreserveWithLegacyCompat(t *testing.T) {
-	cfg := &Config{LegacyCompat: true}
+// SUCCESS_ACTION=poweroff, also through the CAPRF_LEGACY_COMPAT preset,
+// never kexecs, so it cannot complete an A/B preserve-existing upgrade.
+func TestValidateRejectsABPreserveWithPowerOff(t *testing.T) {
+	for _, base := range []Config{{SuccessAction: "poweroff"}, {LegacyCompat: true}} {
+		cfg := base
+		cfg.Provision.Image.Mode = ImageModeAB
+		cfg.Provision.AB.PreserveExisting = true
+		cfg.Provision.AB.ActiveSlot = ABSlotA
+		cfg.Provision.AB.TargetSlot = ABTargetInactive
+		cfg.Provision.AB.RootSizeMB = 8192
+
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), "successAction poweroff") {
+			t.Fatalf("Validate(%+v) = %v, want successAction poweroff incompatibility error", base, err)
+		}
+		if strings.Contains(err.Error(), "disableKexec must be false") {
+			t.Fatalf("Validate() = %v, must not blame disableKexec when it is false", err)
+		}
+	}
+}
+
+// An explicit SUCCESS_ACTION=reboot wins over the preset, so the legacy
+// preset can still run an A/B preserve-existing upgrade.
+func TestValidateAcceptsABPreserveWithLegacyCompatAndExplicitReboot(t *testing.T) {
+	cfg := &Config{LegacyCompat: true, SuccessAction: "reboot"}
 	cfg.Provision.Image.Mode = ImageModeAB
 	cfg.Provision.AB.PreserveExisting = true
 	cfg.Provision.AB.ActiveSlot = ABSlotA
 	cfg.Provision.AB.TargetSlot = ABTargetInactive
 	cfg.Provision.AB.RootSizeMB = 8192
-
-	err := cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "legacyCompat (CAPRF_LEGACY_COMPAT)") {
-		t.Fatalf("Validate() = %v, want legacy compat incompatibility error", err)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() = %v", err)
 	}
-	if strings.Contains(err.Error(), "disableKexec must be false") {
-		t.Fatalf("Validate() = %v, must not blame disableKexec when it is false", err)
+	if !cfg.WaitOnFailure() {
+		t.Fatal("the preset must still set FAILURE_ACTION=wait")
 	}
 }
 

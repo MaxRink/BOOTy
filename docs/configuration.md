@@ -11,7 +11,8 @@ the behaviour and link here:
 - [A/B partitioning](ab-partitioning.md)
 - [Sysext provisioning](sysext-provisioning.md)
 
-The parser is `ParseVars` in `pkg/caprf/client.go`. The test
+The parser is `ParseVars` in `pkg/caprf/client.go`, with the parity options in
+`pkg/caprf/parity_vars.go`. The test
 `TestConfigurationDocListsEveryVarsKey` in `docs_consistency_test.go` fails
 when the parser accepts a key that this page does not list.
 
@@ -66,7 +67,8 @@ Rules, from `parseVarLine` and `unquoteVarValue`:
   A validation error stops the run.
 
 When the vars file does not parse, BOOTy reports nothing and reboots. With
-`CAPRF_LEGACY_COMPAT=true` it keeps the ramdisk running instead.
+`FAILURE_ACTION=wait` or `CAPRF_LEGACY_COMPAT=true` it keeps the ramdisk
+running instead.
 
 Boolean keys are true for `true`, `1` or `yes`, in any letter case. All other
 values are false.
@@ -82,7 +84,9 @@ values are false.
 | `TARGET_OS` | (unset) | `linux` | Alias of `PROVISION_TARGET_OS`. |
 | `OS_FAMILY` | (unset) | `ubuntu`, `rhel`, `flatcar` | Target OS family. Required by `PERSIST_NETWORK=true`. `OVERLAYFS_ENABLED=true` requires `ubuntu`. `flatcar` rejects `CLOUDINIT_ENABLED=true`. `rhel` rejects `PERSIST_NETWORK=true`. |
 | `DISABLE_KEXEC` | `false` | boolean | Skip kexec after provisioning and reboot instead. Can not be combined with `AB_PRESERVE_EXISTING=true`. |
-| `CAPRF_LEGACY_COMPAT` | `false` | boolean | Behave like the CAPRF legacy shell provisioner. See [CAPRF legacy compatibility](#caprf-legacy-compatibility). |
+| `CAPRF_LEGACY_COMPAT` | `false` | boolean | Preset that makes BOOTy behave like the CAPRF legacy shell provisioner. It sets the options in [CAPRF legacy compatibility](#caprf-legacy-compatibility) that the vars file does not set. |
+| `SUCCESS_ACTION` | `reboot` | `reboot`, `poweroff` | End of a successful provision, deprovision or decommission. `reboot`: provision kexecs into the installed OS (reboot when kexec is disabled or fails), the other modes reboot. `poweroff`: power off, never kexec. `poweroff` can not be combined with `AB_PRESERVE_EXISTING=true`. YAML `successAction`. Preset: `poweroff`. |
+| `FAILURE_ACTION` | `reboot` | `reboot`, `wait` | End of a failed run. `wait`: report the error to `ERROR_URL` and keep the ramdisk running. Applies to a failed deprovision, a failure before the mode runs (vars file, network, JWT exchange) and exhausted JWT renewal. For a failed provision it is the default of `RESCUE_MODE`; an explicit `RESCUE_MODE` wins. YAML `failureAction`. Preset: `wait`. |
 | `MACHINE_EXTRA_KERNEL_PARAMS` | (unset) | kernel parameters | Extra kernel parameters for the installed OS GRUB configuration. A `console=` token is folded into the serial console resolution. |
 | `EXTRA_KERNEL_PARAMS` | (unset) | kernel parameters | Extra kernel parameters that the legacy provisioner reads. BOOTy appends them after `MACHINE_EXTRA_KERNEL_PARAMS`, whatever the line order. |
 | `MACHINE_SERIAL_CONSOLE` | (unset) | for example `ttyS1,115200n8`, `ttyS0`, `none` | Serial console of the installed OS. It overrides the firmware evidence (ACPI SPCR, device tree, sysfs). `none` configures no serial console. Legacy compat ignores it. Alias: `SERIAL_CONSOLE`. |
@@ -115,7 +119,19 @@ TLS, also in legacy compat.
 
 ## CAPRF legacy compatibility
 
-`CAPRF_LEGACY_COMPAT=true` changes these settings:
+`CAPRF_LEGACY_COMPAT=true` (YAML `legacyCompat: true`) is a preset.
+`Config.Validate` sets each option below that the configuration does not
+set. An explicit option always wins over the preset, also an explicit
+`false` or the default value. Without the preset the options keep their
+defaults.
+
+| Behaviour | Vars key | YAML option | Default | Preset value |
+|-----------|----------|-------------|---------|--------------|
+| End of a successful run | `SUCCESS_ACTION` | `successAction` | `reboot` | `poweroff` |
+| End of a failed run | `FAILURE_ACTION` | `failureAction` | `reboot` | `wait` |
+
+These behaviours do not have their own option yet. Only the preset turns
+them on:
 
 - `INSECURE_TRANSPORT=true`, `IMAGE_ALLOW_INSECURE_HTTP=true`, and TLS
   certificate checks off for the CAPRF callbacks, the connectivity check and
@@ -123,14 +139,11 @@ TLS, also in legacy compat.
 - BOOTy exports every vars file entry whose key is a valid shell identifier to
   the process environment, like `source vars`. Proxy variables and the
   [process environment](#process-environment) variables then apply.
-- No kexec. `DISABLE_KEXEC` has no further effect.
-- The default `RESCUE_MODE` for a failed provisioning is `wait`.
 - `MACHINE_SERIAL_CONSOLE` is ignored.
 - `setup-mellanox` raises `NUM_OF_VFS` to 32 (or `NUM_VFS`) on every
   ConnectX Ethernet function. It skips quietly without `mstconfig` or such a
   NIC.
 - For provisioning, the ramdisk takes the `HOSTNAME`.
-- `AB_PRESERVE_EXISTING=true` is rejected.
 
 [CAPRF legacy migration](caprf-legacy-migration.md) describes all
 behaviour changes of this mode.
@@ -349,7 +362,7 @@ does.
 
 | Key | Default | Values | Description |
 |-----|---------|--------|-------------|
-| `RESCUE_MODE` | `reboot`, `wait` in legacy compat | `reboot`, `retry`, `shell`, `wait` | Action after a failed provisioning, also for a failed standby `provision` command. |
+| `RESCUE_MODE` | `reboot`, `wait` with `FAILURE_ACTION=wait` | `reboot`, `retry`, `shell`, `wait` | Action after a failed provisioning, also for a failed standby `provision` command. |
 | `RESCUE_SSH_PUBKEY` | (unset) | SSH public key | Authorized key for root in `shell` and `wait` modes. BOOTy starts `dropbear`. |
 | `RESCUE_PASSWORD_HASH` | (unset) | crypt(3) hash | Root password hash in `shell` and `wait` modes. |
 | `RESCUE_AUTO_MOUNT` | `false` | boolean | Mount the found disks in `shell` and `wait` modes. |

@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -48,15 +49,26 @@ func TestREADMEClarifiesBondLabDoesNotProveLACP(t *testing.T) {
 	}
 }
 
-// varsKeyPattern matches the vars keys that pkg/caprf/client.go accepts: map
+// varsKeyPattern matches the vars keys that pkg/caprf accepts: map
 // entries such as `"KEY": &cfg...` or `"KEY": "shim"`, single-key `case "KEY":`
 // lines and `key == "KEY"` comparisons.
 var varsKeyPattern = regexp.MustCompile(`(?m)^\s*(?:case "([A-Za-z0-9_]+)":|"([A-Za-z_][A-Za-z0-9_]*)":\s+(?:&cfg|")|.*key == "([A-Za-z0-9_]+)")`)
 
 func TestConfigurationDocListsEveryVarsKey(t *testing.T) {
-	src, err := os.ReadFile("pkg/caprf/client.go")
+	files, err := filepath.Glob("pkg/caprf/*.go")
 	if err != nil {
-		t.Fatalf("read vars parser: %v", err)
+		t.Fatalf("list vars parser files: %v", err)
+	}
+	var src []byte
+	for _, file := range files {
+		if strings.HasSuffix(file, "_test.go") {
+			continue
+		}
+		data, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read vars parser: %v", err)
+		}
+		src = append(src, data...)
 	}
 	doc, err := os.ReadFile("docs/configuration.md")
 	if err != nil {
@@ -77,7 +89,7 @@ func TestConfigurationDocListsEveryVarsKey(t *testing.T) {
 	// One key per parser handler, so a regexp that misses a handler fails.
 	for _, sentinel := range []string{"IMAGE", "OCI_PREPULL_CACHE_DIR", "SECUREBOOT_SHIM_SHA256", "EXTRA_KERNEL_PARAMS", "RESCUE_TIMEOUT", "vrf_table_id", "asn_server"} {
 		if _, ok := keys[sentinel]; !ok {
-			t.Fatalf("varsKeyPattern does not find %q in pkg/caprf/client.go; update the pattern", sentinel)
+			t.Fatalf("varsKeyPattern does not find %q in pkg/caprf; update the pattern", sentinel)
 		}
 	}
 	for key := range keys {

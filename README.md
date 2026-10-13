@@ -33,7 +33,7 @@ BOOTy's supported runtime flow is CAPRF-compatible provisioning driven by `/depl
 1. A Redfish BMC mounts an ISO that contains a kernel, the BOOTy initramfs, and the `/deploy/vars` file.
 2. BOOTy reads `/deploy/vars` for the machine config, the image URLs, and the CAPRF endpoints. [docs/configuration.md](docs/configuration.md) lists every key.
 3. BOOTy sets up the ramdisk network: **GoBGP/EVPN** (`NETWORK_MODE=gobgp`), **FRR/EVPN** (BGP underlay), **static** IP, or **DHCP**. FRR and static setup fall back to DHCP when they fail. See [docs/networking.md](docs/networking.md).
-4. The provisioning pipeline validates input, cleans storage state, prepares NVMe namespaces, detects disks, applies the partition layout, streams the image, mounts shared data, optionally configures target overlayFS and sysexts, configures the OS, installs EFI fallbacks, and injects cloud-init. After a successful run, BOOTy tries kexec into the installed kernel and falls back to a hard reboot. It powers off instead when CAPRF legacy compatibility is on, or when an A/B `preserveExisting` upgrade needs kexec and kexec is not available.
+4. The provisioning pipeline validates input, cleans storage state, prepares NVMe namespaces, detects disks, applies the partition layout, streams the image, mounts shared data, optionally configures target overlayFS and sysexts, configures the OS, installs EFI fallbacks, and injects cloud-init. After a successful run, BOOTy tries kexec into the installed kernel and falls back to a hard reboot. It powers off instead with `SUCCESS_ACTION=poweroff` (preset by CAPRF legacy compatibility), or when an A/B `preserveExisting` upgrade needs kexec and kexec is not available.
 5. BOOTy sends status callbacks and, with `LOG_URL`, its log lines to the CAPRF controller. See [docs/caprf-integration.md](docs/caprf-integration.md).
 
 PXE or iPXE can still be used by an external boot environment to load the
@@ -276,7 +276,8 @@ the value. BOOTy sends the bearer token only to HTTPS or loopback URLs, unless
 `INSECURE_TRANSPORT=true`. Plain `http://` image URLs need
 `IMAGE_ALLOW_INSECURE_HTTP=true`. `CAPRF_LEGACY_COMPAT=true` sets both. When
 `TOKEN_URL` is set and the JWT exchange or renewal fails, BOOTy reboots. With
-`CAPRF_LEGACY_COMPAT=true` it reports the error and keeps the ramdisk running.
+`FAILURE_ACTION=wait` (preset by `CAPRF_LEGACY_COMPAT=true`) it reports the
+error and keeps the ramdisk running.
 [docs/configuration.md](docs/configuration.md) describes the file format and
 every key.
 
@@ -310,7 +311,9 @@ root is mounted.
 | `DRY_RUN` | `false` | When `true`, forces `MODE=dry-run`: validates prerequisites without destructive writes |
 | `BOOTY_RESUME` | `false` | Enable checkpoint resume — skip previously completed steps on restart |
 | `DISABLE_KEXEC` | `false` | Skip kexec, always hard-reboot. Must stay `false` for A/B preserve-existing upgrades |
-| `CAPRF_LEGACY_COMPAT` | `false` | Behave like the CAPRF legacy shell provisioner. See [CAPRF legacy compatibility](#caprf-legacy-compatibility) |
+| `CAPRF_LEGACY_COMPAT` | `false` | Preset that behaves like the CAPRF legacy shell provisioner. See [CAPRF legacy compatibility](#caprf-legacy-compatibility) |
+| `SUCCESS_ACTION` | `reboot` | `poweroff` powers off after a successful run instead of kexec or reboot. Preset by `CAPRF_LEGACY_COMPAT` |
+| `FAILURE_ACTION` | `reboot` | `wait` reports a failed run and keeps the ramdisk running. Default of `RESCUE_MODE`. Preset by `CAPRF_LEGACY_COMPAT` |
 | `MIN_DISK_SIZE_GB` | `0` | Minimum disk size filter (0 = no minimum) |
 | `BOOTY_ALLOW_REMOVABLE` | `false` | Allow USB/removable media as provisioning target |
 | `MACHINE_EXTRA_KERNEL_PARAMS` | — | Additional kernel cmdline parameters |
@@ -439,14 +442,17 @@ against a LACP-capable switch.
 
 CAPRF sets `CAPRF_LEGACY_COMPAT=true` when it runs BOOTy in place of its
 legacy shell provisioner (`internal/provision/files/*.sh` in
-cluster-api-provider-redfish). With the variable set, BOOTy keeps the legacy
-behaviour where the two differ:
+cluster-api-provider-redfish). The variable is a preset: it sets the options
+that the vars file does not set, and an explicit option wins. The options are
+listed in [CAPRF legacy compatibility](docs/configuration.md#caprf-legacy-compatibility).
+With the variable set, BOOTy keeps the legacy behaviour where the two differ:
 
-- After a successful provision or deprovision, BOOTy powers the host off. It
-  does not kexec or reboot. CAPRF then ejects the ISO and powers the host on.
+- After a successful provision or deprovision, BOOTy powers the host off
+  (`SUCCESS_ACTION=poweroff`). It does not kexec or reboot. CAPRF then ejects
+  the ISO and powers the host on.
 - After a failed provision or deprovision, BOOTy reports the error and keeps
-  the ramdisk running, like `RESCUE_MODE=wait`. An explicit `RESCUE_MODE`
-  still wins for provisioning.
+  the ramdisk running (`FAILURE_ACTION=wait`), like `RESCUE_MODE=wait`. An
+  explicit `RESCUE_MODE` still wins for provisioning.
 - `setup-mellanox` raises `NUM_OF_VFS` to 32 (or `NUM_VFS`) with `mstconfig`
   on every ConnectX-4/5/6/6 Dx/6 Lx/7 Ethernet function, like
   `setup_mellanox_num_of_vfs`, and skips quietly without `mstconfig` or such
@@ -543,8 +549,8 @@ can not be read or decoded, provisioning fails with `load checkpoint`. Remove
 ### Rescue Mode
 
 `RESCUE_MODE` sets what BOOTy does after a failed provisioning: `reboot`
-(default), `retry`, `shell` or `wait` (default with
-`CAPRF_LEGACY_COMPAT=true`). In `shell` and `wait` modes, BOOTy can give SSH
+(default), `retry`, `shell` or `wait` (default with `FAILURE_ACTION=wait`,
+which `CAPRF_LEGACY_COMPAT=true` presets). In `shell` and `wait` modes, BOOTy can give SSH
 access with `RESCUE_SSH_PUBKEY` and mount the found disks.
 
 ```bash
@@ -845,8 +851,8 @@ export TOKEN_ALGORITHM="RS256"
 
 When `TOKEN_URL` is not set, BOOTy uses the static `TOKEN` for all requests.
 When it is set, a failed exchange or exhausted renewal reboots the host. With
-`CAPRF_LEGACY_COMPAT=true`, BOOTy reports the error and keeps the ramdisk
-running instead. `TOKEN_URL` must use HTTPS, except for `localhost`,
+`FAILURE_ACTION=wait`, BOOTy reports the error and keeps the ramdisk running
+instead. `TOKEN_URL` must use HTTPS, except for `localhost`,
 `127.0.0.1` and `::1`.
 
 ### VLAN Support
@@ -881,7 +887,7 @@ export DISABLE_KEXEC=true
 
 BOOTy skips kexec when firmware values changed during provisioning (for
 example Mellanox SR-IOV), with `SECUREBOOT_REENABLE=true`, and with
-`CAPRF_LEGACY_COMPAT=true`, which powers off instead. If GRUB parsing fails or
+`SUCCESS_ACTION=poweroff`, which powers off instead. If GRUB parsing fails or
 the kernel or initramfs is not found, BOOTy falls back to a `reboot(2)`
 syscall.
 
@@ -954,10 +960,11 @@ an initial heartbeat, and polls commands once before entering the periodic loop
 return an error immediately. After readiness succeeds, heartbeat and command-poll
 failures are logged and retried on the next tick. `RESCUE_MODE` applies to hot
 provision command failures; deprovision command failures are ACKed as failed
-before BOOTy reboots. With `CAPRF_LEGACY_COMPAT=true`, a failed hot provision
+before BOOTy reboots. With `FAILURE_ACTION=wait`, a failed hot provision
 defaults to `RESCUE_MODE=wait` (ACKed first), a failed deprovision command is
-ACKed and BOOTy waits instead of rebooting, and successful provision and
-deprovision commands power the host off.
+ACKed and BOOTy waits instead of rebooting. With `SUCCESS_ACTION=poweroff`,
+successful provision and deprovision commands power the host off. Both are
+preset by `CAPRF_LEGACY_COMPAT=true`.
 Only `204 No Content` denotes an empty command queue; a `404 Not Found` or any
 other unexpected response is treated as a polling failure rather than an empty
 queue.

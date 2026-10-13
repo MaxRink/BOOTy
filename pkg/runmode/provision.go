@@ -32,7 +32,7 @@ func (m *ProvisionMode) Run(ctx context.Context) error {
 		if err == nil {
 			m.succeeded = true
 			m.firmwareChanged = orch.FirmwareChanged()
-			return provisionComplete(m.firmwareChanged, m.deps.Cfg.LegacyCompat)
+			return provisionComplete(m.firmwareChanged, m.deps.Cfg.PowerOffOnSuccess())
 		}
 		slog.Error("provisioning failed", "error", err)
 
@@ -69,8 +69,8 @@ func (m *ProvisionMode) Succeeded() bool { return m.succeeded }
 // FirmwareChanged returns whether firmware was modified during provisioning.
 func (m *ProvisionMode) FirmwareChanged() bool { return m.firmwareChanged }
 
-func provisionComplete(firmwareChanged, legacyCompat bool) *ProvisionCompleteError {
-	// The legacy CAPRF provisioner shuts the host down after success and
-	// CAPRF powers it on again from disk.
-	return &ProvisionCompleteError{FirmwareChanged: firmwareChanged, PowerOff: legacyCompat}
+func provisionComplete(firmwareChanged, powerOff bool) *ProvisionCompleteError {
+	// SUCCESS_ACTION=poweroff shuts the host down after success like the
+	// legacy CAPRF provisioner. CAPRF powers it on again from disk.
+	return &ProvisionCompleteError{FirmwareChanged: firmwareChanged, PowerOff: powerOff}
 }

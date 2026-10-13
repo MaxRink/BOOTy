@@ -319,9 +319,9 @@ func (o *Orchestrator) recordCheckpointDerivedState(stepName string, cp *Checkpo
 // RescueConfig returns the normalized rescue config derived from machine config.
 func (o *Orchestrator) RescueConfig() *rescue.Config {
 	cfg := &rescue.Config{Mode: rescue.ModeReboot}
-	if o.cfg.LegacyCompat {
-		// The legacy CAPRF scripts report the error and leave the ramdisk
-		// running, so CAPRF decides what happens next.
+	if o.cfg.WaitOnFailure() {
+		// Like the legacy CAPRF scripts: report the error and leave the
+		// ramdisk running, so CAPRF decides what happens next.
 		cfg.Mode = rescue.ModeWait
 	}
 	if o.cfg.Rescue.Mode != "" {

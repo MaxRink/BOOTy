@@ -2469,7 +2469,34 @@ func TestParseVarsLegacyCompat(t *testing.T) {
 	}
 }
 
-func TestRequestsLegacyCompatWithInvalidVars(t *testing.T) {
+func TestParseVarsLifecycleActions(t *testing.T) {
+	tests := []struct {
+		vars         string
+		wantPowerOff bool
+		wantWait     bool
+	}{
+		{vars: "SUCCESS_ACTION=poweroff\n", wantPowerOff: true},
+		{vars: "FAILURE_ACTION=WAIT\n", wantWait: true},
+		{vars: "CAPRF_LEGACY_COMPAT=true\n", wantPowerOff: true, wantWait: true},
+		{vars: "SUCCESS_ACTION=reboot\nCAPRF_LEGACY_COMPAT=true\n", wantWait: true},
+		{vars: "CAPRF_LEGACY_COMPAT=true\nFAILURE_ACTION=reboot\n", wantPowerOff: true},
+	}
+	for _, tt := range tests {
+		cfg, err := ParseVars(strings.NewReader(tt.vars))
+		if err != nil {
+			t.Fatalf("ParseVars(%q): %v", tt.vars, err)
+		}
+		if cfg.PowerOffOnSuccess() != tt.wantPowerOff || cfg.WaitOnFailure() != tt.wantWait {
+			t.Errorf("ParseVars(%q): PowerOffOnSuccess=%v WaitOnFailure=%v, want %v %v",
+				tt.vars, cfg.PowerOffOnSuccess(), cfg.WaitOnFailure(), tt.wantPowerOff, tt.wantWait)
+		}
+	}
+	if _, err := ParseVars(strings.NewReader("SUCCESS_ACTION=halt\n")); err == nil {
+		t.Fatal("ParseVars accepted SUCCESS_ACTION=halt")
+	}
+}
+
+func TestFailureConfigWithInvalidVars(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "vars")
 	content := "export CAPRF_LEGACY_COMPAT=\"false\"\nexport MODE=\"no-such-mode\"\nexport CAPRF_LEGACY_COMPAT=\"true\"\n"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
@@ -2478,22 +2505,47 @@ func TestRequestsLegacyCompatWithInvalidVars(t *testing.T) {
 	if _, err := New(path); err == nil {
 		t.Fatal("New() accepted an invalid mode")
 	}
-	if !RequestsLegacyCompat(path) {
-		t.Fatal("RequestsLegacyCompat() = false, want true")
+	if !FailureConfig(path).WaitOnFailure() {
+		t.Fatal("FailureConfig() does not wait with CAPRF_LEGACY_COMPAT=true")
 	}
-	if RequestsLegacyCompat(filepath.Join(t.TempDir(), "missing")) {
-		t.Fatal("RequestsLegacyCompat() = true for a missing file")
+	if FailureConfig(filepath.Join(t.TempDir(), "missing")).WaitOnFailure() {
+		t.Fatal("FailureConfig() waits for a missing file")
 	}
 }
 
-func TestRequestsLegacyCompatAfterLongLine(t *testing.T) {
+func TestFailureConfigNativeOptionAndPrecedence(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{name: "native wait", content: "export FAILURE_ACTION=\"Wait\"\nexport MODE=\"no-such-mode\"\n", want: true},
+		{name: "native reboot", content: "export FAILURE_ACTION=reboot\n", want: false},
+		{name: "explicit reboot wins over preset", content: "export CAPRF_LEGACY_COMPAT=true\nexport FAILURE_ACTION=reboot\n", want: false},
+		{name: "explicit wait without preset", content: "export CAPRF_LEGACY_COMPAT=false\nexport FAILURE_ACTION=wait\n", want: true},
+		{name: "unset", content: "export MODE=provision\n", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "vars")
+			if err := os.WriteFile(path, []byte(tt.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if got := FailureConfig(path).WaitOnFailure(); got != tt.want {
+				t.Fatalf("WaitOnFailure() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFailureConfigAfterLongLine(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "vars")
 	content := "export SYSEXT_LAYERS=\"" + strings.Repeat("x", 128*1024) + "\"\nexport CAPRF_LEGACY_COMPAT=\"true\""
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if !RequestsLegacyCompat(path) {
-		t.Fatal("RequestsLegacyCompat() = false after a 128 KiB line without a final newline")
+	if !FailureConfig(path).WaitOnFailure() {
+		t.Fatal("FailureConfig() misses CAPRF_LEGACY_COMPAT after a 128 KiB line without a final newline")
 	}
 }
 

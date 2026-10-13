@@ -29,17 +29,17 @@ func (m *DeprovisionMode) Run(ctx context.Context) error {
 	}
 	if err := orch.Deprovision(ctx); err != nil {
 		slog.Error("deprovisioning failed", "error", err)
-		if m.deps.Cfg.LegacyCompat {
-			// The legacy deprovision script reports the error and leaves the
-			// ramdisk running. A reboot would boot the ISO and wipe again.
-			slog.Info("legacy compat: waiting after deprovisioning failure")
+		if m.deps.Cfg.WaitOnFailure() {
+			// Like the legacy deprovision script: report the error and leave
+			// the ramdisk running. A reboot would boot the ISO and wipe again.
+			slog.Info("waiting after deprovisioning failure")
 			<-ctx.Done()
 			return fmt.Errorf("deprovisioning failed: %w", err)
 		}
 		return err
 	}
-	if m.deps.Cfg.LegacyCompat {
-		// The legacy deprovision script powers the host off after success.
+	if m.deps.Cfg.PowerOffOnSuccess() {
+		// Like the legacy deprovision script: power the host off.
 		return &PowerOffRequestedError{}
 	}
 	return nil

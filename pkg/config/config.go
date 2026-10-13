@@ -44,13 +44,30 @@ type Config struct {
 	// LegacyCompat makes BOOTy behave like the CAPRF legacy shell
 	// provisioner where the two differ. CAPRF sets it through
 	// CAPRF_LEGACY_COMPAT=true when BOOTy replaces the legacy ramdisk.
-	// With it set, BOOTy powers off after a successful provision or
-	// deprovision instead of using kexec or a reboot. After a failure it keeps
-	// the ramdisk running and waits, like the legacy scripts. For a failed
-	// provision this is the default rescue mode; an explicit RESCUE_MODE
-	// still wins.
+	// It is a preset: Validate sets every option that it implies and that
+	// is not set explicitly. See applyLegacyCompatPreset for the list.
 	// Default: false
 	LegacyCompat bool `yaml:"legacyCompat" json:"legacyCompat"`
+
+	// SuccessAction is what BOOTy does after a successful provision,
+	// deprovision or decommission.
+	// "reboot": provision kexecs into the installed kernel, or reboots when
+	// kexec is disabled or fails. The other modes reboot.
+	// "poweroff": power off in all modes, never kexec.
+	// Valid values: "reboot", "poweroff". Preset by legacyCompat: "poweroff".
+	// Default: "" (reboot)
+	SuccessAction string `yaml:"successAction" json:"successAction"`
+
+	// FailureAction is what BOOTy does after a failed run.
+	// "reboot": reboot the ramdisk.
+	// "wait": report the error to ERROR_URL and keep the ramdisk running.
+	// It applies to a failed deprovision, to a failure before the mode runs
+	// (vars file, network, JWT) and to exhausted JWT renewal. For a failed
+	// provision it is the default of Rescue.Mode; an explicit Rescue.Mode
+	// wins.
+	// Valid values: "reboot", "wait". Preset by legacyCompat: "wait".
+	// Default: "" (reboot)
+	FailureAction string `yaml:"failureAction" json:"failureAction"`
 
 	// Cross-cutting configuration sections.
 	Network   NetworkConfig   `yaml:"network"   json:"network"`
@@ -73,7 +90,18 @@ type Config struct {
 // KexecDisabled reports whether BOOTy must not kexec into the installed
 // kernel after provisioning.
 func (c *Config) KexecDisabled() bool {
-	return c.Provision.DisableKexec || c.LegacyCompat
+	return c.Provision.DisableKexec || c.PowerOffOnSuccess()
+}
+
+// PowerOffOnSuccess reports whether BOOTy powers off after a successful run.
+func (c *Config) PowerOffOnSuccess() bool {
+	return c.SuccessAction == SuccessActionPowerOff
+}
+
+// WaitOnFailure reports whether BOOTy reports a failed run and keeps the
+// ramdisk running instead of rebooting.
+func (c *Config) WaitOnFailure() bool {
+	return c.FailureAction == FailureActionWait
 }
 
 // MachineConfig is a type alias for backward compatibility during migration.

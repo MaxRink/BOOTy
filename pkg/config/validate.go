@@ -45,6 +45,7 @@ import (
 // All validation errors are collected and returned as a single error. Returns
 // nil when the config is valid.
 func (c *Config) Validate() error {
+	c.ApplyPresets()
 	errs := c.validateEnums()
 
 	peerMode := strings.ToLower(strings.TrimSpace(c.Network.BGP.PeerMode))
@@ -108,8 +109,8 @@ func (c *Config) validateProvisionFeatureConfigs() []string {
 	if err := validateOCIPrePullConfig(&c.Provision.OCIPrePulls); err != nil {
 		errs = append(errs, err.Error())
 	}
-	if c.LegacyCompat && c.Provision.AB.PreserveExisting {
-		errs = append(errs, "legacyCompat (CAPRF_LEGACY_COMPAT) powers off instead of using kexec and cannot be combined with provision.ab.preserveExisting")
+	if strings.EqualFold(strings.TrimSpace(c.SuccessAction), SuccessActionPowerOff) && c.Provision.AB.PreserveExisting {
+		errs = append(errs, "successAction poweroff (SUCCESS_ACTION, preset by CAPRF_LEGACY_COMPAT) never uses kexec and cannot be combined with provision.ab.preserveExisting")
 	}
 	return errs
 }
@@ -130,6 +131,12 @@ func (c *Config) validateEnums() []string {
 		},
 		func() string {
 			return validateEnumLower(c.Rescue.Mode, "rescue.mode", "reboot", "retry", "shell", "wait")
+		},
+		func() string {
+			return validateEnumLower(c.SuccessAction, "successAction", SuccessActionReboot, SuccessActionPowerOff)
+		},
+		func() string {
+			return validateEnumLower(c.FailureAction, "failureAction", FailureActionReboot, FailureActionWait)
 		},
 		func() string {
 			return validateEnumLower(c.Network.BGP.PeerMode, "network.bgp.peerMode", "unnumbered", "dual", "numbered")
@@ -277,6 +284,8 @@ func (c *Config) normalize() {
 		&c.Provision.AB.ActiveSlot,
 		&c.Provision.AB.TargetSlot,
 		&c.Rescue.Mode,
+		&c.SuccessAction,
+		&c.FailureAction,
 	}
 	for _, f := range lowerFields {
 		if *f != "" {

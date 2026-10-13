@@ -227,10 +227,11 @@ func TestStandbyDeprovisionCommandFailureReturnsErrorWithoutReboot(t *testing.T)
 	}
 }
 
-func newLegacyCompatStandby(t *testing.T, deprovErr error) *StandbyMode {
+func newLegacyActionsStandby(t *testing.T, deprovErr error) *StandbyMode {
 	t.Helper()
 	cfg := standbyConfig()
-	cfg.LegacyCompat = true
+	cfg.SuccessAction = config.SuccessActionPowerOff
+	cfg.FailureAction = config.FailureActionWait
 	return &StandbyMode{
 		deps: Deps{Cfg: cfg, Client: &standbyProvider{commands: []config.Command{{ID: "cmd-1", Type: "deprovision"}}}},
 		newDeprovisioner: func() standbyDeprovisioner {
@@ -239,20 +240,20 @@ func newLegacyCompatStandby(t *testing.T, deprovErr error) *StandbyMode {
 	}
 }
 
-func TestStandbyDeprovisionCommandLegacyCompatPowersOff(t *testing.T) {
-	err := newLegacyCompatStandby(t, nil).Run(context.Background())
+func TestStandbyDeprovisionCommandSuccessActionPowerOff(t *testing.T) {
+	err := newLegacyActionsStandby(t, nil).Run(context.Background())
 	var powerOff *PowerOffRequestedError
 	if !errors.As(err, &powerOff) {
 		t.Fatalf("Run error = %v, want power off request", err)
 	}
 }
 
-func TestStandbyDeprovisionCommandLegacyCompatFailureWaits(t *testing.T) {
+func TestStandbyDeprovisionCommandFailureActionWait(t *testing.T) {
 	deprovisionErr := errors.New("wipe failed")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- newLegacyCompatStandby(t, deprovisionErr).Run(ctx) }()
+	go func() { done <- newLegacyActionsStandby(t, deprovisionErr).Run(ctx) }()
 
 	select {
 	case err := <-done:
@@ -267,7 +268,7 @@ func TestStandbyDeprovisionCommandLegacyCompatFailureWaits(t *testing.T) {
 		}
 		var rebootErr *RebootRequestedError
 		if errors.As(err, &rebootErr) {
-			t.Fatalf("Run error = %v, legacy compat must not reboot", err)
+			t.Fatalf("Run error = %v, FAILURE_ACTION=wait must not reboot", err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run did not return after the context ended")
@@ -289,7 +290,7 @@ func (p *ackSignalProvider) AcknowledgeCommand(_ context.Context, cmdID, status,
 // A failed hot provision is ACKed before the rescue wait starts.
 func TestStandbyProvisionFailureAcksBeforeWait(t *testing.T) {
 	cfg := standbyConfig()
-	cfg.LegacyCompat = true // rescue mode defaults to wait
+	cfg.FailureAction = config.FailureActionWait // rescue mode defaults to wait
 	provider := &ackSignalProvider{
 		standbyProvider: &standbyProvider{commands: []config.Command{{ID: "p1", Type: "provision"}}},
 		acked:           make(chan string, 1),

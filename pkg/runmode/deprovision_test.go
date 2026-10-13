@@ -11,10 +11,17 @@ import (
 	"github.com/telekom/BOOTy/pkg/config"
 )
 
-func newTestDeprovisionMode(t *testing.T, legacyCompat bool, deprovErr error) *DeprovisionMode {
+// newTestDeprovisionMode builds a deprovision mode. legacyActions selects
+// SUCCESS_ACTION=poweroff and FAILURE_ACTION=wait.
+func newTestDeprovisionMode(t *testing.T, legacyActions bool, deprovErr error) *DeprovisionMode {
 	t.Helper()
+	cfg := &config.MachineConfig{Mode: "deprovision"}
+	if legacyActions {
+		cfg.SuccessAction = config.SuccessActionPowerOff
+		cfg.FailureAction = config.FailureActionWait
+	}
 	return &DeprovisionMode{
-		deps: Deps{Cfg: &config.MachineConfig{Mode: "deprovision", LegacyCompat: legacyCompat}},
+		deps: Deps{Cfg: cfg},
 		newDeprovisioner: func() standbyDeprovisioner {
 			return standbyDeprovisionerFunc(func(context.Context) error { return deprovErr })
 		},
@@ -27,7 +34,7 @@ func TestDeprovisionModeSuccessExit(t *testing.T) {
 	}
 	var powerOff *PowerOffRequestedError
 	if err := newTestDeprovisionMode(t, true, nil).Run(context.Background()); !errors.As(err, &powerOff) {
-		t.Fatalf("Run() = %v, want power off request in legacy compat", err)
+		t.Fatalf("Run() = %v, want power off request with SUCCESS_ACTION=poweroff", err)
 	}
 }
 
@@ -40,7 +47,7 @@ func TestDeprovisionModeFailureReturnsByDefault(t *testing.T) {
 
 // Legacy evidence: deprovision.sh reports the error and exits the script;
 // the ramdisk keeps running. Run must block until its context ends.
-func TestDeprovisionModeFailureWaitsInLegacyCompat(t *testing.T) {
+func TestDeprovisionModeFailureWaitsWithFailureActionWait(t *testing.T) {
 	wipeErr := errors.New("wipe failed")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

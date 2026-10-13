@@ -2977,8 +2977,8 @@ func TestRescueConfig_DefaultsApplied(t *testing.T) {
 	}
 }
 
-func TestRescueConfig_LegacyCompatWaits(t *testing.T) {
-	cfg := &config.MachineConfig{LegacyCompat: true}
+func TestRescueConfig_FailureActionWaitWaits(t *testing.T) {
+	cfg := &config.MachineConfig{FailureAction: config.FailureActionWait}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
 	if rc := o.RescueConfig(); rc.Mode != "wait" {
 		t.Errorf("Mode = %q, want wait like the legacy CAPRF scripts", rc.Mode)
@@ -2986,14 +2986,14 @@ func TestRescueConfig_LegacyCompatWaits(t *testing.T) {
 
 	cfg.Rescue.Mode = "retry"
 	if rc := o.RescueConfig(); rc.Mode != "retry" {
-		t.Errorf("Mode = %q, explicit rescue mode must win over legacy compat", rc.Mode)
+		t.Errorf("Mode = %q, explicit rescue mode must win over FAILURE_ACTION", rc.Mode)
 	}
 }
 
-func TestShouldKeepTargetRootMountedForKexec_LegacyCompat(t *testing.T) {
-	cfg := &config.MachineConfig{LegacyCompat: true}
+func TestShouldKeepTargetRootMountedForKexec_SuccessActionPowerOff(t *testing.T) {
+	cfg := &config.MachineConfig{SuccessAction: config.SuccessActionPowerOff}
 	if ShouldKeepTargetRootMountedForKexec(cfg, false) {
-		t.Error("legacy compat powers off, so the target root must not stay mounted for kexec")
+		t.Error("SUCCESS_ACTION=poweroff powers off, so the target root must not stay mounted for kexec")
 	}
 }
 

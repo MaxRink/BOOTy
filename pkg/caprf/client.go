@@ -135,31 +135,42 @@ func isShellIdentifier(s string) bool {
 	return true
 }
 
-// RequestsLegacyCompat reports whether the vars file sets
-// CAPRF_LEGACY_COMPAT to a true value. It reads only that key, so it also
-// works when the rest of the file does not parse.
-func RequestsLegacyCompat(varsPath string) bool {
+// FailureConfig reads only CAPRF_LEGACY_COMPAT and FAILURE_ACTION from the
+// vars file and returns a config with the resulting FailureAction. It also
+// works when the rest of the file does not parse, so BOOTy can still wait
+// instead of rebooting after a vars file error.
+func FailureConfig(varsPath string) *config.MachineConfig {
+	cfg := &config.MachineConfig{}
 	f, err := os.Open(varsPath) //nolint:gosec // trusted path from ISO
 	if err != nil {
-		return false
+		return cfg
 	}
 	defer f.Close() //nolint:errcheck // read-only file
 
 	// The last assignment wins, like in ParseVars. bufio.Reader has no line
 	// length limit, so a long earlier entry cannot hide the setting.
-	requested := false
 	reader := bufio.NewReader(f)
 	for {
 		raw, err := reader.ReadString('\n')
 		line := strings.TrimPrefix(strings.TrimSpace(raw), "export ")
-		if key, value, ok := strings.Cut(line, "="); ok && key == "CAPRF_LEGACY_COMPAT" {
+		if key, value, ok := strings.Cut(line, "="); ok {
 			value, unquoteErr := unquoteVarValue(value)
-			requested = unquoteErr == nil && parseBoolVar(value)
+			switch key {
+			case "CAPRF_LEGACY_COMPAT":
+				cfg.LegacyCompat = unquoteErr == nil && parseBoolVar(value)
+			case "FAILURE_ACTION":
+				if unquoteErr != nil {
+					value = ""
+				}
+				cfg.FailureAction = strings.ToLower(strings.TrimSpace(value))
+			}
 		}
 		if err != nil {
-			return requested
+			break
 		}
 	}
+	cfg.ApplyPresets()
+	return cfg
 }
 
 // NewFromConfig creates a CAPRF client from an already-parsed config.
@@ -1071,7 +1082,7 @@ func unquoteDoubleQuotedVarValue(value string) string {
 }
 
 func applyVar(cfg *config.MachineConfig, key, value string) error {
-	if applyStringVar(cfg, key, value) {
+	if applyParityVar(cfg, key, value) || applyStringVar(cfg, key, value) {
 		return nil
 	}
 	if handled, err := applyUint32Var(cfg, key, value); handled {

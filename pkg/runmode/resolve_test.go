@@ -71,9 +71,9 @@ func TestProvisionCompleteRequestsRebootFallback(t *testing.T) {
 	}
 }
 
-func TestProvisionCompletePowersOffInLegacyCompat(t *testing.T) {
+func TestProvisionCompletePowersOffWithSuccessActionPowerOff(t *testing.T) {
 	err := provisionComplete(false, true)
 	if !err.PowerOff {
-		t.Error("legacy compat provision completion must power off like the legacy CAPRF provisioner")
+		t.Error("SUCCESS_ACTION=poweroff provision completion must power off like the legacy CAPRF provisioner")
 	}
 }
