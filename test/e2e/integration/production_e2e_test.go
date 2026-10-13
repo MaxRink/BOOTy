@@ -16,6 +16,8 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os/exec"
 	"strings"
 	"testing"
@@ -226,24 +228,37 @@ func TestProductionSpineBGPEstablished(t *testing.T) {
 	requireProductionLab(t)
 	t.Cleanup(func() { prodDumpDebugState(t) })
 
-	// BOOTy peers with spine01 via eBGP unnumbered on eth1.
-	// The spine sees a peer with ASN 65501 (BOOTy's local-as).
+	// BOOTy peers with spine01 via eBGP unnumbered on eth1. The spine must
+	// see the peer with ASN 65501 (BOOTy's local-as). A first session can
+	// come up with the real ASN before the local-as applies and is then
+	// reset, so poll until the session is Established with 65501.
 	deadline := time.Now().Add(prodBGPConvergeTimeout)
+	last := "no answer"
 	for time.Now().Before(deadline) {
 		out, _ := prodDockerExecRaw(t, prodSpineContainer,
 			"vtysh", "-c", "show bgp neighbors eth1 json")
-		if strings.Contains(out, "Established") {
-			t.Log("Spine ↔ BOOTy eBGP unnumbered session ESTABLISHED")
-			// Assert the remote AS is 65501 (BOOTy's local-as override).
-			if !strings.Contains(out, "65501") {
-				t.Fatal("Spine sees BOOTy ESTABLISHED but remote AS is not 65501 — local-as override may have regressed")
+		var neighbors map[string]struct {
+			State    string `json:"bgpState"`
+			RemoteAS uint32 `json:"remoteAs"`
+		}
+		// vtysh can print a warning before the JSON.
+		if i := strings.Index(out, "{"); i > 0 {
+			out = out[i:]
+		}
+		if err := json.Unmarshal([]byte(out), &neighbors); err != nil {
+			last = fmt.Sprintf("no JSON: %v", err)
+		} else {
+			for name, n := range neighbors {
+				last = fmt.Sprintf("%s: state %q remote AS %d", name, n.State, n.RemoteAS)
+				if n.State == "Established" && n.RemoteAS == 65501 {
+					t.Log("Spine sees BOOTy ESTABLISHED with local-as 65501")
+					return
+				}
 			}
-			t.Log("Spine sees BOOTy with local-as 65501 (correct)")
-			return
 		}
 		time.Sleep(prodBGPConvergeInterval)
 	}
-	t.Fatal("Spine ↔ BOOTy BGP session not ESTABLISHED")
+	t.Fatalf("Spine <-> BOOTy session not ESTABLISHED with remote AS 65501 (local-as) within %s: last %s", prodBGPConvergeTimeout, last)
 }
 
 func TestProductionDCGWBGPEstablished(t *testing.T) {
