@@ -350,6 +350,8 @@ root is mounted.
 | `WIPE_DEPTH` | `thorough` | `thorough`: stop LVM, dm-crypt and MD on the disk, clear every partition, the partition table and the disk edges, then `blkdiscard` the disk. `quick`: `sgdisk --zap-all` and `wipefs -af` on the disk only. Preset `quick` by `CAPRF_LEGACY_COMPAT`. See [docs/disk.md](docs/disk.md#wipe-behaviour) |
 | `GROW_PARTITION` | `root` | `last-linux` grows the last GPT Linux partition like the legacy `provision.sh`. Preset by `CAPRF_LEGACY_COMPAT` |
 | `DISCARD_NVME` | `false` | `blkdiscard` every NVMe disk before a wipe of all disks. Preset by `CAPRF_LEGACY_COMPAT` |
+| `FRR_CONFIG_STRICT` | `true` | `false` logs and skips provisioner `frr.conf` statements that BOOTy does not implement instead of failing. Invalid values and unsupported block openers still fail. See [Networking](docs/networking.md#strict-input-and-the-accepted-grammar) |
+| `NETPLAN_STRICT` | `true` | `false` logs and skips unknown provisioner netplan keys instead of failing. Wrong value types and unknown keys under `match` or in `routes` still fail |
 | `NETWORK_WAIT_MODE` | `default` | `rounds` waits like the legacy `wait_for_network`: one network setup and `NETWORK_WAIT_MAX_ATTEMPTS` rounds of 20 seconds. Preset by `CAPRF_LEGACY_COMPAT` |
 | `NETWORK_WAIT_MAX_ATTEMPTS` | unset (15) | With `NETWORK_WAIT_MODE=rounds`: 20 second network wait rounds before the run fails (0-100000). `0` means no round: the run fails at once, like the legacy provisioner |
 | `BOOTY_ALLOW_REMOVABLE` | `false` | Allow USB/removable media as provisioning target |

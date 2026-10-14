@@ -33,6 +33,13 @@ type NetworkConfig struct {
 	// Default: ""
 	DNSResolvers string `yaml:"dnsResolvers" json:"dnsResolvers"`
 
+	// FRRStrict and NetplanStrict make a provisioner frr.conf statement or
+	// netplan key that BOOTy does not implement fail the network setup.
+	// false logs each one with its line and skips it.
+	// Default: nil (true)
+	FRRStrict     *bool `yaml:"frrStrict,omitempty" json:"frrStrict,omitempty"`
+	NetplanStrict *bool `yaml:"netplanStrict,omitempty" json:"netplanStrict,omitempty"`
+
 	// WaitMode selects the network connectivity wait.
 	// "default": up to 3 network setups, each waiting up to 5 minutes.
 	// "rounds": like wait_for_network of the CAPRF legacy provisioner, one

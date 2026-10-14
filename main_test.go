@@ -1320,7 +1320,7 @@ func TestPredictableNamesFromNetplanAndFRR(t *testing.T) {
 	if err := os.WriteFile(frrPath, []byte(frrConf), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	npCfg, err := detectNetplanConfig(netplanDir, frrPath)
+	npCfg, err := detectNetplanConfig(netplanDir, frrPath, true, true)
 	if err != nil || npCfg == nil {
 		t.Fatalf("detectNetplanConfig() = %v, %v", npCfg, err)
 	}
@@ -1378,7 +1378,7 @@ func TestDetectNetplanConfigRejectsMalformedFiles(t *testing.T) {
 	validNetplan := "network:\n  version: 2\n  ethernets:\n    eth0:\n      dhcp4: true\n"
 
 	t.Run("no netplan files", func(t *testing.T) {
-		cfg, err := detectNetplanConfig(t.TempDir(), "/nonexistent/frr.conf")
+		cfg, err := detectNetplanConfig(t.TempDir(), "/nonexistent/frr.conf", true, true)
 		if cfg != nil || err != nil {
 			t.Fatalf("detectNetplanConfig() = %v, %v, want nil, nil", cfg, err)
 		}
@@ -1386,14 +1386,14 @@ func TestDetectNetplanConfigRejectsMalformedFiles(t *testing.T) {
 	t.Run("unreadable netplan dir", func(t *testing.T) {
 		notDir := filepath.Join(t.TempDir(), "netplan")
 		writeFile(t, notDir, "x")
-		if _, err := detectNetplanConfig(notDir, "/nonexistent/frr.conf"); err == nil {
+		if _, err := detectNetplanConfig(notDir, "/nonexistent/frr.conf", true, true); err == nil {
 			t.Fatal("detectNetplanConfig() = nil error, want error for a netplan path that is not a dir")
 		}
 	})
 	t.Run("valid netplan without frr.conf", func(t *testing.T) {
 		dir := t.TempDir()
 		writeFile(t, filepath.Join(dir, "50-booty.yaml"), validNetplan)
-		cfg, err := detectNetplanConfig(dir, filepath.Join(dir, "missing-frr.conf"))
+		cfg, err := detectNetplanConfig(dir, filepath.Join(dir, "missing-frr.conf"), true, true)
 		if err != nil || cfg == nil {
 			t.Fatalf("detectNetplanConfig() = %v, %v, want a config", cfg, err)
 		}
@@ -1401,7 +1401,7 @@ func TestDetectNetplanConfigRejectsMalformedFiles(t *testing.T) {
 	t.Run("malformed netplan", func(t *testing.T) {
 		dir := t.TempDir()
 		writeFile(t, filepath.Join(dir, "50-booty.yaml"), "network: [unclosed\n")
-		if _, err := detectNetplanConfig(dir, filepath.Join(dir, "frr.conf")); err == nil {
+		if _, err := detectNetplanConfig(dir, filepath.Join(dir, "frr.conf"), true, true); err == nil {
 			t.Fatal("detectNetplanConfig() = nil error, want parse error")
 		}
 	})
@@ -1410,8 +1410,33 @@ func TestDetectNetplanConfigRejectsMalformedFiles(t *testing.T) {
 		writeFile(t, filepath.Join(dir, "50-booty.yaml"), validNetplan)
 		frr := filepath.Join(dir, "frr.conf")
 		writeFile(t, frr, "router bgp 99999999999\n")
-		if _, err := detectNetplanConfig(dir, frr); err == nil {
+		if _, err := detectNetplanConfig(dir, frr, true, true); err == nil {
 			t.Fatal("detectNetplanConfig() = nil error, want FRR parse error")
+		}
+	})
+	// NETPLAN_STRICT=false and FRR_CONFIG_STRICT=false skip what BOOTy does
+	// not implement and keep the rest.
+	t.Run("unknown key and statement, strict and lenient", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, filepath.Join(dir, "50-booty.yaml"),
+			"network:\n  version: 2\n  ethernets:\n    eth0:\n      dhcp4: true\n      wakeonlan: true\n")
+		frr := filepath.Join(dir, "frr.conf")
+		writeFile(t, frr, "router bgp 65000\n maximum-paths 8\n neighbor eth0 interface remote-as external\n")
+		_, err := detectNetplanConfig(dir, frr, true, false)
+		if err == nil || !strings.Contains(err.Error(), "wakeonlan") {
+			t.Fatalf("strict netplan: %v, want an error naming wakeonlan", err)
+		}
+		_, err = detectNetplanConfig(dir, frr, false, true)
+		if err == nil || !strings.Contains(err.Error(), `line 2 "maximum-paths 8"`) {
+			t.Fatalf("strict frr.conf: %v, want an error naming line 2", err)
+		}
+		// One prefix: main names the file, the parse error the line.
+		if want := "parse FRR config " + frr + `: line 2 "maximum-paths 8": statement not supported by BOOTy (in router bgp 65000)`; err.Error() != want {
+			t.Fatalf("strict frr.conf error\n got  %s\n want %s", err, want)
+		}
+		cfg, err := detectNetplanConfig(dir, frr, false, false)
+		if err != nil || cfg == nil || cfg.ASN != 65000 {
+			t.Fatalf("lenient: %+v, %v, want the config with ASN 65000", cfg, err)
 		}
 	})
 }
@@ -1455,5 +1480,22 @@ func TestPrepareLinkLayersResolvesStaticMatch(t *testing.T) {
 				t.Fatalf("StaticIface = %q, want %q", netCfg.StaticIface, tt.want)
 			}
 		})
+	}
+}
+
+// Unset strictness options mean strict; each key sets only its own input.
+func TestInputStrictness(t *testing.T) {
+	off := false
+	cfg := &config.MachineConfig{}
+	if np, frr := inputStrictness(cfg); !np || !frr {
+		t.Fatalf("unset: netplan %v frr %v, want both strict", np, frr)
+	}
+	cfg.Network.FRRStrict = &off
+	if np, frr := inputStrictness(cfg); !np || frr {
+		t.Fatalf("FRR_CONFIG_STRICT=false: netplan %v frr %v", np, frr)
+	}
+	cfg.Network.FRRStrict, cfg.Network.NetplanStrict = nil, &off
+	if np, frr := inputStrictness(cfg); np || !frr {
+		t.Fatalf("NETPLAN_STRICT=false: netplan %v frr %v", np, frr)
 	}
 }

@@ -1,9 +1,12 @@
 package netplan
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/network"
@@ -103,9 +106,14 @@ network:
       embedded-switch-mode: switchdev
       delay-virtual-functions-rebind: true
 `)
-	cfg, err := ParseFile(filepath.Join(dir, "10-node-network.yaml"))
+	// The source-routed default routes ("from") are not applied by BOOTy,
+	// so strict parsing rejects the file; lenient parsing drops them.
+	if _, err := ParseFile(filepath.Join(dir, "10-node-network.yaml")); err == nil || !strings.Contains(err.Error(), "hbn route to default") {
+		t.Fatalf("ParseFile = %v, want the route error for from", err)
+	}
+	cfg, err := parseFile(filepath.Join(dir, "10-node-network.yaml"), false)
 	if err != nil {
-		t.Fatalf("ParseFile: %v", err)
+		t.Fatalf("parseFile(lenient): %v", err)
 	}
 	bond, ok := cfg.Network.Bonds["sriovbond"]
 	if !ok {
@@ -137,12 +145,8 @@ network:
 	if sriov.EmbeddedSwitchMode != "switchdev" {
 		t.Errorf("embedded-switch-mode = %q, want switchdev", sriov.EmbeddedSwitchMode)
 	}
-	hbn := cfg.Network.Ethernets["hbn"]
-	if len(hbn.Routes) != 2 {
-		t.Errorf("hbn routes = %d, want 2", len(hbn.Routes))
-	}
-	if hbn.Routes[0].From != "10.1.2.3" {
-		t.Errorf("route from = %q, want 10.1.2.3", hbn.Routes[0].From)
+	if hbn := cfg.Network.Ethernets["hbn"]; len(hbn.Routes) != 0 {
+		t.Errorf("hbn routes = %+v, want the from routes dropped", hbn.Routes)
 	}
 }
 
@@ -1136,5 +1140,89 @@ func TestToNetworkConfig_SetNameTranslatesDependentLinks(t *testing.T) {
 	}
 	if cfg.VXLANLink != "hbn1" {
 		t.Errorf("VXLANLink = %q", cfg.VXLANLink)
+	}
+}
+
+// NETPLAN_STRICT: an unknown key fails in strict mode and is skipped without
+// it. A value of the wrong type fails in both modes. "optional" only changes
+// systemd-networkd-wait-online and is accepted.
+func TestParseDirStrictness(t *testing.T) {
+	for _, tt := range []struct {
+		name, yaml          string
+		strictOK, lenientOK bool
+	}{
+		{"optional", "network:\n  ethernets:\n    eth0:\n      optional: true\n      mtu: 9000\n", true, true},
+		{"unknown key", "network:\n  ethernets:\n    eth0:\n      wakeonlan: true\n      mtu: 9000\n", false, true},
+		{"wrong type", "network:\n  ethernets:\n    eth0:\n      wakeonlan: true\n      mtu: big\n", false, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFile(t, dir, "50.yaml", tt.yaml)
+			if _, err := ParseDirWith(dir, true); (err == nil) != tt.strictOK {
+				t.Errorf("strict: %v, want ok=%v", err, tt.strictOK)
+			}
+			cfg, err := ParseDirWith(dir, false)
+			if (err == nil) != tt.lenientOK {
+				t.Fatalf("lenient: %v, want ok=%v", err, tt.lenientOK)
+			}
+			if err == nil && cfg.Network.Ethernets["eth0"].MTU != 9000 {
+				t.Errorf("lenient MTU = %d, want the known keys kept", cfg.Network.Ethernets["eth0"].MTU)
+			}
+		})
+	}
+}
+
+// Lenient mode still fails on an unknown key under match or in a route,
+// and it logs every key it skips with its line.
+func TestParseDirLenientLimitsAndWarnings(t *testing.T) {
+	for _, y := range []string{
+		"network:\n  ethernets:\n    up0:\n      match:\n        driver: mlx5_core\n",
+		"network:\n  ethernets:\n    eth0:\n      routes:\n        - to: default\n          via: 192.0.2.1\n          on-link: true\n",
+		"network:\n  ethernets:\n    eth0:\n      routes:\n        - to: 192.0.2.0/24\n          type: blackhole\n",
+	} {
+		dir := t.TempDir()
+		writeFile(t, dir, "50.yaml", y)
+		if _, err := ParseDirWith(dir, false); err == nil {
+			t.Errorf("lenient parse of %q passed, want an error", y)
+		}
+	}
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	dir := t.TempDir()
+	writeFile(t, dir, "50.yaml", "network:\n  ethernets:\n    eth0:\n      wakeonlan: true\n      mtu: 9000\n")
+	if _, err := ParseDirWith(dir, false); err != nil {
+		t.Fatal(err)
+	}
+	if out := buf.String(); !strings.Contains(out, "NETPLAN_STRICT=false") || !strings.Contains(out, "line 4: field wakeonlan") {
+		t.Fatalf("log = %q, want a warning naming line 4 and wakeonlan", out)
+	}
+}
+
+// Route keys that BOOTy does not apply fail in strict mode; lenient mode
+// drops the route, so a "table: 100" default is not the main-table gateway.
+func TestParseDirRouteKeys(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "50.yaml", "network:\n  ethernets:\n    eth0:\n      addresses: [192.0.2.10/24]\n      routes:\n        - to: default\n          via: 192.0.2.1\n          table: 100\n")
+	if _, err := ParseDirWith(dir, true); err == nil || !strings.Contains(err.Error(), "eth0 route to default") {
+		t.Fatalf("strict: %v, want the route error", err)
+	}
+	np, err := ParseDirWith(dir, false)
+	if err != nil {
+		t.Fatalf("lenient: %v", err)
+	}
+	if cfg := ToNetworkConfig(np, nil); cfg.StaticGateway != "" {
+		t.Fatalf("StaticGateway = %q, want none from the table 100 route", cfg.StaticGateway)
+	}
+}
+
+// ParseFile applies the route key check too.
+func TestParseFileRouteKeys(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "50.yaml", "network:\n  ethernets:\n    eth0:\n      routes:\n        - to: default\n          via: 192.0.2.1\n          metric: 50\n")
+	if _, err := ParseFile(filepath.Join(dir, "50.yaml")); err == nil || !strings.Contains(err.Error(), "eth0 route to default") {
+		t.Fatalf("ParseFile() = %v, want the route error", err)
 	}
 }

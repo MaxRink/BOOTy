@@ -1,0 +1,149 @@
+{
+  "Version": "9.1",
+  "Defaults": "datacenter",
+  "Hostname": "",
+  "IPForwarding": null,
+  "IPv6Forwarding": null,
+  "VRFVNIs": [
+    {
+      "VRF": "",
+      "VNI": 1000,
+      "PrefixRoutesOnly": false,
+      "Line": 4
+    }
+  ],
+  "StaticRoutes": null,
+  "Routers": [
+    {
+      "ASN": 65101,
+      "VRF": "Vrf_underlay",
+      "RouterID": "192.168.4.11",
+      "EBGPRequiresPolicy": false,
+      "SuppressDuplicates": null,
+      "DefaultIPv4Unicast": null,
+      "MultipathRelax": false,
+      "Neighbors": [
+        {
+          "Name": "10.254.0.3",
+          "PeerGroup": false,
+          "Interface": false,
+          "Group": "",
+          "RemoteAS": {
+            "Kind": "external",
+            "Number": 0
+          },
+          "LocalAS": null,
+          "BFD": false,
+          "BFDProfile": "",
+          "KeepaliveTime": null,
+          "HoldTime": null,
+          "ConnectRetry": null,
+          "Line": 9
+        }
+      ],
+      "AddressFamilies": [
+        {
+          "AFI": "ipv4",
+          "SAFI": "unicast",
+          "Networks": [
+            "192.168.4.11/32"
+          ],
+          "RedistributeConnected": false,
+          "Neighbors": [
+            {
+              "Name": "10.254.0.3",
+              "Activate": true,
+              "SoftReconfigInbound": false,
+              "AllowASIn": 0,
+              "RouteMapIn": "",
+              "RouteMapOut": ""
+            }
+          ],
+          "AdvertiseAllVNI": false,
+          "AdvertiseDefaultGW": false,
+          "AdvertiseIPv4Unicast": false,
+          "AdvertiseIPv6Unicast": false,
+          "RouteTargetImport": null,
+          "RouteTargetExport": null,
+          "L2VNIs": null,
+          "Line": 11
+        },
+        {
+          "AFI": "l2vpn",
+          "SAFI": "evpn",
+          "Networks": null,
+          "RedistributeConnected": false,
+          "Neighbors": [
+            {
+              "Name": "10.254.0.3",
+              "Activate": true,
+              "SoftReconfigInbound": false,
+              "AllowASIn": 0,
+              "RouteMapIn": "",
+              "RouteMapOut": ""
+            }
+          ],
+          "AdvertiseAllVNI": true,
+          "AdvertiseDefaultGW": false,
+          "AdvertiseIPv4Unicast": false,
+          "AdvertiseIPv6Unicast": false,
+          "RouteTargetImport": null,
+          "RouteTargetExport": null,
+          "L2VNIs": null,
+          "Line": 16
+        }
+      ],
+      "Line": 6
+    },
+    {
+      "ASN": 65101,
+      "VRF": "",
+      "RouterID": "192.168.4.11",
+      "EBGPRequiresPolicy": null,
+      "SuppressDuplicates": null,
+      "DefaultIPv4Unicast": null,
+      "MultipathRelax": false,
+      "Neighbors": null,
+      "AddressFamilies": [
+        {
+          "AFI": "ipv4",
+          "SAFI": "unicast",
+          "Networks": null,
+          "RedistributeConnected": true,
+          "Neighbors": null,
+          "AdvertiseAllVNI": false,
+          "AdvertiseDefaultGW": false,
+          "AdvertiseIPv4Unicast": false,
+          "AdvertiseIPv6Unicast": false,
+          "RouteTargetImport": null,
+          "RouteTargetExport": null,
+          "L2VNIs": null,
+          "Line": 24
+        },
+        {
+          "AFI": "l2vpn",
+          "SAFI": "evpn",
+          "Networks": null,
+          "RedistributeConnected": false,
+          "Neighbors": null,
+          "AdvertiseAllVNI": false,
+          "AdvertiseDefaultGW": false,
+          "AdvertiseIPv4Unicast": true,
+          "AdvertiseIPv6Unicast": false,
+          "RouteTargetImport": [
+            "65000:1000"
+          ],
+          "RouteTargetExport": [
+            "65000:1000"
+          ],
+          "L2VNIs": null,
+          "Line": 28
+        }
+      ],
+      "Line": 21
+    }
+  ],
+  "RouteMaps": null,
+  "CommunityLists": null,
+  "BFDProfiles": null
+}

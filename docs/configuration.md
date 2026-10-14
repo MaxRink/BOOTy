@@ -225,6 +225,8 @@ files from the provisioner override these keys. See
 
 | Key | Default | Values | Description |
 |-----|---------|--------|-------------|
+| `FRR_CONFIG_STRICT` | `true` | boolean | `true`: a provisioner `frr.conf` statement that BOOTy does not implement fails the network setup. `false`: BOOTy logs a warning with the line and skips the statement. Statements without effect on routing (`neighbor X description`, `bgp log-neighbor-changes`, `debug`, `log timestamp precision`) pass in both modes. Only `true`, `false`, `1`, `0` (and other Go booleans) are accepted. See [Networking](networking.md#strict-input-and-the-accepted-grammar). YAML `network.frrStrict`. |
+| `NETPLAN_STRICT` | `true` | boolean | `true`: a provisioner netplan key that BOOTy does not implement fails the network setup. `false`: BOOTy logs a warning with the line and skips the key. A value of the wrong type fails in both modes; `optional` passes in both. YAML `network.netplanStrict`. |
 | `NETWORK_MODE` | (unset) | `gobgp`, `frr`, `static`, `dhcp` | Validation accepts all four values. Only `gobgp` changes the stack selection. |
 | `dns_resolver` | (unset) | IP addresses separated by commas | DNS servers for the ramdisk and the target OS. With `PROVISIONER_FILES_TARGET=ramdisk`, a provisioner `/etc/resolv.conf` stays in the ramdisk and this key is ignored for the ramdisk. With `WRITE_RESOLV_CONF=false`, it is ignored for the target OS. |
 | `STATIC_IP` | (unset) | CIDR, for example `10.0.0.5/24` | Static address. Selects the static stack. |

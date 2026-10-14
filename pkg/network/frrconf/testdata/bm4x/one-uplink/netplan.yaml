@@ -1,0 +1,52 @@
+network:
+  version: 2
+  ethernets:
+    
+    ens1f0np0:
+      accept-ra: false
+      emit-lldp: true
+      link-local: [ipv6]
+      mtu: 9100
+      ipv6-address-generation: eui64
+    lo:
+      addresses: [2001:db8:40a:5481::17/128]
+  vrfs:
+    Vrf_underlay:
+      table: 10
+      interfaces:
+      - ens1f0np0
+      - dum.underlay
+  dummy-devices:
+    dum.underlay:
+      addresses:
+      - 192.0.2.17/32
+      mtu: 9100
+  tunnels:
+    vx.3000:
+      mode: vxlan
+      mtu: 9000
+      link-local: []
+      link: dum.underlay
+      # description: "Cluster Networking EVPN Type 5"
+      id: 3000
+      local: '192.0.2.17'
+      macaddress: '02:54:c0:00:02:11'
+      hairpin: true
+      port: 4789
+      accept-ra: false
+      ignore-carrier: false
+      mac-learning: false
+      arp-proxy: false
+      port-mac-learning: false
+  bridges:
+    br.provision:
+      mtu: 9000
+      # description: "DummyBridge: Vrf_Cluster internal"
+      link-local: []
+      parameters:
+        stp: false
+      macaddress: '02:54:c0:00:02:11'
+      interfaces:
+      - vx.3000
+      accept-ra: false
+      ignore-carrier: false

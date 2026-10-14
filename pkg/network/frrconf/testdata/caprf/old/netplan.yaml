@@ -1,0 +1,45 @@
+network:
+  version: 2
+  vrfs:
+    Vrf_underlay:
+      table: 10
+      interfaces:
+      - hbn
+      - dum.underlay
+  ethernets:
+    hbn:
+      match:
+        name: enp*s4
+      set-name: hbn
+      link-local: [ipv6]
+      accept-ra: false
+      mtu: 9100
+      addresses:
+      - 10.254.0.2/31
+  dummy-devices:
+    dum.underlay:
+      addresses:
+      - 192.168.4.11/32
+      mtu: 9100
+  tunnels:
+    vx.1000:
+      mode: vxlan
+      mtu: 9000
+      link-local: []
+      link: dum.underlay
+      id: 1000
+      local: '192.168.4.11'
+      port: 4789
+      accept-ra: false
+      mac-learning: false
+  bridges:
+    br.provision:
+      mtu: 9000
+      link-local: []
+      addresses:
+      - 10.200.0.11/32
+      parameters:
+        stp: false
+      interfaces:
+      - vx.1000
+      accept-ra: false

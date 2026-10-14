@@ -1,0 +1,67 @@
+{
+  "Interfaces": [
+    "auto-detect"
+  ],
+  "LegacyFRRRecovery": false,
+  "UnderlaySubnet": "",
+  "UnderlayIP": "192.168.4.11",
+  "OverlaySubnet": "",
+  "IPMISubnet": "",
+  "IPMIMAC": "",
+  "IPMIIP": "",
+  "ASN": 65101,
+  "ProvisionVNI": 1000,
+  "ProvisionIP": "10.200.0.11/32",
+  "ProvisionGateway": "",
+  "DNSResolvers": "",
+  "DCGWIPs": "",
+  "LeafASN": 0,
+  "LocalASN": 0,
+  "OverlayAggregate": "",
+  "VPNRT": "",
+  "StaticIP": "",
+  "StaticGateway": "",
+  "StaticIface": "",
+  "StaticMatch": null,
+  "LinkRenames": [
+    {
+      "Name": "eth0",
+      "MAC": "",
+      "SetName": "hbn"
+    }
+  ],
+  "InterfaceNames": [
+    "hbn"
+  ],
+  "BondInterfaces": "",
+  "BondMode": "",
+  "VRFTableID": 10,
+  "OverlayVRFTableID": 0,
+  "BGPKeepalive": 0,
+  "BGPHold": 0,
+  "BFDTransmitMS": 0,
+  "BFDReceiveMS": 0,
+  "BGPPeerMode": "unnumbered",
+  "BGPInterfaces": "",
+  "BGPNeighbors": "",
+  "BGPRemoteASN": 0,
+  "BGPUnderlayAF": "",
+  "BGPOverlayType": "",
+  "BGPAuthPassword": "",
+  "BGPMinPeers": 0,
+  "BridgeName": "br.provision",
+  "BridgeMAC": "",
+  "VRFName": "Vrf_underlay",
+  "OverlayVRFName": "",
+  "OverlayVRFSet": true,
+  "UnderlayDummyName": "dum.underlay",
+  "VXLANLink": "dum.underlay",
+  "MTU": 9100,
+  "NetworkMode": "gobgp",
+  "EVPNL2Enabled": false,
+  "EVPNType5Only": false,
+  "EVPNL3VNIs": [
+    1000
+  ],
+  "VLANs": null
+}

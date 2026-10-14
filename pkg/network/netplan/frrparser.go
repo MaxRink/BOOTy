@@ -2,11 +2,13 @@ package netplan
 
 import (
 	"fmt"
+	"log/slog"
+	"net/netip"
 	"os"
-	"regexp"
 	"slices"
-	"strconv"
 	"strings"
+
+	"github.com/telekom/BOOTy/pkg/network/frrconf"
 )
 
 // FRRParams holds parameters extracted from an FRR configuration file.
@@ -26,22 +28,11 @@ type FRRParams struct {
 	// L3VNIs lists VNIs mapped to a VRF ("vni N" at top level for the default
 	// VRF or inside a "vrf" block). FRR advertises only Type-5 routes for them;
 	// advertise-all-vni produces Type-2/Type-3 routes for L2VNIs only.
-	L3VNIs []uint32
+	L3VNIs       []uint32
+	numberedSeen bool
+	// Model is the full parsed configuration.
+	Model *frrconf.Config
 }
-
-// Regex patterns for FRR config extraction. FRR accepts block lines with and
-// without indentation (the bm4x-operator template writes "neighbor" lines at
-// column 0), so the patterns allow any leading blanks but never a newline.
-var (
-	reRouterBGP       = regexp.MustCompile(`(?m)^router[ \t]+bgp[ \t]+(\d+)`)
-	reRouterID        = regexp.MustCompile(`(?m)^[ \t]*bgp[ \t]+router-id[ \t]+(\S+)`)
-	reNeighborIface   = regexp.MustCompile(`(?m)^[ \t]*neighbor[ \t]+(\S+)[ \t]+interface[ \t]+(?:remote-as|peer-group)`)
-	reNeighborIPv4    = regexp.MustCompile(`(?m)^[ \t]*neighbor[ \t]+(\d+\.\d+\.\d+\.\d+)[ \t]+remote-as[ \t]+(\S+)`)
-	reNeighborIPv6    = regexp.MustCompile(`(?m)^[ \t]*neighbor[ \t]+([0-9a-fA-F]*:[0-9a-fA-F:]+)[ \t]+remote-as[ \t]+(\S+)`)
-	reL2VPNEVPN       = regexp.MustCompile(`(?m)^[ \t]*address-family[ \t]+l2vpn[ \t]+evpn`)
-	reAdvertiseAllVNI = regexp.MustCompile(`(?m)^[ \t]*advertise-all-vni`)
-	reLocalAS         = regexp.MustCompile(`(?m)^[ \t]*neighbor[ \t]+\S+[ \t]+local-as[ \t]+(\d+)`)
-)
 
 // ParseFRRConfig extracts networking parameters from an FRR configuration file.
 func ParseFRRConfig(path string) (*FRRParams, error) {
@@ -52,171 +43,116 @@ func ParseFRRConfig(path string) (*FRRParams, error) {
 	return ParseFRRConfigBytes(data)
 }
 
-// ParseFRRConfigBytes extracts networking parameters from FRR config content.
+// ParseFRRConfigBytes parses FRR config content with frrconf.Parse and
+// derives the parameters the network stack uses today. A statement BOOTy
+// does not implement is an error.
 func ParseFRRConfigBytes(data []byte) (*FRRParams, error) {
-	content := string(data)
-	params := &FRRParams{}
+	return ParseFRRConfigBytesWith(data, "frr.conf", true)
+}
 
-	if m := reRouterBGP.FindStringSubmatch(content); len(m) > 1 {
-		asn, err := strconv.ParseUint(m[1], 10, 32)
-		if err != nil {
-			return nil, fmt.Errorf("parse ASN %q: %w", m[1], err)
-		}
-		params.ASN = uint32(asn)
-	}
-	if m := reRouterID.FindStringSubmatch(content); len(m) > 1 {
-		params.RouterID = m[1]
-	}
-
-	params.UnnumberedPeers = extractUnnumberedPeers(content)
-	params.NumberedPeers = extractNumberedPeers(content, reNeighborIPv4, "169.254.", "127.")
-	remoteASN, err := numberedRemoteASN(content, params.ASN)
+// ParseFRRConfigBytesWith is ParseFRRConfigBytes. With strict false
+// (FRR_CONFIG_STRICT=false) a statement BOOTy does not implement is logged
+// with the file name and its line and skipped.
+func ParseFRRConfigBytesWith(data []byte, name string, strict bool) (*FRRParams, error) {
+	model, err := frrconf.ParseWith(data, frrconf.Options{Lenient: !strict, Warn: func(e *frrconf.ParseError) {
+		slog.Warn("frr.conf statement skipped (FRR_CONFIG_STRICT=false)", "file", name, "line", e.Line, "statement", e.Text, "error", e.Err)
+	}})
 	if err != nil {
-		return nil, err
+		return nil, err //nolint:wrapcheck // the ParseError names the line; the caller names the file
 	}
-	params.RemoteASN = remoteASN
-	params.NumberedPeersV6 = extractNumberedPeers(content, reNeighborIPv6, "fd00:7:caa5:", "fe80:")
-
-	if m := reLocalAS.FindStringSubmatch(content); len(m) > 1 {
-		if localASN, err := strconv.ParseUint(m[1], 10, 32); err == nil {
-			params.LocalASN = uint32(localASN)
+	params := &FRRParams{Model: model}
+	for i := range model.Routers {
+		r := &model.Routers[i]
+		if params.ASN == 0 {
+			params.ASN = r.ASN
+		}
+		if params.RouterID == "" {
+			params.RouterID = r.RouterID
+		}
+		if err := addPeers(params, r); err != nil {
+			return nil, err
+		}
+		for j := range r.AddressFamilies {
+			af := &r.AddressFamilies[j]
+			if af.SAFI == "evpn" {
+				params.EVPN = true
+				params.AdvertiseAllVNI = params.AdvertiseAllVNI || af.AdvertiseAllVNI
+			}
 		}
 	}
-
-	params.EVPN = reL2VPNEVPN.MatchString(content)
-	params.AdvertiseAllVNI = reAdvertiseAllVNI.MatchString(content)
-	params.L3VNIs = extractL3VNIs(content)
+	for _, v := range model.VRFVNIs {
+		if !slices.Contains(params.L3VNIs, v.VNI) {
+			params.L3VNIs = append(params.L3VNIs, v.VNI)
+		}
+	}
 	return params, nil
 }
 
-// extractL3VNIs returns VNIs that FRR maps to a VRF: a "vni N" statement at
-// the top level (default VRF) or inside a "vrf NAME" block, with or without
-// "prefix-routes-only". A "vni N" under any other block, such as the L2VNI
-// block under "router bgp", is not an L3VNI and is not included.
-func extractL3VNIs(content string) []uint32 {
-	var vnis []uint32
-	block := frrBlockNone
-	for line := range strings.Lines(content) {
-		fields := strings.Fields(line)
-		if len(fields) == 0 {
-			continue
+// addPeers collects interface peers, numbered peers with their own
+// remote-as, and the first local-as, in config order.
+func addPeers(params *FRRParams, r *frrconf.Router) error {
+	for i := range r.Neighbors {
+		n := &r.Neighbors[i]
+		if params.LocalASN == 0 && n.LocalAS != nil {
+			params.LocalASN = n.LocalAS.ASN
 		}
-		topLevel := line[0] != ' ' && line[0] != '\t'
-		if vni, ok := parseL3VNI(fields); ok && (block == frrBlockVRF || topLevel && block == frrBlockNone) {
-			if !slices.Contains(vnis, vni) {
-				vnis = append(vnis, vni)
+		switch {
+		case n.PeerGroup:
+		case n.Interface:
+			if !slices.Contains(params.UnnumberedPeers, n.Name) {
+				params.UnnumberedPeers = append(params.UnnumberedPeers, n.Name)
 			}
-			continue
-		}
-		if topLevel {
-			block = nextFRRBlock(block, fields[0])
-		}
-	}
-	return vnis
-}
-
-// frrBlock is the kind of top-level FRR block a config line belongs to.
-type frrBlock int
-
-const (
-	frrBlockNone frrBlock = iota
-	frrBlockVRF
-	frrBlockOther
-)
-
-// parseL3VNI parses "vni N" or "vni N prefix-routes-only".
-func parseL3VNI(fields []string) (uint32, bool) {
-	if fields[0] != "vni" || (len(fields) != 2 && (len(fields) != 3 || fields[2] != "prefix-routes-only")) {
-		return 0, false
-	}
-	vni, err := strconv.ParseUint(fields[1], 10, 32)
-	return uint32(vni), err == nil
-}
-
-// nextFRRBlock returns the block that a top-level line starting with keyword
-// opens or closes.
-func nextFRRBlock(current frrBlock, keyword string) frrBlock {
-	switch {
-	case keyword == "vrf":
-		return frrBlockVRF
-	case keyword == "!" || keyword == "exit" || keyword == "exit-vrf" || keyword == "end":
-		return frrBlockNone
-	case slices.Contains(frrBlockKeywords, keyword):
-		return frrBlockOther
-	}
-	return current
-}
-
-// frrBlockKeywords lists top-level FRR statements that open a block whose
-// lines may be written without indentation. A "vni N" inside them is not an
-// L3VNI. Single-line top-level statements do not open a block.
-var frrBlockKeywords = []string{"router", "interface", "route-map", "line", "segment-routing", "mpls", "bfd", "key", "nexthop-group", "pbr-map"}
-
-// extractUnnumberedPeers returns deduplicated interface names from neighbor lines.
-func extractUnnumberedPeers(content string) []string {
-	seen := make(map[string]bool)
-	var peers []string
-	for _, m := range reNeighborIface.FindAllStringSubmatch(content, -1) {
-		iface := m[1]
-		if !seen[iface] {
-			peers = append(peers, iface)
-			seen[iface] = true
-		}
-	}
-	return peers
-}
-
-// extractNumberedPeers returns deduplicated IPs from neighbor lines, skipping
-// addresses that start with any of the given prefixes.
-func extractNumberedPeers(content string, re *regexp.Regexp, skipPrefixes ...string) []string {
-	seen := make(map[string]bool)
-	var peers []string
-	for _, m := range re.FindAllStringSubmatch(content, -1) {
-		ip := m[1]
-		if shouldSkipPeer(ip, skipPrefixes) || seen[ip] {
-			continue
-		}
-		peers = append(peers, ip)
-		seen[ip] = true
-	}
-	return peers
-}
-
-func shouldSkipPeer(ip string, prefixes []string) bool {
-	for _, p := range prefixes {
-		if strings.HasPrefix(ip, p) {
-			return true
-		}
-	}
-	return false
-}
-
-// numberedRemoteASN returns the remote-as of the IPv4 numbered peers when
-// it differs from the router ASN, and 0 for iBGP peers. The network config
-// has a single remote ASN for numbered peers, so peers with different
-// remote-as values or with "remote-as external" are an error instead of
-// sessions with a wrong ASN.
-func numberedRemoteASN(content string, routerASN uint32) (uint32, error) {
-	var found uint32
-	for _, m := range reNeighborIPv4.FindAllStringSubmatch(content, -1) {
-		if shouldSkipPeer(m[1], []string{"169.254.", "127."}) {
-			continue
-		}
-		asn := routerASN
-		if m[2] != "internal" {
-			v, err := strconv.ParseUint(m[2], 10, 32)
-			if err != nil {
-				return 0, fmt.Errorf("neighbor %s remote-as %s: only a number or internal is supported", m[1], m[2])
+		case n.RemoteAS != nil:
+			if addNumberedPeer(params, n.Name) {
+				if err := setRemoteASN(params, n, r.ASN); err != nil {
+					return err
+				}
 			}
-			asn = uint32(v)
 		}
-		if found != 0 && asn != found {
-			return 0, fmt.Errorf("numbered neighbors use different remote-as values %d and %d", found, asn)
+	}
+	return nil
+}
+
+// setRemoteASN records the remote-as of an IPv4 numbered peer. The network
+// config has a single remote ASN for numbered peers, so peers with
+// different remote-as values or with "remote-as external" are an error
+// instead of sessions with a wrong ASN. iBGP peers leave it at 0.
+func setRemoteASN(params *FRRParams, n *frrconf.Neighbor, routerASN uint32) error {
+	asn := routerASN
+	switch n.RemoteAS.Kind {
+	case frrconf.RemoteASExternal:
+		return fmt.Errorf("neighbor %s remote-as external: only a number or internal is supported", n.Name)
+	case frrconf.RemoteASNumber:
+		asn = n.RemoteAS.Number
+	}
+	if asn == routerASN {
+		asn = 0
+	}
+	if params.numberedSeen && asn != params.RemoteASN {
+		return fmt.Errorf("numbered neighbors use different remote-as values")
+	}
+	params.numberedSeen, params.RemoteASN = true, asn
+	return nil
+}
+
+// addNumberedPeer records a numbered peer and reports whether it is an
+// IPv4 peer that BOOTy dials.
+func addNumberedPeer(params *FRRParams, name string) bool {
+	addr, err := netip.ParseAddr(name)
+	if err != nil {
+		return false
+	}
+	list, skip := &params.NumberedPeers, []string{"169.254.", "127."}
+	if !addr.Is4() {
+		list, skip = &params.NumberedPeersV6, []string{"fd00:7:caa5:", "fe80:"}
+	}
+	for _, p := range skip {
+		if strings.HasPrefix(name, p) {
+			return false
 		}
-		found = asn
 	}
-	if found == routerASN {
-		return 0, nil
+	if !slices.Contains(*list, name) {
+		*list = append(*list, name)
 	}
-	return found, nil
+	return addr.Is4()
 }

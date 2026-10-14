@@ -31,6 +31,18 @@ behaviour.
 
 ### Behaviour changes in all modes
 
+- A provisioner netplan route with `from`, `table`, `metric` or `scope` now
+  fails the network setup (with `NETPLAN_STRICT=false` it is dropped with a
+  warning). BOOTy does not apply these keys; before, the `via` of a `from:`
+  default route became the static gateway (#642).
+- The provisioner `frr.conf` is read with a block parser that follows FRR's
+  reading rules. A statement that BOOTy does not implement, or an unknown netplan
+  key, now fails the network setup and the run. `FRR_CONFIG_STRICT=false` and
+  `NETPLAN_STRICT=false` log and skip them instead (invalid values,
+  unsupported block openers and netplan route keys such as `table` still
+  fail). Statements without effect on
+  routing (`neighbor X description`, `bgp log-neighbor-changes`, netplan
+  `optional`) pass in both modes (#642).
 - Netplan `set-name` renames the single NIC that its `match` selects, and a glob
   or MAC `match` selects the NIC of a static address, like `netplan apply`.
   Before, BOOTy ignored `set-name` and used the first NIC (#641).

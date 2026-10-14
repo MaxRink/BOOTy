@@ -1,8 +1,10 @@
 package netplan
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"maps"
@@ -18,8 +20,15 @@ import (
 
 // ParseDir reads all .yaml files from dir (sorted lexicographically) and
 // returns a merged Config.  Later files override earlier ones at the
-// top-level map key level (ethernets, tunnels, bridges, etc.).
+// top-level map key level (ethernets, tunnels, bridges, etc.). A key that
+// BOOTy does not know is an error.
 func ParseDir(dir string) (*Config, error) {
+	return ParseDirWith(dir, true)
+}
+
+// ParseDirWith is ParseDir. With strict false (NETPLAN_STRICT=false) an
+// unknown key is logged with its line and skipped.
+func ParseDirWith(dir string, strict bool) (*Config, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("read netplan dir %s: %w", dir, err)
@@ -41,7 +50,7 @@ func ParseDir(dir string) (*Config, error) {
 
 	merged := &Config{Network: NetworkSection{Version: 2}}
 	for _, f := range files {
-		cfg, err := ParseFile(f)
+		cfg, err := parseFile(f, strict)
 		if err != nil {
 			return nil, fmt.Errorf("parse %s: %w", f, err)
 		}
@@ -50,17 +59,110 @@ func ParseDir(dir string) (*Config, error) {
 	return merged, nil
 }
 
+// checkRoutes handles route keys that BOOTy parses but does not apply:
+// table, metric, scope and from. A default route with "table: 100" would
+// otherwise become the main-table gateway. Strict mode fails; lenient
+// mode logs and drops the route.
+func checkRoutes(np *Config, strict bool) error {
+	check := func(dev string, routes []RouteConfig) ([]RouteConfig, error) {
+		kept := routes[:0:0]
+		for _, r := range routes {
+			if r.Table == 0 && r.Metric == 0 && r.Scope == "" && r.From == "" {
+				kept = append(kept, r)
+				continue
+			}
+			if strict {
+				return nil, fmt.Errorf("%s route to %s: table, metric, scope and from are not supported by BOOTy", dev, r.To)
+			}
+			slog.Warn("netplan route skipped (NETPLAN_STRICT=false): table, metric, scope and from are not supported", "device", dev, "to", r.To)
+		}
+		return kept, nil
+	}
+	for name := range np.Network.Ethernets {
+		eth := np.Network.Ethernets[name]
+		routes, err := check(name, eth.Routes)
+		if err != nil {
+			return err
+		}
+		eth.Routes = routes
+		np.Network.Ethernets[name] = eth
+	}
+	for name := range np.Network.VLANs {
+		vlan := np.Network.VLANs[name]
+		routes, err := check(name, vlan.Routes)
+		if err != nil {
+			return err
+		}
+		vlan.Routes = routes
+		np.Network.VLANs[name] = vlan
+	}
+	return nil
+}
+
 // ParseFile reads a single netplan YAML file.
 func ParseFile(path string) (*Config, error) {
+	return parseFile(path, true)
+}
+
+func parseFile(path string, strict bool) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
+	cfg, err := parseBytes(path, data, strict)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkRoutes(cfg, strict); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return cfg, nil
+}
+
+// parseBytes decodes netplan YAML. Unknown keys are an error, like netplan
+// itself, so a setting BOOTy does not implement is never dropped silently.
+// Without strict, each unknown key is logged with its line and skipped.
+func parseBytes(name string, data []byte, strict bool) (*Config, error) {
+	cfg, err := decode(data, true)
+	if err == nil {
+		return cfg, nil
+	}
+	var typeErr *yaml.TypeError
+	if strict || !errors.As(err, &typeErr) || !onlyUnknownKeys(typeErr) {
+		return nil, fmt.Errorf("unmarshal %s: %w", name, err)
+	}
+	for _, e := range typeErr.Errors {
+		slog.Warn("netplan key ignored (NETPLAN_STRICT=false)", "file", name, "error", e)
+	}
+	cfg, err = decode(data, false)
+	if err != nil {
+		return nil, fmt.Errorf("unmarshal %s: %w", name, err)
+	}
+	return cfg, nil
+}
+
+func decode(data []byte, known bool) (*Config, error) {
 	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("unmarshal %s: %w", path, err)
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(known)
+	if err := dec.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
+		return nil, err //nolint:wrapcheck // the caller names the file
 	}
 	return &cfg, nil
+}
+
+// onlyUnknownKeys reports whether every decode error is an unknown key that
+// a lenient decode may drop. A wrong value type stays an error, and so does
+// an unknown key under "match" (it would select other NICs) or in a route
+// (on-link, type and the like change the route).
+func onlyUnknownKeys(e *yaml.TypeError) bool {
+	for _, msg := range e.Errors {
+		if !strings.Contains(msg, "not found in type") ||
+			strings.HasSuffix(msg, "netplan.MatchConfig") || strings.HasSuffix(msg, "netplan.RouteConfig") {
+			return false
+		}
+	}
+	return true
 }
 
 // mergeConfig merges src into dst at the map-key level.

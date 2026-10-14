@@ -1,0 +1,268 @@
+{
+  "Version": "8.2.2",
+  "Defaults": "traditional",
+  "Hostname": "frr-testserver",
+  "IPForwarding": false,
+  "IPv6Forwarding": null,
+  "VRFVNIs": [
+    {
+      "VRF": "",
+      "VNI": 3000,
+      "PrefixRoutesOnly": false,
+      "Line": 7
+    }
+  ],
+  "StaticRoutes": [
+    {
+      "Prefix": "2001:db8:40a:5481::/64",
+      "Blackhole": true,
+      "Line": 11
+    }
+  ],
+  "Routers": [
+    {
+      "ASN": 4210000017,
+      "VRF": "Vrf_underlay",
+      "RouterID": "192.0.2.17",
+      "EBGPRequiresPolicy": false,
+      "SuppressDuplicates": false,
+      "DefaultIPv4Unicast": false,
+      "MultipathRelax": true,
+      "Neighbors": [
+        {
+          "Name": "dcgw",
+          "PeerGroup": true,
+          "Interface": false,
+          "Group": "",
+          "RemoteAS": {
+            "Kind": "internal",
+            "Number": 0
+          },
+          "LocalAS": null,
+          "BFD": true,
+          "BFDProfile": "fabric",
+          "KeepaliveTime": 30,
+          "HoldTime": 90,
+          "ConnectRetry": 5,
+          "Line": 20
+        },
+        {
+          "Name": "leaf",
+          "PeerGroup": true,
+          "Interface": false,
+          "Group": "",
+          "RemoteAS": {
+            "Kind": "number",
+            "Number": 65500
+          },
+          "LocalAS": {
+            "ASN": 65501,
+            "NoPrepend": true,
+            "ReplaceAS": true
+          },
+          "BFD": true,
+          "BFDProfile": "fabric",
+          "KeepaliveTime": 30,
+          "HoldTime": 90,
+          "ConnectRetry": null,
+          "Line": 27
+        },
+        {
+          "Name": "ens1f0np0",
+          "PeerGroup": false,
+          "Interface": true,
+          "Group": "leaf",
+          "RemoteAS": null,
+          "LocalAS": null,
+          "BFD": false,
+          "BFDProfile": "",
+          "KeepaliveTime": null,
+          "HoldTime": null,
+          "ConnectRetry": null,
+          "Line": 33
+        },
+        {
+          "Name": "198.51.100.1",
+          "PeerGroup": false,
+          "Interface": false,
+          "Group": "dcgw",
+          "RemoteAS": null,
+          "LocalAS": null,
+          "BFD": false,
+          "BFDProfile": "",
+          "KeepaliveTime": null,
+          "HoldTime": null,
+          "ConnectRetry": null,
+          "Line": 35
+        }
+      ],
+      "AddressFamilies": [
+        {
+          "AFI": "ipv4",
+          "SAFI": "unicast",
+          "Networks": [
+            "192.0.2.17/32"
+          ],
+          "RedistributeConnected": false,
+          "Neighbors": [
+            {
+              "Name": "leaf",
+              "Activate": true,
+              "SoftReconfigInbound": true,
+              "AllowASIn": 3,
+              "RouteMapIn": "TAG-FABRIC-IN",
+              "RouteMapOut": "DENY-TAG-FABRIC-OUT"
+            }
+          ],
+          "AdvertiseAllVNI": false,
+          "AdvertiseDefaultGW": false,
+          "AdvertiseIPv4Unicast": false,
+          "AdvertiseIPv6Unicast": false,
+          "RouteTargetImport": null,
+          "RouteTargetExport": null,
+          "L2VNIs": null,
+          "Line": 37
+        },
+        {
+          "AFI": "l2vpn",
+          "SAFI": "evpn",
+          "Networks": null,
+          "RedistributeConnected": false,
+          "Neighbors": [
+            {
+              "Name": "dcgw",
+              "Activate": true,
+              "SoftReconfigInbound": false,
+              "AllowASIn": 3,
+              "RouteMapIn": "TAG-FABRIC-IN",
+              "RouteMapOut": "DENY-TAG-FABRIC-OUT"
+            }
+          ],
+          "AdvertiseAllVNI": true,
+          "AdvertiseDefaultGW": false,
+          "AdvertiseIPv4Unicast": false,
+          "AdvertiseIPv6Unicast": false,
+          "RouteTargetImport": null,
+          "RouteTargetExport": null,
+          "L2VNIs": null,
+          "Line": 46
+        }
+      ],
+      "Line": 13
+    },
+    {
+      "ASN": 4210000017,
+      "VRF": "default",
+      "RouterID": "192.0.2.17",
+      "EBGPRequiresPolicy": null,
+      "SuppressDuplicates": false,
+      "DefaultIPv4Unicast": null,
+      "MultipathRelax": false,
+      "Neighbors": null,
+      "AddressFamilies": [
+        {
+          "AFI": "ipv6",
+          "SAFI": "unicast",
+          "Networks": [
+            "2001:db8:40a:5481::17/128",
+            "2001:db8:40a:5481::/64"
+          ],
+          "RedistributeConnected": false,
+          "Neighbors": null,
+          "AdvertiseAllVNI": false,
+          "AdvertiseDefaultGW": false,
+          "AdvertiseIPv4Unicast": false,
+          "AdvertiseIPv6Unicast": false,
+          "RouteTargetImport": null,
+          "RouteTargetExport": null,
+          "L2VNIs": null,
+          "Line": 58
+        },
+        {
+          "AFI": "l2vpn",
+          "SAFI": "evpn",
+          "Networks": null,
+          "RedistributeConnected": false,
+          "Neighbors": null,
+          "AdvertiseAllVNI": false,
+          "AdvertiseDefaultGW": false,
+          "AdvertiseIPv4Unicast": false,
+          "AdvertiseIPv6Unicast": true,
+          "RouteTargetImport": [
+            "65169:3000"
+          ],
+          "RouteTargetExport": [
+            "65169:3000"
+          ],
+          "L2VNIs": null,
+          "Line": 63
+        }
+      ],
+      "Line": 54
+    }
+  ],
+  "RouteMaps": [
+    {
+      "Name": "TAG-FABRIC-IN",
+      "Entries": [
+        {
+          "Seq": 10,
+          "Action": "permit",
+          "MatchCommunity": "",
+          "SetLocalPreference": 90,
+          "SetCommunities": [
+            "65169:200"
+          ],
+          "SetCommunityAdditive": true,
+          "Line": 77
+        }
+      ]
+    },
+    {
+      "Name": "DENY-TAG-FABRIC-OUT",
+      "Entries": [
+        {
+          "Seq": 10,
+          "Action": "deny",
+          "MatchCommunity": "cm-received-fabric",
+          "SetLocalPreference": null,
+          "SetCommunities": null,
+          "SetCommunityAdditive": false,
+          "Line": 84
+        },
+        {
+          "Seq": 20,
+          "Action": "permit",
+          "MatchCommunity": "",
+          "SetLocalPreference": null,
+          "SetCommunities": null,
+          "SetCommunityAdditive": false,
+          "Line": 88
+        }
+      ]
+    }
+  ],
+  "CommunityLists": [
+    {
+      "Name": "cm-received-fabric",
+      "Entries": [
+        {
+          "Action": "permit",
+          "Communities": [
+            "65169:200"
+          ],
+          "Line": 82
+        }
+      ]
+    }
+  ],
+  "BFDProfiles": [
+    {
+      "Name": "fabric",
+      "TransmitInterval": 150,
+      "ReceiveInterval": 150,
+      "DetectMultiplier": null,
+      "Line": 70
+    }
+  ]
+}

@@ -2769,3 +2769,17 @@ func TestParseVarsNetworkWaitMaxAttemptsExplicitZero(t *testing.T) {
 		t.Fatalf("WaitMaxAttempts = %v (%v), want unset", cfg.Network.WaitMaxAttempts, err)
 	}
 }
+
+func TestParseVarsStrictness(t *testing.T) {
+	cfg, err := ParseVars(strings.NewReader("FRR_CONFIG_STRICT=false\nNETPLAN_STRICT=true\n"))
+	if err != nil {
+		t.Fatalf("ParseVars() error = %v", err)
+	}
+	if cfg.Network.FRRStrict == nil || *cfg.Network.FRRStrict || cfg.Network.NetplanStrict == nil || !*cfg.Network.NetplanStrict {
+		t.Fatalf("FRRStrict = %v, NetplanStrict = %v", cfg.Network.FRRStrict, cfg.Network.NetplanStrict)
+	}
+	// A value that is not a boolean must not turn strictness off.
+	if _, err := ParseVars(strings.NewReader("FRR_CONFIG_STRICT=flase\n")); err == nil {
+		t.Fatal("FRR_CONFIG_STRICT=flase parsed without error")
+	}
+}
