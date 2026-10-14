@@ -126,7 +126,12 @@ behaviour.
   stable for 2 seconds and the configured `DISK_DEVICE` or `DISK_SERIAL_NUMBER`
   exists, at most `DISK_SETTLE_TIMEOUT_SEC` (default 30, max 600, `0` turns it
   off). A `DISK_DEVICE` below `/dev/disk/` (by-id, by-path) now fails at once:
-  the ramdisk has no udev to create these links (#670).
+  the ramdisk has no udev to create these links; a `PARTITION_LAYOUT` device
+  below `/dev/disk/` is used as it is, without a wait for the path. A serial
+  number error that waiting can not fix (several disks with the serial, a disk
+  below `MIN_DISK_SIZE_GB`, also when only `lsblk` sees the serial) ends the
+  wait at once. A disk that reports 0 sectors is not there yet, not too
+  small (#670, #684).
 - On a system booted via UEFI, a failure to mount efivarfs, to create the EFI
   boot entry or to remove the managed EFI boot entries now fails provisioning or
   deprovisioning, like the legacy scripts. Before, BOOTy logged a warning and

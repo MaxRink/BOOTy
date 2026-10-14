@@ -613,11 +613,15 @@ func (m *Manager) findDiskBySerialWithSysfs(serial string, minSizeGB int, allowR
 			continue
 		}
 		sizeGB, err := m.readDiskSizeGB(name)
+		if errors.Is(err, errDiskNoMedia) {
+			slog.Debug("disk with serial has no size yet", "device", "/dev/"+name, "serial", serial)
+			continue
+		}
 		if err != nil {
 			return nil, observed, fmt.Errorf("read size for disk with serial %q at /dev/%s: %w", serial, name, err)
 		}
 		if minSizeGB > 0 && sizeGB < minSizeGB {
-			return nil, observed, fmt.Errorf("disk with serial %q at /dev/%s is %d GB, below minimum %d GB", serial, name, sizeGB, minSizeGB)
+			return nil, observed, fmt.Errorf("disk with serial %q at /dev/%s is %d GB, below minimum %d GB: %w", serial, name, sizeGB, minSizeGB, errDiskBelowMinimum)
 		}
 		matches = append(matches, "/dev/"+name)
 	}
@@ -657,7 +661,7 @@ func (m *Manager) findDiskBySerialWithLSBLK(ctx context.Context, serial string, 
 			return nil, observed, fmt.Errorf("read size for disk with serial %q at %s: %w", serial, path, err)
 		}
 		if minSizeGB > 0 && sizeGB < minSizeGB {
-			return nil, observed, fmt.Errorf("disk with serial %q at %s is %d GB, below minimum %d GB", serial, path, sizeGB, minSizeGB)
+			return nil, observed, fmt.Errorf("disk with serial %q at %s is %d GB, below minimum %d GB: %w", serial, path, sizeGB, minSizeGB, errDiskBelowMinimum)
 		}
 		matches = append(matches, path)
 	}
@@ -718,7 +722,13 @@ func (m *Manager) resizeKnownFilesystem(ctx context.Context, fsType, device, mou
 	return true, nil
 }
 
-// readDiskSizeGB reads the size of a block device in GB from sysfs.
+// errDiskNoMedia marks a block device that reports 0 sectors. A disk
+// behind a SAS/RAID HBA can show up before its capacity is read, so it is
+// "not there yet", not a disk below the minimum size.
+var errDiskNoMedia = errors.New("disk reports 0 sectors")
+
+// readDiskSizeGB reads the size of a block device in GB from sysfs. A
+// device with 0 sectors returns errDiskNoMedia.
 func (m *Manager) readDiskSizeGB(name string) (int, error) {
 	sizePath := m.sysfsRoot + "/block/" + name + "/size" //nolint:gocritic // path join not needed for sysfs
 	data, err := os.ReadFile(sizePath)
@@ -728,6 +738,9 @@ func (m *Manager) readDiskSizeGB(name string) (int, error) {
 	sectors, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
 	if err != nil {
 		return 0, fmt.Errorf("parse disk size %s: %w", name, err)
+	}
+	if sectors == 0 {
+		return 0, fmt.Errorf("disk %s: %w", name, errDiskNoMedia)
 	}
 	return int(sectors * 512 / (1024 * 1024 * 1024)), nil
 }

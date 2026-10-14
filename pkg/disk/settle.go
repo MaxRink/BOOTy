@@ -4,6 +4,7 @@ package disk
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -56,11 +57,15 @@ func (m *Manager) blockDevices() []string {
 	return names
 }
 
+// errDiskBelowMinimum marks a disk with the serial that is smaller than
+// MIN_DISK_SIZE_GB.
+var errDiskBelowMinimum = errors.New("disk below the minimum size")
+
 // HasDiskWithSerial reports whether exactly one disk with this serial
 // number exists, like FindDiskBySerial, but logs only at debug level, so a
 // wait loop can poll it. Errors that waiting can not fix (unreadable
 // sysfs, a matching disk below the minimum size, several disks with the
-// serial) are returned.
+// serial) are returned. A disk that reports 0 sectors is not there yet.
 func (m *Manager) HasDiskWithSerial(ctx context.Context, serial string, minSizeGB int) (bool, error) {
 	allowRemovable := os.Getenv("BOOTY_ALLOW_REMOVABLE") == "true"
 	matches, _, err := m.findDiskBySerialWithSysfs(serial, minSizeGB, allowRemovable)
@@ -70,6 +75,9 @@ func (m *Manager) HasDiskWithSerial(ctx context.Context, serial string, minSizeG
 	if len(matches) == 0 {
 		var lsblkErr error
 		matches, _, lsblkErr = m.findDiskBySerialWithLSBLK(ctx, serial, minSizeGB, allowRemovable)
+		if errors.Is(lsblkErr, errDiskBelowMinimum) {
+			return false, lsblkErr // waiting does not make the disk larger
+		}
 		if lsblkErr != nil {
 			slog.Debug("lsblk serial lookup failed", "serial", serial, "error", lsblkErr)
 		}
