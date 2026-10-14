@@ -848,11 +848,11 @@ func ensureNetworkConnectivity(ctx context.Context, cfg *config.MachineConfig, n
 	return netMode, fmt.Errorf("network connectivity timeout after %d attempts", maxRetries)
 }
 
-// waitForConnectivity runs one connectivity wait. Legacy compat bounds the
-// whole call with the timeout: GoBGP otherwise waits for the underlay and
-// then for the target, each up to the timeout.
+// waitForConnectivity runs one connectivity wait. NETWORK_WAIT_MODE=rounds
+// bounds the whole call with the timeout: GoBGP otherwise waits for the
+// underlay and then for the target, each up to the timeout.
 func waitForConnectivity(ctx context.Context, cfg *config.MachineConfig, netMode network.Mode, target string, timeout time.Duration) error {
-	if cfg.LegacyCompat {
+	if cfg.Network.WaitMode == config.NetworkWaitRounds {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
@@ -864,11 +864,11 @@ func waitForConnectivity(ctx context.Context, cfg *config.MachineConfig, netMode
 }
 
 // networkWait returns the number of network setups and the connectivity
-// timeout of each. Legacy compat follows wait_for_network in the CAPRF
-// common.sh: NETWORK_WAIT_MAX_ATTEMPTS rounds of 20 seconds (default 15)
-// on one network setup, and then the run fails.
+// timeout of each. NETWORK_WAIT_MODE=rounds follows wait_for_network in the
+// CAPRF common.sh: NETWORK_WAIT_MAX_ATTEMPTS rounds of 20 seconds (default
+// 15) on one network setup, and then the run fails.
 func networkWait(cfg *config.MachineConfig) (int, time.Duration) {
-	if !cfg.LegacyCompat {
+	if cfg.Network.WaitMode != config.NetworkWaitRounds {
 		return 3, 5 * time.Minute
 	}
 	rounds := 15
@@ -967,7 +967,7 @@ func networkConfigFromMachineConfig(cfg *config.MachineConfig) *network.Config {
 		ProvisionVNI:      cfg.Network.EVPN.ProvisionVNI,
 		ProvisionIP:       cfg.Network.EVPN.ProvisionIP,
 		ProvisionGateway:  cfg.Network.EVPN.ProvisionGateway,
-		LegacyFRRRecovery: cfg.LegacyCompat,
+		LegacyFRRRecovery: cfg.Network.WaitMode == config.NetworkWaitRounds,
 		DNSResolvers:      cfg.Network.DNSResolvers,
 		DCGWIPs:           cfg.Network.EVPN.DCGWIPs,
 		LeafASN:           cfg.Network.EVPN.LeafASN,

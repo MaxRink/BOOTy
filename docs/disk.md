@@ -499,6 +499,10 @@ the root, BOOTy runs `e2fsck -p -f` on it before `growpart`, and
 size. Without a GPT Linux partition (for example an MBR image), BOOTy grows
 the root.
 
+`last-linux` assumes ext4 on a data partition after the root, like
+`provision.sh`. With XFS or btrfs there, `e2fsck` fails before `growpart`
+changes the partition table: the run fails, and no data is lost.
+
 `resize-filesystem` grows the root filesystem. It tries `resize2fs <device>`,
 then `xfs_growfs <mountpoint>`, then `btrfs filesystem resize max <mountpoint>`.
 It fails for vfat.

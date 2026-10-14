@@ -328,7 +328,8 @@ root is mounted.
 | `WIPE_DEPTH` | `thorough` | `thorough`: stop LVM, dm-crypt and MD on the disk, clear every partition, the partition table and the disk edges, then `blkdiscard` the disk. `quick`: `sgdisk --zap-all` and `wipefs -af` on the disk only. Preset `quick` by `CAPRF_LEGACY_COMPAT`. See [docs/disk.md](docs/disk.md#wipe-behaviour) |
 | `GROW_PARTITION` | `root` | `last-linux` grows the last GPT Linux partition like the legacy `provision.sh`. Preset by `CAPRF_LEGACY_COMPAT` |
 | `DISCARD_NVME` | `false` | `blkdiscard` every NVMe disk before a wipe of all disks. Preset by `CAPRF_LEGACY_COMPAT` |
-| `NETWORK_WAIT_MAX_ATTEMPTS` | unset (15) | CAPRF legacy compat only: 20 second network wait rounds before the run fails (0-100000). `0` means no round: the run fails at once, like the legacy provisioner |
+| `NETWORK_WAIT_MODE` | `default` | `rounds` waits like the legacy `wait_for_network`: one network setup and `NETWORK_WAIT_MAX_ATTEMPTS` rounds of 20 seconds. Preset by `CAPRF_LEGACY_COMPAT` |
+| `NETWORK_WAIT_MAX_ATTEMPTS` | unset (15) | With `NETWORK_WAIT_MODE=rounds`: 20 second network wait rounds before the run fails (0-100000). `0` means no round: the run fails at once, like the legacy provisioner |
 | `BOOTY_ALLOW_REMOVABLE` | `false` | Allow USB/removable media as provisioning target |
 | `MACHINE_EXTRA_KERNEL_PARAMS` | — | Additional kernel cmdline parameters |
 | `EXTRA_KERNEL_PARAMS` | — | Additional kernel cmdline parameters, read by the CAPRF legacy provisioner. Appended to `MACHINE_EXTRA_KERNEL_PARAMS` |
@@ -520,10 +521,11 @@ With the variable set, BOOTy keeps the legacy behaviour where the two differ:
   partition then gets `e2fsck` and `resize2fs`, and the root filesystem keeps
   its size (`GROW_PARTITION=last-linux`). BOOTy otherwise grows the root
   partition.
-- The network wait follows `wait_for_network`: `NETWORK_WAIT_MAX_ATTEMPTS`
-  rounds of 20 seconds (default 15, about 5 minutes) on one network setup.
-  In FRR mode, FRR restarts after each failed round unless a BGP session is
-  established. The limit covers the whole wait, also the GoBGP session wait.
+- The network wait follows `wait_for_network` (`NETWORK_WAIT_MODE=rounds`):
+  `NETWORK_WAIT_MAX_ATTEMPTS` rounds of 20 seconds (default 15, about 5
+  minutes) on one network setup. In FRR mode, FRR restarts after each failed
+  round unless a BGP session is established. The limit covers the whole
+  wait, also the GoBGP session wait.
   Then BOOTy reports the error. BOOTy otherwise sets up the network up to 3
   times and waits up to 5 minutes each time.
 - Each file in `/deploy/machine-commands` runs as a script in the target

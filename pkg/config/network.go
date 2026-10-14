@@ -4,6 +4,12 @@ package config
 // 20 second rounds), so the wait time cannot overflow.
 const MaxNetworkWaitAttempts = 100000
 
+// Values of NetworkConfig.WaitMode.
+const (
+	NetworkWaitDefault = "default"
+	NetworkWaitRounds  = "rounds"
+)
+
 // NetworkConfig defines how BOOTy configures network connectivity in the
 // ramdisk. It supports multiple network modes: EVPN/BGP (via FRR or GoBGP),
 // static IP assignment, LACP bonding, and DHCP fallback.
@@ -27,9 +33,19 @@ type NetworkConfig struct {
 	// Default: ""
 	DNSResolvers string `yaml:"dnsResolvers" json:"dnsResolvers"`
 
-	// WaitMaxAttempts is the number of 20 second connectivity rounds in
-	// CAPRF legacy compat mode, like NETWORK_WAIT_MAX_ATTEMPTS of the legacy
-	// provisioner. Ignored outside legacy compat. Unset (nil) means 15
+	// WaitMode selects the network connectivity wait.
+	// "default": up to 3 network setups, each waiting up to 5 minutes.
+	// "rounds": like wait_for_network of the CAPRF legacy provisioner, one
+	// network setup and WaitMaxAttempts rounds of 20 seconds; in FRR mode
+	// FRR restarts after each failed round unless a BGP session is
+	// established.
+	// Valid values: "default", "rounds". Preset by legacyCompat: "rounds".
+	// Default: "" (default)
+	WaitMode string `yaml:"waitMode" json:"waitMode"`
+
+	// WaitMaxAttempts is the number of 20 second connectivity rounds with
+	// WaitMode "rounds", like NETWORK_WAIT_MAX_ATTEMPTS of the legacy
+	// provisioner. Ignored with the default wait. Unset (nil) means 15
 	// rounds, about 5 minutes. An explicit 0 means no round: the run fails
 	// at once, like ${NETWORK_WAIT_MAX_ATTEMPTS:-15} with the value 0.
 	WaitMaxAttempts *int `yaml:"waitMaxAttempts,omitempty" json:"waitMaxAttempts,omitempty"`

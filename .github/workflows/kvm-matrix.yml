@@ -152,6 +152,8 @@ jobs:
             test_regex: "^TestNativeParity"
             privileged: true
             setup: ""
+            # More than ten QEMU runs, some of them wait for minutes.
+            go_timeout: 40m
           - scenario: disk-wipe
             qemu_extra: ""
             test_tag: e2e

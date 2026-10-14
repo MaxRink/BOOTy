@@ -128,6 +128,9 @@ func (c *Config) validateEnums() []string {
 			return validateEnumLower(c.Network.Mode, "network.mode", "gobgp", "frr", "static", "dhcp")
 		},
 		func() string {
+			return validateEnumLower(c.Network.WaitMode, "network.waitMode", NetworkWaitDefault, NetworkWaitRounds)
+		},
+		func() string {
 			return validateEnumLower(c.Provision.Image.ChecksumType, "provision.image.checksumType", "sha256", "sha512")
 		},
 		func() string {
@@ -197,7 +200,7 @@ func (c *Config) validateBGP() []string {
 	bfdReceive := c.Network.BGP.BFDReceiveMS
 
 	var errs []string
-	if n := c.Network.WaitMaxAttempts; c.LegacyCompat && n != nil && (*n < 0 || *n > MaxNetworkWaitAttempts) {
+	if n := c.Network.WaitMaxAttempts; strings.EqualFold(strings.TrimSpace(c.Network.WaitMode), NetworkWaitRounds) && n != nil && (*n < 0 || *n > MaxNetworkWaitAttempts) {
 		errs = append(errs, fmt.Sprintf("network.waitMaxAttempts (NETWORK_WAIT_MAX_ATTEMPTS) must be 0-%d", MaxNetworkWaitAttempts))
 	}
 	if (bfdTransmit == 0) != (bfdReceive == 0) {
@@ -295,6 +298,7 @@ func (c *Config) normalize() {
 		&c.Provision.Image.ChecksumType,
 		&c.Provision.Image.ChecksumScope,
 		&c.Network.Mode,
+		&c.Network.WaitMode,
 		&c.Network.BGP.PeerMode,
 		&c.Network.BGP.UnderlayAF,
 		&c.Network.BGP.OverlayType,

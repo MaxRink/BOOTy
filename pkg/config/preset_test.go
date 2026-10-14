@@ -225,3 +225,29 @@ func TestGrowPartitionOptionAndLegacyPreset(t *testing.T) {
 		t.Fatal("Validate() accepted provision.disk.growPartition=all")
 	}
 }
+
+func TestNetworkWaitModeAndLegacyPreset(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		cfg  Config
+		want string
+	}{
+		{name: "default"},
+		{name: "native", cfg: Config{Network: NetworkConfig{WaitMode: "Rounds"}}, want: NetworkWaitRounds},
+		{name: "preset", cfg: Config{LegacyCompat: true}, want: NetworkWaitRounds},
+		{name: "explicit default wins over preset", cfg: Config{LegacyCompat: true, Network: NetworkConfig{WaitMode: "default"}}, want: NetworkWaitDefault},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := tt.cfg
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("Validate() = %v", err)
+			}
+			if got := cfg.Network.WaitMode; got != tt.want {
+				t.Fatalf("WaitMode = %q, want %q", got, tt.want)
+			}
+		})
+	}
+	if err := (&Config{Network: NetworkConfig{WaitMode: "forever"}}).Validate(); err == nil {
+		t.Fatal("Validate() accepted network.waitMode=forever")
+	}
+}

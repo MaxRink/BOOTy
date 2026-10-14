@@ -97,6 +97,9 @@ func TestSetRamdiskHostnameFailureIsLogged(t *testing.T) {
 }
 
 func TestNetworkWait(t *testing.T) {
+	rounds := func(n *int) config.MachineConfig {
+		return config.MachineConfig{Network: config.NetworkConfig{WaitMode: config.NetworkWaitRounds, WaitMaxAttempts: n}}
+	}
 	tests := []struct {
 		name         string
 		cfg          config.MachineConfig
@@ -104,13 +107,16 @@ func TestNetworkWait(t *testing.T) {
 		wantTimeout  time.Duration
 	}{
 		{name: "default", wantAttempts: 3, wantTimeout: 5 * time.Minute},
-		{name: "attempts ignored outside compat", cfg: config.MachineConfig{Network: config.NetworkConfig{WaitMaxAttempts: new(2)}}, wantAttempts: 3, wantTimeout: 5 * time.Minute},
-		{name: "legacy default", cfg: config.MachineConfig{LegacyCompat: true}, wantAttempts: 1, wantTimeout: 300 * time.Second},
-		{name: "legacy attempts", cfg: config.MachineConfig{LegacyCompat: true, Network: config.NetworkConfig{WaitMaxAttempts: new(3)}}, wantAttempts: 1, wantTimeout: 60 * time.Second},
-		{name: "legacy explicit zero", cfg: config.MachineConfig{LegacyCompat: true, Network: config.NetworkConfig{WaitMaxAttempts: new(0)}}, wantAttempts: 1, wantTimeout: 0},
+		{name: "attempts ignored with the default wait", cfg: config.MachineConfig{Network: config.NetworkConfig{WaitMaxAttempts: new(2)}}, wantAttempts: 3, wantTimeout: 5 * time.Minute},
+		{name: "rounds default", cfg: rounds(nil), wantAttempts: 1, wantTimeout: 300 * time.Second},
+		{name: "rounds attempts", cfg: rounds(new(3)), wantAttempts: 1, wantTimeout: 60 * time.Second},
+		{name: "rounds explicit zero", cfg: rounds(new(0)), wantAttempts: 1, wantTimeout: 0},
+		{name: "legacy preset", cfg: config.MachineConfig{LegacyCompat: true}, wantAttempts: 1, wantTimeout: 300 * time.Second},
+		{name: "explicit default wins over preset", cfg: config.MachineConfig{LegacyCompat: true, Network: config.NetworkConfig{WaitMode: config.NetworkWaitDefault}}, wantAttempts: 3, wantTimeout: 5 * time.Minute},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			tt.cfg.ApplyPresets()
 			attempts, timeout := networkWait(&tt.cfg)
 			if attempts != tt.wantAttempts || timeout != tt.wantTimeout {
 				t.Fatalf("networkWait() = %d, %s, want %d, %s", attempts, timeout, tt.wantAttempts, tt.wantTimeout)
@@ -126,10 +132,10 @@ func (blockingConnectivityMode) WaitForConnectivity(ctx context.Context, _ strin
 	return ctx.Err()
 }
 
-// Legacy compat bounds the whole wait, also for modes such as GoBGP that wait
-// in two phases.
-func TestWaitForConnectivityLegacyCompatBoundsTheWait(t *testing.T) {
-	cfg := &config.MachineConfig{LegacyCompat: true}
+// NETWORK_WAIT_MODE=rounds bounds the whole wait, also for modes such as
+// GoBGP that wait in two phases.
+func TestWaitForConnectivityRoundsBoundTheWait(t *testing.T) {
+	cfg := &config.MachineConfig{Network: config.NetworkConfig{WaitMode: config.NetworkWaitRounds}}
 	err := waitForConnectivity(context.Background(), cfg, blockingConnectivityMode{&connectivityTestMode{}}, "http://example.com/init", 50*time.Millisecond)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("waitForConnectivity() = %v, want context.DeadlineExceeded", err)

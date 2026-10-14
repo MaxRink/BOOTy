@@ -59,6 +59,7 @@ func (c *Config) ApplyPresets() {
 // which make BOOTy behave like the CAPRF legacy shell provisioner.
 // docs/caprf-legacy-migration.md lists them in the preset column.
 func (c *Config) applyLegacyCompatPreset() {
+	presetString(&c.Network.WaitMode, NetworkWaitRounds)
 	presetString(&c.SuccessAction, SuccessActionPowerOff)
 	presetString(&c.FailureAction, FailureActionWait)
 	presetString(&c.Provision.Disk.Selection, DiskSelectionLsblk)

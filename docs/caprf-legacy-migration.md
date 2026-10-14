@@ -54,7 +54,12 @@ The variable changes these behaviours:
   (`DISK_SELECTION=lsblk`), and `wipe-disks` wipes every disk like
   `wipe_all_disks` (`WIPE_ALL_DISKS=true`), with signature wipes on the disks
   only (`WIPE_DEPTH=quick`). `decommission` also discards NVMe disks
-  (`DISCARD_NVME=true`).
+  (`DISCARD_NVME=true`). `grow-partition` grows the last GPT Linux partition
+  like `provision.sh` (`GROW_PARTITION=last-linux`); it expects ext4 on a
+  data partition after the root.
+- **Network wait.** BOOTy waits like `wait_for_network`: one network setup
+  and `NETWORK_WAIT_MAX_ATTEMPTS` rounds of 20 seconds
+  (`NETWORK_WAIT_MODE=rounds`).
 - **GRUB and console.** The kernel parameters are written like
   `provision.sh`. BOOTy writes no getty units (`GRUB_CMDLINE_MODE=append`).
 - **Ramdisk hostname and NIC firmware log** are set and written like
@@ -137,7 +142,7 @@ Detail for these rows is in [Networking](networking.md).
 | Legacy behaviour | BOOTy default | BOOTy with `CAPRF_LEGACY_COMPAT=true` | Status | Native option (preset value) |
 |------------------|---------------|---------------------------------------|--------|------------------------------|
 | EVPN through FRR with the provisioner netplan and `frr.conf` | Reads the provisioner netplan and `frr.conf` as input and sets up FRR or GoBGP | Same, with the provisioner files also applied to the ramdisk | See [Netplan and FRR config input](networking.md#netplan-and-frr-config-input) | None yet |
-| `wait_for_network`: `NETWORK_WAIT_MAX_ATTEMPTS` rounds of 20 seconds (default 15), restart FRR, then `fail()` | Up to 3 network setups, each followed by an HTTP `HEAD` poll on `INIT_URL` (see [Connectivity check](networking.md#connectivity-check)) | One network setup. `NETWORK_WAIT_MAX_ATTEMPTS` rounds of 20 seconds (default 15); in FRR mode FRR restarts after each failed round unless a BGP session is established. Then BOOTy reports the error and waits. | Merged (#622) | Not needed |
+| `wait_for_network`: `NETWORK_WAIT_MAX_ATTEMPTS` rounds of 20 seconds (default 15), restart FRR, then `fail()` | Up to 3 network setups, each followed by an HTTP `HEAD` poll on `INIT_URL` (see [Connectivity check](networking.md#connectivity-check)) | One network setup. `NETWORK_WAIT_MAX_ATTEMPTS` rounds of 20 seconds (default 15); in FRR mode FRR restarts after each failed round unless a BGP session is established. Then BOOTy reports the error and waits. | Merged (#622) | `NETWORK_WAIT_MODE` / `network.waitMode` (`rounds`) |
 
 ### Common pipeline
 

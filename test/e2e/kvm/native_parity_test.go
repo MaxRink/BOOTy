@@ -176,3 +176,32 @@ func TestNativeParityInvalidVarsFailureActionWaitQEMU(t *testing.T) {
 		t.Fatalf("invalid vars did not wait. tail:\n%s", tail(output, 4000))
 	}
 }
+
+// NETWORK_WAIT_MODE=rounds with NETWORK_WAIT_MAX_ATTEMPTS=0 runs no wait
+// round, like the legacy wait_for_network, so the run fails at once with a
+// network error. The default wait reaches the fake CAPRF and the run goes
+// on to the image download, so the check fails when BOOTy ignores the
+// option.
+func TestNativeParityNetworkWaitRoundsQEMU(t *testing.T) {
+	requireRoot(t)
+	qemuAvailable(t)
+	requireProvisionTools(t)
+
+	caprf := startFakeCAPRF(t, "")
+	targetDisk := filepath.Join(t.TempDir(), "native-network-wait.qcow2")
+	run(t, "create target disk", "qemu-img", "create", "-f", "qcow2", targetDisk, "1G")
+
+	vars := caprf.nativeVars("provision")
+	vars["IMAGE"] = caprf.baseURL + "/missing.gz"
+	vars["IMAGE_ALLOW_INSECURE_HTTP"] = "true"
+	vars["DISK_DEVICE"] = "/dev/vda"
+	vars["FAILURE_ACTION"] = "wait"
+	vars["NETWORK_WAIT_MODE"] = "rounds"
+	vars["NETWORK_WAIT_MAX_ATTEMPTS"] = "0"
+	output := runQEMUExpectWait(t, findKernel(t), buildProvisionInitramfs(t, vars), targetDisk, 2*time.Minute)
+	t.Logf("native network wait output tail:\n%s", tail(output, 3000))
+
+	if !strings.Contains(string(output), "network connectivity timeout after 0s") {
+		t.Fatalf("NETWORK_WAIT_MODE=rounds with 0 rounds did not fail the network wait at once. tail:\n%s", tail(output, 4000))
+	}
+}

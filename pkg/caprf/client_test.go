@@ -2719,6 +2719,23 @@ func TestParseVarsDecommissionMode(t *testing.T) {
 	}
 }
 
+func TestParseVarsNetworkWaitMode(t *testing.T) {
+	for vars, want := range map[string]string{
+		"NETWORK_WAIT_MODE=rounds\n":                            "rounds",
+		"CAPRF_LEGACY_COMPAT=true\n":                            "rounds",
+		"CAPRF_LEGACY_COMPAT=true\nNETWORK_WAIT_MODE=default\n": "default",
+		"CAPRF_LEGACY_COMPAT=false\n":                           "",
+	} {
+		cfg, err := ParseVars(strings.NewReader(vars))
+		if err != nil {
+			t.Fatalf("ParseVars(%q): %v", vars, err)
+		}
+		if got := cfg.Network.WaitMode; got != want {
+			t.Errorf("ParseVars(%q): WaitMode = %q, want %q", vars, got, want)
+		}
+	}
+}
+
 func TestParseVarsNetworkWaitMaxAttemptsExplicitZero(t *testing.T) {
 	cfg, err := ParseVars(strings.NewReader("NETWORK_WAIT_MAX_ATTEMPTS=0\n"))
 	if err != nil {

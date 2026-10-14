@@ -154,19 +154,15 @@ defaults.
 | `nic_firmware` log lines on every provision | `NIC_FIRMWARE_LOG` | `provision.firmware.logNICs` | `false` | `true` |
 | Raise `NUM_OF_VFS` on every ConnectX NIC | `NUM_VFS_MODE` | `provision.firmware.numVFsMode` | `set` | `raise` |
 | Grow the last GPT Linux partition, not the root | `GROW_PARTITION` | `provision.disk.growPartition` | `root` | `last-linux` |
-
-This behaviour does not have its own option yet. Only the preset turns it
-on:
-
-- The network wait follows the legacy `wait_for_network`:
-  `NETWORK_WAIT_MAX_ATTEMPTS` rounds of 20 seconds on one network setup.
+| Network wait like `wait_for_network` | `NETWORK_WAIT_MODE` | `network.waitMode` | `default` | `rounds` |
 
 [CAPRF legacy migration](caprf-legacy-migration.md) describes all
 behaviour changes of this mode.
 
 | Key | Default | Values | Effect |
 |-----|---------|--------|--------|
-| `NETWORK_WAIT_MAX_ATTEMPTS` | (unset, 15 rounds) | integer 0-100000 | Legacy compat only: the number of 20 second connectivity rounds before the run fails. `0` means no round: the run fails at once, like `${NETWORK_WAIT_MAX_ATTEMPTS:-15}` in the legacy provisioner. In FRR mode, FRR restarts after each failed round unless a BGP session is established. Ignored without `CAPRF_LEGACY_COMPAT`. |
+| `NETWORK_WAIT_MODE` | `default` | `default`, `rounds` | `default`: up to 3 network setups, each waiting up to 5 minutes. `rounds`: like the legacy `wait_for_network`, one network setup and `NETWORK_WAIT_MAX_ATTEMPTS` rounds of 20 seconds; in FRR mode, FRR restarts after each failed round unless a BGP session is established. YAML `network.waitMode`. Preset: `rounds`. |
+| `NETWORK_WAIT_MAX_ATTEMPTS` | (unset, 15 rounds) | integer 0-100000 | With `NETWORK_WAIT_MODE=rounds`: the number of 20 second connectivity rounds before the run fails. `0` means no round: the run fails at once, like `${NETWORK_WAIT_MAX_ATTEMPTS:-15}` in the legacy provisioner. Ignored with the default wait. YAML `network.waitMaxAttempts`. |
 
 ## Disk and image
 

@@ -15,6 +15,7 @@ func applyParityVar(cfg *config.MachineConfig, key, value string) bool {
 		"NUM_VFS_MODE":             &cfg.Provision.Firmware.NumVFsMode,
 		"WIPE_DEPTH":               &cfg.Provision.Disk.WipeDepth,
 		"GROW_PARTITION":           &cfg.Provision.Disk.GrowPartition,
+		"NETWORK_WAIT_MODE":        &cfg.Network.WaitMode,
 	}
 	if ptr, ok := strFields[key]; ok {
 		*ptr = value
