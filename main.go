@@ -1264,19 +1264,27 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	}
 }
 
-// mergeInferredEVPNL2 applies the L2 EVPN mode inferred from the FRR config.
+// mergeInferredEVPNL2 applies the EVPN mode inferred from the FRR config.
 // An explicit EVPN_TYPE5_ONLY wins, so operators can force Type-5 only
 // routing. The L3VNI check is repeated with the merged provision VNI because
 // the VNI can come from /deploy/vars when the netplan files do not set it.
 func mergeInferredEVPNL2(dst, src *network.Config) {
-	if !src.EVPNL2Enabled || dst.EVPNType5Only {
+	if dst.EVPNType5Only {
 		return
 	}
 	if slices.Contains(src.EVPNL3VNIs, dst.ProvisionVNI) {
-		slog.Info("netplan: provision VNI is an FRR L3VNI, using Type-5 only", "vni", dst.ProvisionVNI)
+		// An L3VNI has no L2 gateway, like FRR. Without provision_gateway
+		// (the bm4x IPv6 provisioning network) that is Type-5 only. With
+		// a gateway the mode stays as before, so its BUM FDB entry stays.
+		if !dst.EVPNL2Enabled && dst.ProvisionGateway == "" {
+			dst.EVPNType5Only = true
+		}
+		slog.Info("netplan: provision VNI is an FRR L3VNI, using Type-5 routes only", "vni", dst.ProvisionVNI)
 		return
 	}
-	dst.EVPNL2Enabled = true
+	if src.EVPNL2Enabled {
+		dst.EVPNL2Enabled = true
+	}
 }
 
 func mergeProvisionIP(existing, detected string) string {

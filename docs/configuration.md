@@ -255,7 +255,7 @@ that FRR also reads say so.
 | `provision_gateway` | (unset) | IP address | Gateway VTEP for BUM flooding and the kernel route. Optional with `EVPN_TYPE5_ONLY=true`. FRR ignores it. |
 | `vpn_rt` | (unset) | `ASN:value` | Explicit EVPN route target. FRR also reads it with `dcgw_ips`. |
 | `EVPN_L2_ENABLED` | `false` | boolean | Originate and handle Type-2 and Type-3 routes. Excludes `EVPN_TYPE5_ONLY`. |
-| `EVPN_TYPE5_ONLY` | `false` | boolean | Direct Type-5 routing without an L2 gateway. Excludes `EVPN_L2_ENABLED`. |
+| `EVPN_TYPE5_ONLY` | `false` | boolean | Direct Type-5 routing without an L2 gateway. Excludes `EVPN_L2_ENABLED`. Also selected when the provisioner `frr.conf` maps the provision VNI to a VRF (L3VNI) and neither `provision_gateway` nor `EVPN_L2_ENABLED=true` is set. |
 | `BGP_PEER_MODE` | `unnumbered` | `unnumbered`, `dual`, `numbered` | Peering mode. |
 | `BGP_INTERFACES` | all physical NICs | interface names separated by commas | Interfaces for unnumbered and dual peers. |
 | `BGP_NEIGHBORS` | (unset) | IP addresses separated by commas | Numbered peers. Required for `dual` and `numbered`. |

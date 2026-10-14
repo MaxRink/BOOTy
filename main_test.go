@@ -127,6 +127,7 @@ func TestMergeNetplanConfigEVPNMode(t *testing.T) {
 		dstL2, dstType5, srcL2 bool
 		dstVNI, srcVNI         uint32
 		srcL3VNIs              []uint32
+		dstGateway             string
 		wantL2, wantType5      bool
 	}{
 		{name: "no mode anywhere", wantL2: false},
@@ -134,13 +135,18 @@ func TestMergeNetplanConfigEVPNMode(t *testing.T) {
 		{name: "L2 from vars kept", dstL2: true, wantL2: true},
 		{name: "explicit Type-5 only wins over inferred L2", dstType5: true, srcL2: true, wantType5: true},
 		{name: "explicit Type-5 only kept", dstType5: true, wantType5: true},
-		{name: "L3VNI provision VNI from vars", dstVNI: 1000, srcL2: true, srcL3VNIs: []uint32{1000}},
+		{name: "L3VNI provision VNI from vars", dstVNI: 1000, srcL2: true, srcL3VNIs: []uint32{1000}, wantType5: true},
 		{name: "L2VNI provision VNI from vars", dstVNI: 100, srcL2: true, srcL3VNIs: []uint32{1000}, wantL2: true},
-		{name: "L3VNI provision VNI from netplan", dstVNI: 100, srcVNI: 1000, srcL2: true, srcL3VNIs: []uint32{1000}},
+		{name: "L3VNI provision VNI from netplan", dstVNI: 100, srcVNI: 1000, srcL2: true, srcL3VNIs: []uint32{1000}, wantType5: true},
+		// bm4x: L3VNI without advertise-all-vni and without provision_gateway.
+		{name: "L3VNI without advertise-all-vni", dstVNI: 3000, srcL3VNIs: []uint32{3000}, wantType5: true},
+		// CAPRF sets provision_gateway: the mode stays, the BUM FDB entry too.
+		{name: "L3VNI with provision gateway", dstVNI: 1000, dstGateway: "10.0.0.1", srcL2: true, srcL3VNIs: []uint32{1000}},
+		{name: "explicit L2 wins over L3VNI", dstL2: true, dstVNI: 1000, srcL3VNIs: []uint32{1000}, wantL2: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dst := &network.Config{EVPNL2Enabled: tt.dstL2, EVPNType5Only: tt.dstType5, ProvisionVNI: tt.dstVNI}
+			dst := &network.Config{EVPNL2Enabled: tt.dstL2, EVPNType5Only: tt.dstType5, ProvisionVNI: tt.dstVNI, ProvisionGateway: tt.dstGateway}
 			mergeNetplanConfig(dst, &network.Config{EVPNL2Enabled: tt.srcL2, EVPNL3VNIs: tt.srcL3VNIs, ProvisionVNI: tt.srcVNI})
 			if dst.EVPNL2Enabled != tt.wantL2 || dst.EVPNType5Only != tt.wantType5 {
 				t.Fatalf("EVPNL2Enabled=%v EVPNType5Only=%v, want %v %v",
