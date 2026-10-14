@@ -2486,6 +2486,26 @@ func TestParseVarsImageChecksumScope(t *testing.T) {
 	}
 }
 
+func TestParseVarsDiskSettleTimeout(t *testing.T) {
+	cfg, err := ParseVars(strings.NewReader("DISK_SETTLE_TIMEOUT_SEC=0\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Provision.Disk.SettleTimeoutSec; got == nil || *got != 0 {
+		t.Fatalf("SettleTimeoutSec = %v, want an explicit 0", got)
+	}
+	cfg, err = ParseVars(strings.NewReader("HOSTNAME=x\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provision.Disk.SettleTimeoutSec != nil {
+		t.Fatalf("SettleTimeoutSec = %v, want unset", *cfg.Provision.Disk.SettleTimeoutSec)
+	}
+	if _, err := ParseVars(strings.NewReader("DISK_SETTLE_TIMEOUT_SEC=-1\n")); err == nil {
+		t.Fatal("ParseVars accepted DISK_SETTLE_TIMEOUT_SEC=-1")
+	}
+}
+
 func TestParseVarsDiskOptions(t *testing.T) {
 	cfg, err := ParseVars(strings.NewReader("DISK_SELECTION=lsblk\nWIPE_ALL_DISKS=true\nDISCARD_NVME=yes\n"))
 	if err != nil {

@@ -393,9 +393,17 @@ func loadModules() {
 	// Collect all module paths.
 	var pending []string
 	for _, entry := range entries {
-		if !entry.IsDir() {
-			pending = append(pending, entry.Name())
+		if entry.IsDir() {
+			continue
 		}
+		// efivarfs fails with ENODEV without EFI firmware; skip it on BIOS.
+		if strings.HasPrefix(entry.Name(), "efivarfs.ko") {
+			if _, err := os.Stat(efiFirmwareDir); err != nil {
+				slog.Info("no EFI firmware, skipping kernel module", "module", entry.Name())
+				continue
+			}
+		}
+		pending = append(pending, entry.Name())
 	}
 
 	// Retry up to 5 passes to resolve dependency ordering.
@@ -424,8 +432,9 @@ func loadModules() {
 
 // Test seams for loadModules.
 var (
-	moduleDir    = "/modules"
-	loadModuleFn = loadModule
+	efiFirmwareDir = "/sys/firmware/efi"
+	moduleDir      = "/modules"
+	loadModuleFn   = loadModule
 )
 
 // loadModule loads a single kernel module via the finit_module syscall.

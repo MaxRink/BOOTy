@@ -87,6 +87,17 @@ type DiskConfig struct {
 	// Default: "" (root)
 	GrowPartition string `yaml:"growPartition" json:"growPartition"`
 
+	// SettleTimeoutSec bounds the wait for the block devices before the
+	// target disk is selected and before a wipe of all disks: BOOTy waits
+	// until the set of disks in /sys/block did not change for 2 seconds.
+	// SAS/RAID HBA drivers scan asynchronously after the module load.
+	// A configured device path (Device, PartitionLayout.Device, the
+	// deprovision device) or SerialNumber that the selection uses is also
+	// waited for, within the same timeout.
+	// 0 disables the wait. Valid values: 0 to 600.
+	// Default: nil (30)
+	SettleTimeoutSec *int `yaml:"settleTimeoutSec,omitempty" json:"settleTimeoutSec,omitempty"`
+
 	// SecureErase uses ATA Secure Erase or NVMe Format instead of wipefs
 	// for disk sanitization before provisioning.
 	// Default: false (use wipefs)

@@ -30,6 +30,7 @@ on:
       - "go.mod"
       - "go.sum"
       - "main.go"
+      - "initrd.Dockerfile"
       - "test/e2e/assets/busybox/**"
       - "test/e2e/kvm/**"
       - ".github/workflows/kvm-matrix.yml"
@@ -61,6 +62,7 @@ on:
       - "go.mod"
       - "go.sum"
       - "main.go"
+      - "initrd.Dockerfile"
       - "test/e2e/assets/busybox/**"
       - "test/e2e/kvm/**"
       - ".github/workflows/kvm-matrix.yml"
@@ -190,6 +192,15 @@ jobs:
             test_regex: "^TestPredictableNICNamesQEMU$"
             privileged: true
             setup: ""
+          - scenario: flavor-storage-controllers
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestFlavorInitrdStorageControllersQEMU$"
+            privileged: true
+            # The default flavor and its Debian kernel, built from initrd.Dockerfile.
+            setup: |
+              docker buildx build --platform linux/amd64 --output type=local,dest=out-flavor -f initrd.Dockerfile .
+              docker buildx build --platform linux/amd64 --target kernel-image --output type=local,dest=out-flavor -f initrd.Dockerfile .
           - scenario: bootloader-smoke
             qemu_extra: ""
             test_tag: e2e
@@ -387,6 +398,8 @@ jobs:
           QEMU_EXTRA_ARGS: ${{ matrix.qemu_extra }}
           BOOTY_INITRAMFS: ${{ github.workspace }}/test-initramfs.cpio.gz
           BOOTY_KERNEL: ${{ github.workspace }}/vmlinuz
+          BOOTY_FLAVOR_INITRAMFS: ${{ github.workspace }}/out-flavor/initramfs.cpio.zst
+          BOOTY_FLAVOR_KERNEL: ${{ github.workspace }}/out-flavor/vmlinuz
           LUKS_DISK_IMAGE: ${{ matrix.luks_disk && format('{0}/{1}', github.workspace, matrix.luks_disk) || '' }}
           OVMF_VARS: ${{ matrix.ovmf_vars && format('{0}/{1}', github.workspace, matrix.ovmf_vars) || '' }}
           OVMF_CODE: ${{ matrix.ovmf_code || '' }}

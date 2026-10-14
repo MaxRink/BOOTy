@@ -171,8 +171,12 @@ RUN apt-get -o Acquire::Retries=5 update && \
     # Module categories:
     #   QEMU/KVM virtio:  virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev virtio_pci virtio_net failover net_failover
     #   Storage (SCSI):   scsi_mod sd_mod virtio_blk virtio_scsi
+    #   Storage (HW):     nvme ahci megaraid_sas mpt3sas smartpqi hpsa loop
+    #   Software RAID:    md_mod raid0 raid1 raid10 raid456 (mdadm; RAID 5/6 need raid456)
+    #   EFI variables:    efivarfs (efibootmgr)
     #   Filesystems:      ext4 jbd2 mbcache crc32c_generic xfs btrfs fat vfat nls_cp437 nls_iso8859-1 nls_ascii
     #   VRF/VXLAN/bridge: vrf dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc
+    #   VLAN:             8021q (bonding is left out: loading it creates bond0)
     #   Intel NICs:       e1000e igb igc ixgbe i40e ice iavf
     #   Broadcom NICs:    tg3 bnxt_en
     #   Mellanox/NVIDIA:  mlx4_core mlx4_en mlx5_core mlxfw
@@ -183,8 +187,12 @@ RUN apt-get -o Acquire::Retries=5 update && \
         virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev \
         virtio_pci virtio_net failover net_failover \
         scsi_mod sd_mod virtio_blk virtio_scsi \
+        nvme ahci megaraid_sas mpt3sas smartpqi hpsa loop \
+        md_mod raid0 raid1 raid10 raid456 \
+        efivarfs \
         ext4 jbd2 mbcache crc32c_generic xfs btrfs fat vfat nls_cp437 nls_iso8859-1 nls_ascii \
         vrf dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc \
+        8021q \
         e1000e igb igc ixgbe i40e ice iavf \
         tg3 bnxt_en \
         mlx4_core mlx4_en mlx5_core mlxfw \
@@ -275,8 +283,10 @@ RUN mkdir -p dev proc run sys tmp etc && \
 # Pre-built static busybox binary from Docker Hub (cached by Docker layer cache)
 COPY --from=busybox-bin /bin/busybox bin/busybox
 
-# Create standard applet symlinks into bin/ using BusyBox's built-in installer
-RUN bin/busybox --install -s bin
+# Create relative applet symlinks into bin/. `busybox --install -s` links to
+# the absolute build path /build/initramfs/bin/busybox, which does not exist
+# in the booted ramdisk, so every applet (sh, sync, blockdev, setsid) failed.
+RUN for cmd in $(bin/busybox --list); do if [ "$cmd" != "busybox" ]; then ln -sf busybox "bin/$cmd"; fi; done
 
 # Docker COPY follows destination symlinks: if bin/X -> busybox exists, COPY
 # writes the source file content into the busybox binary instead of replacing
@@ -471,6 +481,10 @@ COPY --from=tools /usr/bin/btrfs bin/btrfs
 # Copy pre-collected shared libraries (slim was previously missing lib copying
 # entirely, breaking all dynamically linked tool binaries at runtime).
 COPY --from=tools /tool-libs/ .
+
+# Kernel modules: storage controllers, software RAID and efivarfs are modules
+# of the Debian kernel, and slim ships mdadm and the disk tools.
+COPY --from=kernel /modules/ modules/
 
 # Package slim initramfs
 RUN find . -print0 > ../initramfs.files \
@@ -673,6 +687,11 @@ RUN find . -print0 > ../initramfs.files \
 
 FROM scratch AS micro
 COPY --from=micro-builder /initramfs.cpio.gz .
+
+# Kernel that matches the shipped modules (--target kernel-image), for
+# booting a flavor initramfs in QEMU.
+FROM scratch AS kernel-image
+COPY --from=kernel /vmlinuz /vmlinuz
 
 # ── Default target: initramfs ──────────────────────────────────────────────
 FROM scratch

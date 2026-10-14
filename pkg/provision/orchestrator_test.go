@@ -45,6 +45,10 @@ func newTestOrchestratorWithCommander(t *testing.T, cfg *config.MachineConfig, p
 	cmd := newMockCommander()
 	mgr := disk.NewManager(cmd)
 	cfg.Provision.Image.AllowInsecureHTTP = new(true)
+	if cfg.Provision.Disk.SettleTimeoutSec == nil {
+		// No disk settle wait in unit tests unless a test asks for it.
+		cfg.Provision.Disk.SettleTimeoutSec = new(0)
+	}
 	o := NewOrchestrator(cfg, provider, mgr)
 	o.config.rootDir = t.TempDir()
 	// Never create links in the /dev of the machine running the tests.

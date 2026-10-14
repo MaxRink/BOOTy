@@ -175,12 +175,13 @@ The `initrd.Dockerfile` supports multiple build targets via `--target`:
 
 | Target | Size | Networking | Disk Tools | Use Case |
 |--------|------|-----------|------------|----------|
-| *(default)* | ~80 MB | FRR/EVPN + DHCP | Full (LVM, sfdisk, mdadm) | Production bare-metal provisioning |
-| `gobgp` | ~45 MB | GoBGP/EVPN + DHCP | Full (LVM, sfdisk, mdadm) | Production without FRR dependency |
+| *(default)* | ~52 MB | FRR/EVPN + DHCP | Full (LVM, sfdisk, mdadm) | Production bare-metal provisioning |
+| `gobgp` | ~47 MB | GoBGP/EVPN + DHCP | Full (LVM, sfdisk, mdadm) | Production without FRR dependency |
 | `iso` | ~100 MB | FRR/EVPN + DHCP | Full | Bootable ISO for Redfish virtual media |
 | `gobgp-iso` | ~65 MB | GoBGP/EVPN + DHCP | Full | Bootable GoBGP ISO for Redfish virtual media |
-| `slim` | ~15 MB | DHCP only | Provisioning basics, no LVM/FRR | Lightweight provisioning without BGP |
+| `slim` | ~42 MB | DHCP only | Provisioning basics, no LVM/FRR | Lightweight provisioning without BGP |
 | `micro` | ~10 MB | None (pure Go) | None | Minimal agent, custom network stack |
+| `kernel-image` | ~8 MB | n/a | n/a | The Debian `vmlinuz` that matches the shipped modules, for QEMU tests |
 
 #### ARM64 Targets
 
@@ -237,6 +238,26 @@ automatically at boot from the `/modules/` directory in the initramfs.
 **Mellanox SR-IOV**: ConnectX-4+ cards are automatically detected via sysfs PCI vendor
 ID (`/sys/bus/pci/devices/*/vendor`) — no `lspci` binary needed. SR-IOV is configured
 using `mstconfig` during provisioning (requires a hard reboot to apply firmware changes).
+
+### Storage Controllers and RAID
+
+The default, gobgp and slim flavors ship these modules of the Debian kernel and
+load them at boot. `efivarfs` is skipped on BIOS systems. Before BOOTy selects
+the target disk or wipes all disks, it waits until the set of disks did not
+change for 2 seconds and the configured target disk exists
+(`DISK_SETTLE_TIMEOUT_SEC`, default 30), because HBA drivers scan their buses
+asynchronously.
+
+| Class | Modules | Hardware |
+|-------|---------|----------|
+| NVMe | `nvme`, `nvme-core` | NVMe SSDs |
+| SATA | `ahci`, `libahci`, `libata` | Onboard SATA/AHCI |
+| SAS/RAID HBA | `megaraid_sas` | Broadcom/LSI MegaRAID (Dell PERC, Lenovo ThinkSystem RAID) |
+| SAS HBA | `mpt3sas` | Broadcom/LSI SAS3 HBAs (HBA330, 9300/9400) |
+| SAS/RAID HBA | `smartpqi`, `hpsa` | Microchip SmartRAID/SmartHBA, HPE Smart Array |
+| VM | `virtio_blk`, `virtio_scsi` | QEMU/KVM |
+| Software RAID | `md-mod`, `raid0`, `raid1`, `raid10`, `raid456` | `mdadm` RAID 0/1/10/5/6 |
+| Other | `loop`, `dm-mod`, `dm-crypt`, `efivarfs`, `8021q` | Loop images, LUKS, EFI variables, VLANs |
 
 ## Usage
 
@@ -323,6 +344,7 @@ root is mounted.
 | `MIN_DISK_SIZE_GB` | `0` | Minimum disk size filter (0 = no minimum) |
 | `DISK_LINKS` | `true` | Create the udev `/dev/disk/by-uuid`, `by-partuuid`, `by-label` and `by-partlabel` links before the target chroot, so `update-grub` writes `root=UUID=` |
 | `PREDICTABLE_NIC_NAMES` | `true` | When the netplan files, `frr.conf` or vars name a NIC that does not exist (for example `enp1s0` while the ramdisk calls it `eth0`), rename the NIC that has this systemd predictable name (naming scheme v255) |
+| `DISK_SETTLE_TIMEOUT_SEC` | `30` | Wait up to this long (0-600) for the disks to settle and for the configured `DISK_DEVICE` or `DISK_SERIAL_NUMBER` to appear before the disk selection and the wipe of all disks; `0` turns it off. A `/dev/disk/by-id` or `by-path` `DISK_DEVICE` fails at once (no udev in the ramdisk) |
 | `DISK_SELECTION` | `prefer-nvme` | `lsblk` selects the first large enough disk in legacy `lsblk` order. Preset by `CAPRF_LEGACY_COMPAT` |
 | `WIPE_ALL_DISKS` | `false` | Wipe every disk, not only the target, like `wipe_all_disks`. Preset by `CAPRF_LEGACY_COMPAT` |
 | `WIPE_DEPTH` | `thorough` | `thorough`: stop LVM, dm-crypt and MD on the disk, clear every partition, the partition table and the disk edges, then `blkdiscard` the disk. `quick`: `sgdisk --zap-all` and `wipefs -af` on the disk only. Preset `quick` by `CAPRF_LEGACY_COMPAT`. See [docs/disk.md](docs/disk.md#wipe-behaviour) |

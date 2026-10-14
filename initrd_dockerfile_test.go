@@ -63,7 +63,36 @@ func TestDockerfileModuleLoopSyntax(t *testing.T) {
 	checkDockerfileModules(t, "initrd.Dockerfile", []string{
 		"ext4", "xfs", "fat", "vfat", "nls_cp437", "nls_iso8859-1", "scsi_mod", "sd_mod",
 		"virtio_pci", "virtio_net", "virtio_blk", "vrf", "vxlan",
+		// Storage controllers, software RAID and EFI variables are modules
+		// of the Debian kernel.
+		"nvme", "ahci", "megaraid_sas", "mpt3sas", "smartpqi", "hpsa", "loop",
+		"md_mod", "raid1", "raid10", "raid456", "efivarfs", "8021q",
+		"mlx5_core", "ice", "i40e", "bnxt_en", "tg3", "igb",
 	})
+}
+
+// TestDockerfileFlavorsShipKernelModules checks that every flavor with disk
+// tools ships the kernel modules. The micro flavor has no tools and expects
+// a kernel with built-in drivers.
+func TestDockerfileFlavorsShipKernelModules(t *testing.T) {
+	data, err := os.ReadFile("initrd.Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stages := regexp.MustCompile(`(?m)^FROM .* AS (\S+)$`).FindAllStringSubmatchIndex(string(data), -1)
+	body := map[string]string{}
+	for i, m := range stages {
+		end := len(data)
+		if i+1 < len(stages) {
+			end = stages[i+1][0]
+		}
+		body[string(data[m[2]:m[3]])] = string(data[m[0]:end])
+	}
+	for _, stage := range []string{"busybox", "slim-builder", "gobgp-builder"} {
+		if !strings.Contains(body[stage], "COPY --from=kernel /modules/ modules/") {
+			t.Errorf("stage %s does not copy the kernel modules", stage)
+		}
+	}
 }
 
 func TestVrnetlabDockerfileModuleLoopSyntax(t *testing.T) {
@@ -411,4 +440,17 @@ func dockerfileCommands(text string) []dockerfileCommand {
 		commands = append(commands, dockerfileCommand{line: start, text: strings.Join(current, " ")})
 	}
 	return commands
+}
+
+// TestDockerfileBusyboxAppletLinksAreRelative guards against
+// `busybox --install -s`, which writes absolute links to the build directory
+// that dangle in the booted ramdisk.
+func TestDockerfileBusyboxAppletLinksAreRelative(t *testing.T) {
+	data, err := os.ReadFile("initrd.Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if regexp.MustCompile(`(?m)^RUN .*busybox --install`).Match(data) {
+		t.Fatal("initrd.Dockerfile installs busybox applets with --install, which creates absolute symlinks")
+	}
 }

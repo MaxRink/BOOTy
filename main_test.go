@@ -1334,6 +1334,37 @@ func TestPredictableNamesFromNetplanAndFRR(t *testing.T) {
 	}
 }
 
+func TestLoadModulesSkipsEFIVarFSWithoutEFIFirmware(t *testing.T) {
+	origDir, origLoad, origEFI := moduleDir, loadModuleFn, efiFirmwareDir
+	t.Cleanup(func() { moduleDir, loadModuleFn, efiFirmwareDir = origDir, origLoad, origEFI })
+	moduleDir = t.TempDir()
+	for _, m := range []string{"efivarfs.ko", "nvme.ko"} {
+		if err := os.WriteFile(filepath.Join(moduleDir, m), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, uefi := range []bool{false, true} {
+		efiFirmwareDir = filepath.Join(t.TempDir(), "efi")
+		if uefi {
+			if err := os.MkdirAll(efiFirmwareDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var loaded []string
+		loadModuleFn = func(path string) error {
+			loaded = append(loaded, filepath.Base(path))
+			return nil
+		}
+		loadModules()
+		if got := slices.Contains(loaded, "efivarfs.ko"); got != uefi {
+			t.Errorf("UEFI=%v: efivarfs.ko loaded = %v (loaded %v)", uefi, got, loaded)
+		}
+		if !slices.Contains(loaded, "nvme.ko") {
+			t.Errorf("UEFI=%v: nvme.ko not loaded", uefi)
+		}
+	}
+}
+
 func TestDetectNetplanConfigRejectsMalformedFiles(t *testing.T) {
 	writeFile := func(t *testing.T, path, content string) {
 		t.Helper()

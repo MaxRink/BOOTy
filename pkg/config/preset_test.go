@@ -251,3 +251,12 @@ func TestNetworkWaitModeAndLegacyPreset(t *testing.T) {
 		t.Fatal("Validate() accepted network.waitMode=forever")
 	}
 }
+
+func TestDiskSettleTimeoutBounds(t *testing.T) {
+	for v, ok := range map[int]bool{-1: false, 0: true, 600: true, 601: false} {
+		cfg := Config{Provision: ProvisionConfig{Disk: DiskConfig{SettleTimeoutSec: new(v)}}}
+		if err := cfg.Validate(); (err == nil) != ok {
+			t.Errorf("settleTimeoutSec=%d: Validate() = %v, want ok %v", v, err, ok)
+		}
+	}
+}
