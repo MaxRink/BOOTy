@@ -621,6 +621,10 @@ func runCAPRF(ctx context.Context) {
 			"power off handoff failed after deprovisioning success")
 		return
 	case errors.As(modeErr, &provisionErr):
+		if provisionErr.Cfg != nil {
+			// A standby command ran with its own config (payload).
+			cfg = provisionErr.Cfg
+		}
 		kexeced := tryKexec(cfg, provisionErr.FirmwareChanged, func() (disk.ReleaseReport, error) {
 			return diskMgr.UnmountOrRemountReadOnly(installedRootPath)
 		})

@@ -95,7 +95,7 @@ changed.
 | `deprovision`, `hard` | Wipes the disks and removes the EFI boot entries. Without a disk override it wipes every disk. |
 | `soft-deprovision`, `soft` | Renames `grub.cfg` to `grub.cfg.bak` in `/boot/grub` and `/boot/grub2` on the installed root. The disk is not wiped. An existing `grub.cfg.bak` counts as done, so a rerun succeeds. If no `grub.cfg` or `grub.cfg.bak` exists, or the root cannot be unmounted after the rename, BOOTy reports an error, not success. |
 | `decommission` | Wipes every disk and removes every EFI boot entry in `BootOrder`. Failures are logged and do not stop the run. CAPRF uses this mode for the `force-clean` annotation. |
-| `standby` | Sends a heartbeat to `HEARTBEAT_URL` every 30 seconds and polls `COMMANDS_URL` every 10 seconds. It runs the `provision`, `deprovision`, `reboot` and `health-check` commands. Both URLs are required. |
+| `standby` | Sends a heartbeat to `HEARTBEAT_URL` every 30 seconds and polls `COMMANDS_URL` every 10 seconds. It runs the `provision`, `deprovision`, `reboot` and `health-check` commands. Both URLs are required. See [Agent mode contract](#agent-mode-contract). |
 | `dry-run` | Runs read-only checks (configuration, image, disk, EFI, health) and reports the result. It does not set up the network and does not write to disks. `DRY_RUN=true` selects this mode. |
 | `check` | Runs the hardware health checks and reports the result. |
 
@@ -114,6 +114,95 @@ URL is empty, BOOTy skips the callback.
 | `ERROR_URL` | When a step fails, when a handoff fails, and, with `FAILURE_ACTION=wait`, when the run fails before or outside a mode. | `step <name> failed: <error>` or a short failure message |
 | `LOG_URL` | For every log record at level `INFO` or higher. BOOTy redacts attributes with sensitive names, buffers 256 lines and drops lines when the buffer is full. | One log line |
 | `DEBUG_URL` | Never. BOOTy reads the variable but sends nothing to it. Diagnostic dumps go to the log and through `LOG_URL`. | |
+
+## Agent mode contract
+
+In `MODE=standby` (agent mode) BOOTy stays in the ramdisk and takes commands
+from CAPRF. CAPRF renders the two URLs into `/deploy/vars`. The canonical
+paths are the ones of the CAPRF agent endpoints
+(`internal/server/commands.go`):
+
+| Method and path | BOOTy variable | Request | Response |
+|-----------------|----------------|---------|----------|
+| `POST /agent/heartbeat` | `HEARTBEAT_URL` | `text/plain` body `heartbeat` | `2xx`. BOOTy logs a failure and sends the next heartbeat 30 seconds later. |
+| `GET /agent/commands` | `COMMANDS_URL` | No body | `204`: no command. `200`: a JSON array of commands, at most 1 MiB. Other codes count as a failed poll; BOOTy logs it and polls again 10 seconds later. |
+| `POST /agent/commands/ack` | `COMMANDS_URL` + `/ack` | JSON `{"id": "...", "status": "completed" or "failed", "message": "..."}` | `2xx`. BOOTy logs a failed ACK and does not send it again. |
+
+Rules:
+
+- Every request has `Authorization: Bearer <TOKEN>`, or the JWT when
+  `TOKEN_URL` is set. The [Transport rules](#transport-rules) apply: plain
+  HTTP needs `INSECURE_TRANSPORT=true` or a loopback URL.
+- A command is `{"id": "...", "type": "...", "payload": "..."}`. `type` is
+  `provision`, `deprovision`, `reboot` or `health-check`. BOOTy ACKs an
+  unknown type with `failed`.
+- CAPRF removes the commands that it returns (claim). BOOTy runs each
+  command once and sends one ACK for it.
+- `payload` is optional. It is base64 in JSON, like a Go `[]byte`. The
+  decoded payload has lines in the [vars file format](configuration.md#vars-file-format).
+- BOOTy sends no heartbeat while a `provision` or `deprovision` command
+  runs. CAPRF must not mark the agent unhealthy before the command ACK.
+
+At start, standby sends `standby` to `INIT_URL`, one heartbeat and one
+command poll. If one of them fails, the run fails. Then it loops.
+
+### Command payload
+
+A `provision` or `deprovision` command can carry a payload, for example:
+
+```text
+HOSTNAME=worker-07
+EXTRA_KERNEL_PARAMS=intel_iommu=on
+```
+
+- BOOTy appends the payload lines to the `/deploy/vars` content that it
+  read at start (it does not read the file again) and parses the result as
+  one vars file. So a payload entry wins over the same key in `/deploy/vars`,
+  and the [vars file rules](configuration.md#vars-file-format) apply: the
+  last entry wins, `EXTRA_KERNEL_PARAMS` still goes after
+  `MACHINE_EXTRA_KERNEL_PARAMS`, `CAPRF_LEGACY_COMPAT` presets fill only
+  unset options, and `Config.Validate` checks the result.
+- The payload applies to that command only: BOOTy builds a separate config
+  for the command and does not change the config of the standby loop. The
+  next command starts from `/deploy/vars` again.
+- `EXPORT_VARS=true` exports only the `/deploy/vars` entries at start. The
+  payload keys are not exported to the process environment.
+- The ramdisk already uses some settings, so a payload can not change them:
+  the transport (`TOKEN`, `TOKEN_URL`, `TOKEN_ALGORITHM`, `INIT_URL`,
+  `SUCCESS_URL`, `ERROR_URL`, `LOG_URL`, `DEBUG_URL`, `INSECURE_TRANSPORT`,
+  `SKIP_TLS_VERIFY`, `EXPORT_VARS`), the agent (`HEARTBEAT_URL`,
+  `COMMANDS_URL`, `STANDBY_DEPROVISION_SUCCESS_ACTION`), the network keys
+  ([Common network](configuration.md#common-network),
+  [GoBGP and EVPN](configuration.md#gobgp-and-evpn) and
+  [FRR](configuration.md#frr)), `MODE`, `DRY_RUN` and `CAPRF_LEGACY_COMPAT`.
+  The command type selects the mode.
+- A payload can not redirect a request that carries the bearer token:
+  `INVENTORY_URL`, `FIRMWARE_URL`, `HEALTH_CHECK_URL`, `TELEMETRY_URL`,
+  `METRICS_URL`, `EVENT_URL`, `CRASH_ARTIFACTS_PREPARE_URL` and
+  `CRASH_ARTIFACTS_UPLOAD_URL` are fixed too.
+- BOOTy rejects a payload that changes one of these settings, that has an
+  unknown key (also a misspelled one), a line that is not `KEY=VALUE`, a
+  value that does not parse, or that fails validation. It does not run the
+  command, ACKs it as `failed` with `invalid <type> payload: <reason>` (the
+  reason names the keys, never their values) and stays in standby.
+- A payload with only blank and comment lines counts as no payload.
+- The `completed` ACK names the payload keys, for example
+  `provisioning complete with payload keys EXTRA_KERNEL_PARAMS,HOSTNAME`.
+- Trust: BOOTy trusts the payload as much as `/deploy/vars`. It can change
+  the image, the disk and the kernel parameters. Serve `COMMANDS_URL` over
+  HTTPS with a certificate that BOOTy verifies: do not use
+  `INSECURE_TRANSPORT` or `SKIP_TLS_VERIFY` for agent mode in production.
+
+### End of a command
+
+| Command | Result | What BOOTy does |
+|---------|--------|-----------------|
+| `provision` | Success | ACK `completed`, then like a provision run: kexec, reboot or power off. |
+| `provision` | Failure | ACK `failed`, then `RESCUE_MODE`. With `RESCUE_MODE=wait` the ACK comes before the wait. |
+| `deprovision` | Success | ACK `completed`. With `STANDBY_DEPROVISION_SUCCESS_ACTION=standby`: send `standby` to `INIT_URL` and go on with heartbeats and polls in the same boot. Otherwise reboot, or power off with `SUCCESS_ACTION=poweroff`. |
+| `deprovision` | Failure | ACK `failed`, then reboot, or wait with `FAILURE_ACTION=wait`. |
+| `reboot` | | ACK `completed`, then reboot. |
+| `health-check` | | ACK `completed` with message `healthy`, stay in standby. |
 
 ## Authentication
 
@@ -169,6 +258,9 @@ success rows and `FAILURE_ACTION=wait` for the failure rows.
 | Standby `reboot` command | Reboot | Reboot |
 
 A standby `provision` or `deprovision` command ends like the matching mode.
+With `STANDBY_DEPROVISION_SUCCESS_ACTION=standby`, a successful standby
+`deprovision` command returns to the standby loop instead. See
+[Agent mode contract](#agent-mode-contract).
 
 BOOTy skips kexec and reboots when one of these is true:
 

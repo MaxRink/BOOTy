@@ -565,8 +565,9 @@ func TestLoadFullYAMLReference(t *testing.T) {
 		{"Provision.CrashArtifacts.MaxMB", cfg.Provision.CrashArtifacts.MaxMB, 256},
 		{"Provision.CrashArtifacts.UploadTimeoutSec", cfg.Provision.CrashArtifacts.UploadTimeoutSec, 120},
 		{"Provision.CrashArtifacts.IncludeMemoryDumps", cfg.Provision.CrashArtifacts.IncludeMemoryDumps, true},
-		{"Agent.HeartbeatURL", cfg.Agent.HeartbeatURL, "https://caprf.example.com/heartbeat"},
-		{"Agent.CommandsURL", cfg.Agent.CommandsURL, "https://caprf.example.com/commands"},
+		{"Agent.HeartbeatURL", cfg.Agent.HeartbeatURL, "https://caprf.example.com/agent/heartbeat"},
+		{"Agent.CommandsURL", cfg.Agent.CommandsURL, "https://caprf.example.com/agent/commands"},
+		{"Agent.DeprovisionSuccessAction", cfg.Agent.DeprovisionSuccessAction, "standby"},
 	}
 
 	for _, c := range checks {

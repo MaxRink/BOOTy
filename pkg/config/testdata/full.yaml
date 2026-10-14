@@ -387,7 +387,11 @@ deprovision:
 # ---------------------------------------------------------------------------
 agent:
   # heartbeatURL: POST endpoint for periodic keepalive signals
-  heartbeatURL: "https://caprf.example.com/heartbeat"
+  heartbeatURL: "https://caprf.example.com/agent/heartbeat"
 
   # commandsURL: GET endpoint for polling pending commands
-  commandsURL: "https://caprf.example.com/commands"
+  commandsURL: "https://caprf.example.com/agent/commands"
+
+  # deprovisionSuccessAction: "standby" returns to standby after a
+  # successful deprovision command. Empty ends the run like successAction.
+  deprovisionSuccessAction: "standby"

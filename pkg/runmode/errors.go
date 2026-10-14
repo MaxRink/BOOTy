@@ -6,6 +6,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/telekom/BOOTy/pkg/config"
 )
 
 // RescueShellError indicates the mode exited to drop into a rescue shell.
@@ -31,6 +33,9 @@ func (e *PowerOffRequestedError) Error() string { return "power off requested" }
 type ProvisionCompleteError struct {
 	FirmwareChanged bool
 	PowerOff        bool
+	// Cfg is the config of a standby command run, nil for MODE=provision.
+	// The handoff uses it instead of the base config.
+	Cfg *config.MachineConfig
 }
 
 func (e *ProvisionCompleteError) Error() string { return "provision complete" }

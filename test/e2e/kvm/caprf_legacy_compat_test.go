@@ -30,6 +30,11 @@ type fakeCAPRF struct {
 	mu       sync.Mutex
 	statuses []string
 	messages map[string]string
+
+	// Agent (standby) endpoints, see standby_test.go.
+	commands   []agentCommand
+	acks       []agentAck
+	heartbeats int
 }
 
 func startFakeCAPRF(t *testing.T, imagePath string) *fakeCAPRF {
@@ -58,6 +63,7 @@ func (f *fakeCAPRF) handler(imagePath string) http.Handler {
 		_, _ = io.Copy(io.Discard, r.Body)
 		w.WriteHeader(http.StatusOK)
 	})
+	f.agentRoutes(mux)
 	mux.HandleFunc("/status/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+fakeCAPRFToken {
 			w.WriteHeader(http.StatusUnauthorized)

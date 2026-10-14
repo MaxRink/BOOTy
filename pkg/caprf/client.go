@@ -38,6 +38,8 @@ type Client struct {
 	cfg          *config.MachineConfig
 	log          *slog.Logger
 	tokenManager *auth.TokenManager
+	// vars is the raw /deploy/vars file, the base of standby command payloads.
+	vars         []byte
 	insecureWarn sync.Map
 }
 
@@ -45,13 +47,12 @@ var errInsecureTransport = errors.New("insecure transport")
 
 // New creates a CAPRF client by parsing the vars file at the given path.
 func New(varsPath string) (*Client, error) {
-	f, err := os.Open(varsPath) //nolint:gosec // trusted path from ISO
+	vars, err := os.ReadFile(varsPath) //nolint:gosec // trusted path from ISO
 	if err != nil {
 		return nil, fmt.Errorf("open vars file: %w", err)
 	}
-	defer f.Close() //nolint:errcheck // best-effort close
 
-	cfg, err := ParseVars(f)
+	cfg, err := ParseVars(bytes.NewReader(vars))
 	if err != nil {
 		return nil, fmt.Errorf("parse vars: %w", err)
 	}
@@ -67,10 +68,20 @@ func New(varsPath string) (*Client, error) {
 	c := &Client{
 		httpClient: newHTTPClient(30*time.Second, config.BoolOr(cfg.Transport.SkipTLSVerify, false)),
 		cfg:        cfg,
+		vars:       vars,
 		log:        slog.Default().With("component", "caprf"),
 	}
 	c.warnTransport()
 	return c, nil
+}
+
+// CommandConfig returns the config for a standby command with a payload.
+// See MergeCommandVars.
+func (c *Client) CommandConfig(payload []byte) (cfg *config.MachineConfig, keys []string, err error) {
+	if c.vars == nil {
+		return nil, nil, fmt.Errorf("command payloads need a client created from a vars file")
+	}
+	return MergeCommandVars(c.vars, payload)
 }
 
 func (c *Client) warnTransport() {
@@ -1024,7 +1035,7 @@ func ParseVars(r io.Reader) (*config.MachineConfig, error) {
 			legacyExtraKernelParams = strings.TrimSpace(value)
 			continue
 		}
-		if err := applyVar(cfg, key, value); err != nil {
+		if err := applyVar(cfg, key, value); err != nil && !errors.Is(err, errUnknownVar) {
 			return nil, fmt.Errorf("parse var %s: %w", key, err)
 		}
 	}
@@ -1097,7 +1108,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 	if applySecureBootDigestVar(cfg, key, value) {
 		return true
 	}
-	if applyOCIPrePullStringVar(cfg, key, value) {
+	if applyOCIPrePullStringVar(cfg, key, value) || applyAgentStringVar(cfg, key, value) {
 		return true
 	}
 
@@ -1119,8 +1130,6 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"ERROR_URL":                   &cfg.Transport.ErrorURL,
 		"SUCCESS_URL":                 &cfg.Transport.SuccessURL,
 		"DEBUG_URL":                   &cfg.Transport.DebugURL,
-		"HEARTBEAT_URL":               &cfg.Agent.HeartbeatURL,
-		"COMMANDS_URL":                &cfg.Agent.CommandsURL,
 		"RESCUE_MODE":                 &cfg.Rescue.Mode,
 		"RESCUE_SSH_PUBKEY":           &cfg.Rescue.SSHPubKey,
 		"RESCUE_PASSWORD_HASH":        &cfg.Rescue.PasswordHash,
@@ -1173,8 +1182,23 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 	return false
 }
 
+func applyAgentStringVar(cfg *config.MachineConfig, key, value string) bool {
+	switch key {
+	case "HEARTBEAT_URL":
+		cfg.Agent.HeartbeatURL = value
+	case "COMMANDS_URL":
+		cfg.Agent.CommandsURL = value
+	case "STANDBY_DEPROVISION_SUCCESS_ACTION":
+		cfg.Agent.DeprovisionSuccessAction = value
+	default:
+		return false
+	}
+	return true
+}
+
 func applyOCIPrePullStringVar(cfg *config.MachineConfig, key, value string) bool {
 	switch key {
+
 	case "OCI_PREPULL_CACHE_DIR":
 		cfg.Provision.OCIPrePulls.CacheDir = value
 	case "OCI_PREPULL_IMPORT_NAMESPACE":
@@ -1307,9 +1331,22 @@ func applySpecialVar(cfg *config.MachineConfig, key, value string) error {
 		if strings.HasPrefix(key, "LUKS_") {
 			return fmt.Errorf("%s is not supported yet", key)
 		}
+		return errUnknownVar
 	}
 
 	return nil
+}
+
+// errUnknownVar marks a key that no vars handler reads. ParseVars ignores
+// such keys; a standby command payload rejects them.
+var errUnknownVar = errors.New("unknown vars key")
+
+// knownVarKey reports whether a vars handler reads key.
+func knownVarKey(key string) bool {
+	if key == "EXTRA_KERNEL_PARAMS" {
+		return true
+	}
+	return !errors.Is(applyVar(&config.MachineConfig{}, key, ""), errUnknownVar)
 }
 
 func mergeSecureBootPinnedDigests(cfg *config.MachineConfig, digests map[string]string) {

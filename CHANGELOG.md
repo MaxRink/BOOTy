@@ -140,6 +140,11 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 - disk: `DISK_SELECTION=lsblk` warns when more than one disk of the selected
   bus qualifies, because disk names can change between boots; `docs/disk.md`
   recommends `DISK_SERIAL_NUMBER` (#666)
+- Standby: the payload of a `provision` or `deprovision` command (vars lines)
+  wins over `/deploy/vars` for that command; unknown keys, settings of the
+  running ramdisk and bearer-token URLs are rejected. `STANDBY_DEPROVISION_SUCCESS_ACTION=standby` returns to standby
+  after a deprovision command in the same boot. Agent paths `/agent/...`
+  documented (#665)
 
 ### Security
 

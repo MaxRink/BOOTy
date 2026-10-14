@@ -5172,3 +5172,28 @@ func TestGrowPartitionLastLinuxCheckFailureKeepsPartitionTable(t *testing.T) {
 		}
 	}
 }
+
+// A standby command payload with DISK_SELECTION=lsblk applies to that
+// command's orchestrator only: the shared disk manager and the next
+// command keep the base rule.
+func TestNewOrchestratorKeepsSharedDiskManager(t *testing.T) {
+	cmd := newMockCommander()
+	mgr := disk.NewManager(cmd)
+	usedLsblkOrder := func(m *disk.Manager) bool {
+		cmd.calls = nil
+		_, _ = m.DetectDisk(context.Background(), 0)
+		return hasCall(cmd.calls, "lsblk", "--nodeps --noheadings --include 259,253 --output PATH,SIZE --bytes")
+	}
+
+	payloadCfg := &config.MachineConfig{}
+	payloadCfg.Provision.Disk.Selection = config.DiskSelectionLsblk
+	if !usedLsblkOrder(NewOrchestrator(payloadCfg, &mockProvider{}, mgr).disk) {
+		t.Fatal("the payload run did not use the lsblk order")
+	}
+	if usedLsblkOrder(mgr) {
+		t.Fatal("the payload run changed the shared disk manager")
+	}
+	if usedLsblkOrder(NewOrchestrator(&config.MachineConfig{}, &mockProvider{}, mgr).disk) {
+		t.Fatal("the next run used the lsblk order of the previous payload")
+	}
+}

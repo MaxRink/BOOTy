@@ -113,7 +113,8 @@ values are false.
 | `ERROR_URL` | (unset) | URL | Receives the error status. |
 | `LOG_URL` | (unset) | URL | BOOTy ships each log line of level info and higher to this URL. |
 | `HEARTBEAT_URL` | (unset) | URL | Standby mode: heartbeat endpoint, every 30 s. Required for `MODE=standby`. |
-| `COMMANDS_URL` | (unset) | URL | Standby mode: command poll endpoint, every 10 s. Required for `MODE=standby`. |
+| `COMMANDS_URL` | (unset) | URL | Standby mode: command poll endpoint, every 10 s. BOOTy posts command ACKs to `<COMMANDS_URL>/ack`. Required for `MODE=standby`. See [Agent mode contract](caprf-integration.md#agent-mode-contract). |
+| `STANDBY_DEPROVISION_SUCCESS_ACTION` | (unset) | `standby` | Standby mode: `standby` returns to the standby loop after a successful `deprovision` command, in the same boot, without a reboot or power off. Unset ends the run like `SUCCESS_ACTION`. YAML `agent.deprovisionSuccessAction`. `CAPRF_LEGACY_COMPAT` does not preset it. |
 | `TOKEN` | (unset) | string | Bearer token. With `TOKEN_URL` it is the bootstrap token for the JWT exchange. |
 | `TOKEN_URL` | (unset) | HTTPS URL | JWT endpoint. BOOTy exchanges `TOKEN` for a JWT after the network is up and renews it in the background. Plain HTTP is accepted only for `localhost`, `127.0.0.1` and `::1`. Requires `TOKEN` and `HOSTNAME`. A failed exchange or an exhausted renewal ends the run. |
 | `TOKEN_ALGORITHM` | (unset) | `RS256`, `ES256` | JWT signing algorithm that BOOTy requests from `TOKEN_URL`. Empty leaves the choice to the server. |

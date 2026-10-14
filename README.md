@@ -996,8 +996,8 @@ Persistent agent mode that polls for provisioning commands from CAPRF:
 
 ```bash
 export MODE=standby
-export HEARTBEAT_URL="https://caprf.example.com/status/heartbeat"
-export COMMANDS_URL="https://caprf.example.com/commands"
+export HEARTBEAT_URL="https://caprf.example.com/agent/heartbeat"
+export COMMANDS_URL="https://caprf.example.com/agent/commands"
 ```
 
 In standby mode, both URLs are required. BOOTy reports standby status, sends
@@ -1010,7 +1010,12 @@ before BOOTy reboots. With `FAILURE_ACTION=wait`, a failed hot provision
 defaults to `RESCUE_MODE=wait` (ACKed first), a failed deprovision command is
 ACKed and BOOTy waits instead of rebooting. With `SUCCESS_ACTION=poweroff`,
 successful provision and deprovision commands power the host off. Both are
-preset by `CAPRF_LEGACY_COMPAT=true`.
+preset by `CAPRF_LEGACY_COMPAT=true`. With
+`STANDBY_DEPROVISION_SUCCESS_ACTION=standby`, a successful deprovision command
+returns to standby in the same boot. A `provision` or `deprovision` command can
+carry a payload of vars lines that wins over `/deploy/vars` for that command.
+The paths, payloads and rules are in
+[Agent mode contract](docs/caprf-integration.md#agent-mode-contract).
 Only `204 No Content` denotes an empty command queue; a `404 Not Found` or any
 other unexpected response is treated as a polling failure rather than an empty
 queue.

@@ -22,6 +22,7 @@ type standbyProvider struct {
 	commandErr      error
 	statusErrOnCall int
 	acks            []string
+	ackMessages     []string
 }
 
 type standbyDeprovisionerFunc func(context.Context) error
@@ -54,8 +55,9 @@ func (p *standbyProvider) FetchCommands(_ context.Context) ([]config.Command, er
 	return p.commands, p.commandErr
 }
 
-func (p *standbyProvider) AcknowledgeCommand(_ context.Context, cmdID, status, _ string) error {
+func (p *standbyProvider) AcknowledgeCommand(_ context.Context, cmdID, status, message string) error {
 	p.acks = append(p.acks, cmdID+":"+status)
+	p.ackMessages = append(p.ackMessages, message)
 	return nil
 }
 
@@ -203,7 +205,7 @@ func TestStandbyDeprovisionCommandFailureReturnsErrorWithoutReboot(t *testing.T)
 	var deprovisionCalls int
 	mode := &StandbyMode{
 		deps: Deps{Cfg: standbyConfig(), Client: provider},
-		newDeprovisioner: func() standbyDeprovisioner {
+		newDeprovisioner: func(*config.MachineConfig) standbyDeprovisioner {
 			return standbyDeprovisionerFunc(func(context.Context) error {
 				deprovisionCalls++
 				return deprovisionErr
@@ -234,7 +236,7 @@ func newLegacyActionsStandby(t *testing.T, deprovErr error) *StandbyMode {
 	cfg.FailureAction = config.FailureActionWait
 	return &StandbyMode{
 		deps: Deps{Cfg: cfg, Client: &standbyProvider{commands: []config.Command{{ID: "cmd-1", Type: "deprovision"}}}},
-		newDeprovisioner: func() standbyDeprovisioner {
+		newDeprovisioner: func(*config.MachineConfig) standbyDeprovisioner {
 			return standbyDeprovisionerFunc(func(context.Context) error { return deprovErr })
 		},
 	}

@@ -161,6 +161,9 @@ func (c *Config) validateEnums() []string {
 			return validateEnumLower(c.Provision.Disk.WipeDepth, "provision.disk.wipeDepth", WipeDepthThorough, WipeDepthQuick)
 		},
 		func() string {
+			return validateEnumLower(c.Agent.DeprovisionSuccessAction, "agent.deprovisionSuccessAction", AgentDeprovisionStandby)
+		},
+		func() string {
 			return validateEnumLower(c.Network.BGP.PeerMode, "network.bgp.peerMode", "unnumbered", "dual", "numbered")
 		},
 		func() string {
@@ -311,6 +314,7 @@ func (c *Config) normalize() {
 		&c.Provision.Firmware.NumVFsMode,
 		&c.Provision.Disk.WipeDepth,
 		&c.Provision.Disk.GrowPartition,
+		&c.Agent.DeprovisionSuccessAction,
 	}
 	for _, f := range lowerFields {
 		if *f != "" {
