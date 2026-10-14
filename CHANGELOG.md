@@ -238,6 +238,8 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 
 ### CI, build and tests
 
+- config: `testdata/full.yaml` and `TestLoadFullYAMLReference` cover every native
+  CAPRF parity option (#682)
 - The `WIPE_ALL_DISKS` target in-use test uses a fixture with only the target
   mounted (#677)
 - KVM scenarios `caprf-legacy-compat`, `caprf-native-parity` and `kexec-persist`

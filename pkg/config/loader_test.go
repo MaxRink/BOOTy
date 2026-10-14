@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -573,6 +574,31 @@ func TestLoadFullYAMLReference(t *testing.T) {
 		{"Agent.HeartbeatURL", cfg.Agent.HeartbeatURL, "https://caprf.example.com/agent/heartbeat"},
 		{"Agent.CommandsURL", cfg.Agent.CommandsURL, "https://caprf.example.com/agent/commands"},
 		{"Agent.DeprovisionSuccessAction", cfg.Agent.DeprovisionSuccessAction, "standby"},
+		// Native CAPRF legacy parity options, set without legacyCompat.
+		{"LegacyCompat", cfg.LegacyCompat, false},
+		{"SuccessAction", cfg.SuccessAction, SuccessActionPowerOff},
+		{"FailureAction", cfg.FailureAction, FailureActionWait},
+		{"ProvisionerFilesTarget", cfg.ProvisionerFilesTarget, ProvisionerFilesRamdisk},
+		{"RamdiskHostname", showBool(cfg.RamdiskHostname), "true"},
+		{"Network.WaitMode", cfg.Network.WaitMode, NetworkWaitRounds},
+		{"Network.WaitMaxAttempts", showInt(cfg.Network.WaitMaxAttempts), "15"},
+		{"Transport.Insecure", showBool(cfg.Transport.Insecure), "false"},
+		{"Transport.SkipTLSVerify", showBool(cfg.Transport.SkipTLSVerify), "false"},
+		{"Transport.ExportVars", showBool(cfg.Transport.ExportVars), "false"},
+		{"Provision.WriteResolvConf", showBool(cfg.Provision.WriteResolvConf), "false"},
+		{"Provision.GRUBCmdlineMode", cfg.Provision.GRUBCmdlineMode, GRUBCmdlineAppend},
+		{"Provision.MachineCommandsMode", cfg.Provision.MachineCommandsMode, MachineCommandsScript},
+		{"Provision.Image.AllowInsecureHTTP", showBool(cfg.Provision.Image.AllowInsecureHTTP), "false"},
+		{"Provision.Disk.Selection", cfg.Provision.Disk.Selection, DiskSelectionLsblk},
+		{"Provision.Disk.WipeAllDisks", showBool(cfg.Provision.Disk.WipeAllDisks), "true"},
+		{"Provision.Disk.DiscardNVMe", showBool(cfg.Provision.Disk.DiscardNVMe), "true"},
+		{"Provision.Disk.WipeDepth", cfg.Provision.Disk.WipeDepth, WipeDepthQuick},
+		{"Provision.Disk.GrowPartition", cfg.Provision.Disk.GrowPartition, GrowPartitionLastLinux},
+		{"Provision.Firmware.LogNICs", showBool(cfg.Provision.Firmware.LogNICs), "true"},
+		{"Provision.Firmware.NumVFsMode", cfg.Provision.Firmware.NumVFsMode, NumVFsModeRaise},
+		{"Provision.DiskLinks", showBool(cfg.Provision.DiskLinks), "false"},
+		{"Provision.KexecUnmountTarget", showBool(cfg.Provision.KexecUnmountTarget), "false"},
+		{"Network.PredictableNames", showBool(cfg.Network.PredictableNames), "false"},
 	}
 
 	for _, c := range checks {
@@ -602,6 +628,22 @@ func TestLoadFullYAMLReference(t *testing.T) {
 	if cfg.Provision.Sysext.Layers[0].Name != "node-tuning" {
 		t.Errorf("Provision.Sysext.Layers[0].Name = %q, want node-tuning", cfg.Provision.Sysext.Layers[0].Name)
 	}
+}
+
+// showBool and showInt show an unset option as "unset", so the reference
+// check fails when the YAML key is not read.
+func showBool(b *bool) string {
+	if b == nil {
+		return "unset"
+	}
+	return strconv.FormatBool(*b)
+}
+
+func showInt(n *int) string {
+	if n == nil {
+		return "unset"
+	}
+	return strconv.Itoa(*n)
 }
 
 func writeTestFile(t *testing.T, name, content string) string {

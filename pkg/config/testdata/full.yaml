@@ -1,8 +1,8 @@
 # full.yaml — complete BOOTy configuration reference.
 #
 # This file documents every supported field with its type, valid values, and
-# default. It is loaded by TestLoadYAMLFull in loader_test.go to verify that all
-# fields round-trip correctly.
+# default. It is loaded by TestLoadFullYAMLReference in loader_test.go to
+# verify that all fields round-trip correctly.
 #
 # A production config only needs the fields relevant to the active mode — all
 # other sections are optional and default to zero values.
@@ -12,6 +12,15 @@ mode: provision            # Operating mode: provision | deprovision | soft-depr
                            #   decommission | standby | dry-run | check (default: provision)
 dryRun: false              # Override mode to dry-run when true (default: false)
 osFamily: ubuntu           # Target OS family for target-root writers
+
+# CAPRF legacy parity. legacyCompat is a preset: it fills the options below
+# that are not set (docs/configuration.md#caprf-legacy-compatibility). Every
+# option also works without it; an explicit value always wins.
+legacyCompat: false        # CAPRF_LEGACY_COMPAT (default: false)
+successAction: poweroff    # SUCCESS_ACTION: reboot (default) | poweroff
+failureAction: wait        # FAILURE_ACTION: reboot (default) | wait
+provisionerFilesTarget: ramdisk # PROVISIONER_FILES_TARGET: target (default) | ramdisk
+ramdiskHostname: true      # RAMDISK_HOSTNAME: name the ramdisk after hostname (default: false)
 
 # ---------------------------------------------------------------------------
 # Network — configures the in-ramdisk network stack.
@@ -24,6 +33,17 @@ network:
 
   # dnsResolvers is a comma-separated list of DNS server IPs.
   dnsResolvers: "8.8.8.8,1.1.1.1"
+
+  # waitMode (NETWORK_WAIT_MODE): default (up to 3 setups, 5 minutes each) |
+  # rounds (one setup, waitMaxAttempts rounds of 20 s, like wait_for_network)
+  waitMode: rounds
+  # waitMaxAttempts (NETWORK_WAIT_MAX_ATTEMPTS): rounds with waitMode rounds
+  # (unset: 15; 0 fails at once)
+  waitMaxAttempts: 15
+
+  # predictableNames (PREDICTABLE_NIC_NAMES): rename NICs to the predictable
+  # names that the config uses (default: true)
+  predictableNames: false
 
   bgp:
     # asn is the local BGP Autonomous System Number. ASN > 0 activates BGP networking.
@@ -148,6 +168,12 @@ transport:
   # insecure: allow bearer token over plain HTTP — TESTING ONLY, never in production
   insecure: false
 
+  # skipTLSVerify (SKIP_TLS_VERIFY): no TLS certificate check, like curl --insecure (default: false)
+  skipTLSVerify: false
+
+  # exportVars (EXPORT_VARS): export every vars entry to the environment, like `source vars` (default: false)
+  exportVars: false
+
 # ---------------------------------------------------------------------------
 # Health — pre-provisioning hardware health checks.
 # ---------------------------------------------------------------------------
@@ -219,6 +245,22 @@ provision:
   # disableKexec: skip kexec and force hard reboot after provisioning (default: false)
   disableKexec: false
 
+  # writeResolvConf (WRITE_RESOLV_CONF): write the installed OS resolv.conf (default: true)
+  writeResolvConf: false
+
+  # grubCmdlineMode (GRUB_CMDLINE_MODE): resolved (default) | append (like provision.sh)
+  grubCmdlineMode: append
+
+  # machineCommandsMode (MACHINE_COMMANDS_MODE): command (default) | script
+  # (each /deploy/machine-commands file runs as a script, like run_script_in_chroot)
+  machineCommandsMode: script
+
+  # diskLinks (DISK_LINKS): create /dev/disk/by-* links before the target chroot (default: true)
+  diskLinks: false
+
+  # kexecUnmountTarget (KEXEC_UNMOUNT_TARGET): unmount the target filesystems before kexec (default: true)
+  kexecUnmountTarget: false
+
   # postProvisionCmds: commands run in chroot after provisioning completes
   postProvisionCmds:
     - "systemctl enable kubelet"
@@ -247,6 +289,9 @@ provision:
 
     signatureURL: ""
     gpgPubKey: ""
+
+    # allowInsecureHTTP (IMAGE_ALLOW_INSECURE_HTTP): accept http:// image URLs (default: false)
+    allowInsecureHTTP: false
 
   ab:
     # scheme: dual-root (default). Used only when provision.image.mode=ab.
@@ -278,6 +323,22 @@ provision:
     # minSizeGB: minimum disk size in GiB for auto-detection (0 = no minimum)
     minSizeGB: 100
 
+    # selection (DISK_SELECTION): prefer-nvme (default) | lsblk (legacy lsblk order)
+    selection: lsblk
+
+    # wipeAllDisks (WIPE_ALL_DISKS): wipe every disk, not only the target (default: false)
+    wipeAllDisks: true
+
+    # discardNVMe (DISCARD_NVME): blkdiscard NVMe disks before wiping all disks (default: false)
+    discardNVMe: true
+
+    # wipeDepth (WIPE_DEPTH): thorough (default: partitions, LVM, MD, LUKS members
+    # and the table) | quick (signature wipes on the disks only, like wipe_all_disks)
+    wipeDepth: quick
+
+    # growPartition (GROW_PARTITION): root (default) | last-linux (last GPT Linux partition)
+    growPartition: last-linux
+
     # secureErase: use ATA Secure Erase / NVMe Format instead of wipefs (default: false)
     secureErase: false
 
@@ -305,6 +366,10 @@ provision:
   firmware:
     enabled: true
     url: "https://caprf.example.com/firmware"
+    # logNICs (NIC_FIRMWARE_LOG): log a nic_firmware line per NIC on each provision (default: false)
+    logNICs: true
+    # numVFsMode (NUM_VFS_MODE): set (default) | raise (raise NUM_OF_VFS on every ConnectX NIC)
+    numVFsMode: raise
     # minBIOS/minBMC: minimum acceptable firmware versions (default: "" = no minimum)
     minBIOS: "2.10"
     minBMC: "4.50"
