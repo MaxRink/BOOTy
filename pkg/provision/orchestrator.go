@@ -90,7 +90,9 @@ type Orchestrator struct {
 	log       *slog.Logger
 
 	// Runtime state set during provisioning.
-	targetDisk       string
+	targetDisk string
+	// skippedDisks are the disks in use that a wipe of all disks skipped.
+	skippedDisks     []string
 	rootPartition    string
 	bootPartition    string
 	sharedMounts     []string
@@ -103,6 +105,9 @@ type Orchestrator struct {
 
 // NewOrchestrator creates an Orchestrator with the given dependencies.
 func NewOrchestrator(cfg *config.MachineConfig, provider config.Provider, diskMgr *disk.Manager) *Orchestrator {
+	if diskMgr != nil {
+		diskMgr = diskMgr.WithQuickWipe(cfg.Provision.Disk.WipeDepth == config.WipeDepthQuick)
+	}
 	return &Orchestrator{
 		cfg:       cfg,
 		provider:  provider,
@@ -1094,11 +1099,14 @@ func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
 	targetDisk := strings.TrimSpace(o.targetDisk)
 	if targetDisk == "" {
 		if allowsWholeDiskDeprovisionWipe(mode) {
+			var err error
 			if secureErase {
 				o.log.Info("secure erase enabled, performing hardware-level erase on all disks")
-				return o.disk.SecureEraseAllDisks(ctx)
+				o.skippedDisks, err = o.disk.SecureEraseAllDisks(ctx)
+			} else {
+				o.skippedDisks, err = o.disk.WipeAllDisks(ctx)
 			}
-			return o.disk.WipeAllDisks(ctx)
+			return err
 		}
 		return fmt.Errorf("target disk is required before wipe-disks")
 	}
@@ -1123,6 +1131,13 @@ func (o *Orchestrator) wipeWithoutTargetSelection(ctx context.Context) (bool, er
 		return true, nil
 	}
 	if o.usesWipeAllDisks() {
+		// The wipe of all disks skips disks in use, but the selected
+		// install target must not be in use.
+		if target := strings.TrimSpace(o.targetDisk); target != "" {
+			if err := o.disk.CheckNotInUse(target); err != nil {
+				return true, err
+			}
+		}
 		return true, o.wipeAllDisks(ctx)
 	}
 	return false, nil
@@ -1141,18 +1156,15 @@ func (o *Orchestrator) usesWipeAllDisks() bool {
 	return true
 }
 
-// wipeAllDisks discards NVMe disks with DISCARD_NVME and clears the
-// signatures of every disk. Like the legacy script it logs failures and
-// never fails the run.
+// wipeAllDisks discards NVMe disks with DISCARD_NVME and wipes every disk.
+// Like the legacy script it logs failed disk wipes and goes on; see
+// bestEffortWipeAll for the failures that stop the run.
 func (o *Orchestrator) wipeAllDisks(ctx context.Context) error {
 	o.log.Info("wiping all disks")
 	if config.BoolOr(o.cfg.Provision.Disk.DiscardNVMe, false) {
 		o.disk.DiscardNVMeDisks(ctx)
 	}
-	if err := o.disk.WipeAllDisks(ctx); err != nil {
-		o.log.Warn("disk wipe failed, continuing", "error", err)
-	}
-	return nil
+	return o.bestEffortWipeAll(ctx)
 }
 
 func allowsWholeDiskDeprovisionWipe(mode string) bool {

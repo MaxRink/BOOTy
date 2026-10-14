@@ -152,6 +152,12 @@ jobs:
             test_regex: "^TestNativeParity"
             privileged: true
             setup: ""
+          - scenario: disk-wipe
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestDiskWipe.*QEMU$"
+            privileged: true
+            setup: ""
           - scenario: rescue-retry-stale-mounts
             qemu_extra: ""
             test_tag: e2e

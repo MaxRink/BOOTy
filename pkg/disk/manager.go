@@ -46,6 +46,10 @@ type Manager struct {
 	// legacyCAPRFSelection makes DetectDisk pick the disk like the CAPRF
 	// legacy provisioner. See SetLegacyCAPRFSelection.
 	legacyCAPRFSelection bool
+	// quickWipe limits the wipe to the disk signatures. See WithQuickWipe.
+	quickWipe bool
+	// procDir replaces /proc in tests. See CheckNotInUse.
+	procDir string
 }
 
 // SetLegacyCAPRFSelection makes DetectDisk select the target disk like
@@ -132,18 +136,18 @@ func isNoArraysFound(out []byte, err error) bool {
 	return strings.Contains(combined, "no arrays found")
 }
 
-// WipeDisk clears partition-table and filesystem signatures on a single device.
-// This is a quick erase (no data overwrite) suitable for pre-streaming cleanup.
+// WipeDisk clears the partitions and the partition table of a single device.
+// It does not overwrite the data. See wipeDevice and WithQuickWipe.
 func (m *Manager) WipeDisk(ctx context.Context, device string) error {
 	device = strings.TrimSpace(device)
 	if device == "" {
 		return fmt.Errorf("wipe disk: device is required")
 	}
-	slog.Info("wiping disk signatures", "device", device)
-	if out, err := m.cmd.Run(ctx, "sgdisk", "--zap-all", device); err != nil {
-		slog.Debug("sgdisk zap failed (may not be GPT)", "device", device, "output", string(out), "err", err)
+	if err := m.CheckNotInUse(device); err != nil {
+		return err
 	}
-	if _, err := m.cmd.Run(ctx, "wipefs", "-af", device); err != nil {
+	slog.Info("wiping disk", "device", device, "quick", m.quickWipe)
+	if err := m.wipeDevice(ctx, device); err != nil {
 		return fmt.Errorf("wipefs %s: %w", device, err)
 	}
 	return nil
@@ -156,6 +160,9 @@ func (m *Manager) WipeFilesystemSignatures(ctx context.Context, device string) e
 	if device == "" {
 		return fmt.Errorf("wipe filesystem signatures: device is required")
 	}
+	if err := m.CheckNotInUse(device); err != nil {
+		return err
+	}
 	slog.Info("wiping filesystem signatures", "device", device)
 	if _, err := m.cmd.Run(ctx, "wipefs", "-af", device); err != nil {
 		return fmt.Errorf("wipefs %s: %w", device, err)
@@ -163,15 +170,16 @@ func (m *Manager) WipeFilesystemSignatures(ctx context.Context, device string) e
 	return nil
 }
 
-// WipeAllDisks runs wipefs on all block devices excluding loop and CD-ROM.
-// This performs a quick erase: clears partition tables and filesystem signatures
-// without overwriting data.
-func (m *Manager) WipeAllDisks(ctx context.Context) error {
-	slog.Info("wiping all disk signatures (quick erase)")
+// WipeAllDisks wipes all block devices excluding loop and CD-ROM, like
+// WipeDisk. It skips a disk that is in use and returns the skipped disks.
+// It fails when a disk could not be checked (ErrInUseCheck), when every
+// disk was skipped (ErrAllDisksInUse) or when a wipe failed.
+func (m *Manager) WipeAllDisks(ctx context.Context) (skipped []string, err error) {
+	slog.Info("wiping all disks", "quick", m.quickWipe)
 	blockDir := filepath.Join(m.sysfsRoot, "block")
 	entries, err := os.ReadDir(blockDir)
 	if err != nil {
-		return fmt.Errorf("reading %s: %w", blockDir, err)
+		return nil, fmt.Errorf("reading %s: %w", blockDir, err)
 	}
 	var (
 		wiped int
@@ -183,27 +191,35 @@ func (m *Manager) WipeAllDisks(ctx context.Context) error {
 			continue
 		}
 		dev := "/dev/" + name
-		slog.Info("wiping disk", "device", dev)
-		// Clear partition table with sgdisk --zap-all first, then wipefs.
-		if out, err := m.cmd.Run(ctx, "sgdisk", "--zap-all", dev); err != nil {
-			slog.Debug("sgdisk zap failed (may not be GPT)", "device", dev, "output", string(out))
+		skip, err := m.skipInUse(dev)
+		if err != nil {
+			errs = append(errs, err)
+			continue
 		}
-		if _, err := m.cmd.Run(ctx, "wipefs", "-af", dev); err != nil {
+		if skip {
+			skipped = append(skipped, dev)
+			continue
+		}
+		slog.Info("wiping disk", "device", dev)
+		if err := m.wipeDevice(ctx, dev); err != nil {
 			slog.Warn("wipefs failed", "device", dev, "error", err)
 			errs = append(errs, fmt.Errorf("%s: %w", dev, err))
 		} else {
 			wiped++
 		}
 	}
-	if len(errs) > 0 {
-		msgs := make([]string, len(errs))
-		for i, e := range errs {
-			msgs[i] = e.Error()
-		}
-		if wiped == 0 {
-			return fmt.Errorf("all %d disk wipe(s) failed: %s", len(errs), strings.Join(msgs, "; "))
-		}
-		return fmt.Errorf("wiped %d disk(s) but %d failed: %s", wiped, len(errs), strings.Join(msgs, "; "))
+	return skipped, allDisksResult("wipe", wiped, skipped, errs)
+}
+
+// allDisksResult is the error of an operation on all disks.
+func allDisksResult(op string, done int, skipped []string, errs []error) error {
+	switch {
+	case len(errs) > 0 && done == 0:
+		return fmt.Errorf("all %d disk %s(s) failed: %w", len(errs), op, errors.Join(errs...))
+	case len(errs) > 0:
+		return fmt.Errorf("%s done on %d disk(s) but %d failed: %w", op, done, len(errs), errors.Join(errs...))
+	case done == 0 && len(skipped) > 0:
+		return fmt.Errorf("%w (%s)", ErrAllDisksInUse, strings.Join(skipped, ", "))
 	}
 	return nil
 }
@@ -222,6 +238,10 @@ func (m *Manager) DiscardNVMeDisks(ctx context.Context) {
 			continue
 		}
 		dev := "/dev/" + entry.Name()
+		if err := m.CheckNotInUse(dev); err != nil {
+			slog.Error("disk is in use, not discarded", "device", dev, "error", err)
+			continue
+		}
 		if out, err := m.cmd.Run(ctx, "blkdiscard", dev); err != nil {
 			slog.Info("blkdiscard failed, falling back to signature wipe", "device", dev, "error", err, "output", string(out))
 			continue
@@ -234,38 +254,43 @@ func (m *Manager) DiscardNVMeDisks(ctx context.Context) {
 // For NVMe drives: uses nvme format (User Data Erase).
 // For SATA/SAS drives: uses ATA SECURITY ERASE UNIT via hdparm.
 // Falls back to quick erase (wipefs) if secure erase is not supported.
-func (m *Manager) SecureEraseAllDisks(ctx context.Context) error {
+func (m *Manager) SecureEraseAllDisks(ctx context.Context) (skipped []string, err error) {
 	slog.Info("performing secure erase on all disks")
 	blockDir := filepath.Join(m.sysfsRoot, "block")
 	entries, err := os.ReadDir(blockDir)
 	if err != nil {
-		return fmt.Errorf("reading %s: %w", blockDir, err)
+		return nil, fmt.Errorf("reading %s: %w", blockDir, err)
 	}
-	var errs []error
+	var (
+		erased int
+		errs   []error
+	)
 	for _, entry := range entries {
 		name := entry.Name()
 		if isVirtualDisk(name) {
 			continue
 		}
 		dev := "/dev/" + name
+		skip, err := m.skipInUse(dev)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if skip {
+			skipped = append(skipped, dev)
+			continue
+		}
+		erase := m.secureEraseSATA
 		if strings.HasPrefix(name, "nvme") {
-			if err := m.secureEraseNVMe(ctx, dev); err != nil {
-				errs = append(errs, err)
-			}
+			erase = m.secureEraseNVMe
+		}
+		if err := erase(ctx, dev); err != nil {
+			errs = append(errs, err)
 		} else {
-			if err := m.secureEraseSATA(ctx, dev); err != nil {
-				errs = append(errs, err)
-			}
+			erased++
 		}
 	}
-	if len(errs) > 0 {
-		msgs := make([]string, len(errs))
-		for i, e := range errs {
-			msgs[i] = e.Error()
-		}
-		return fmt.Errorf("secure erase failed on %d disk(s): %s", len(errs), strings.Join(msgs, "; "))
-	}
-	return nil
+	return skipped, allDisksResult("secure erase", erased, skipped, errs)
 }
 
 // SecureEraseDisk performs hardware-level secure erase on a single disk.
@@ -290,6 +315,9 @@ func (m *Manager) SecureEraseDisk(ctx context.Context, device string) error {
 
 // secureEraseNVMe performs NVMe User Data Erase via nvme format command.
 func (m *Manager) secureEraseNVMe(ctx context.Context, dev string) error {
+	if err := m.CheckNotInUse(dev); err != nil {
+		return err
+	}
 	slog.Info("NVMe secure erase", "device", dev)
 	// ses=1: User Data Erase, ses=2: Crypto Erase (not all drives support it).
 	out, err := m.cmd.Run(ctx, "nvme", "format", dev, "--ses=1", "--force")
@@ -308,6 +336,9 @@ func (m *Manager) secureEraseNVMe(ctx context.Context, dev string) error {
 
 // secureEraseSATA performs ATA SECURITY ERASE UNIT via hdparm.
 func (m *Manager) secureEraseSATA(ctx context.Context, dev string) error {
+	if err := m.CheckNotInUse(dev); err != nil {
+		return err
+	}
 	slog.Info("SATA secure erase", "device", dev)
 	pwd, err := temporaryErasePassword()
 	if err != nil {

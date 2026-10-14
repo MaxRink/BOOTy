@@ -2354,8 +2354,10 @@ func TestWipeOrSecureEraseDisksScopesQuickEraseToTargetDisk(t *testing.T) {
 		t.Fatalf("wipeOrSecureEraseDisks: %v", err)
 	}
 
-	if got := len(cmd.calls); got != 2 {
-		t.Fatalf("expected 2 target wipe calls, got %d: %#v", got, cmd.calls)
+	for _, call := range cmd.calls {
+		if !strings.HasSuffix(strings.Join(call.args, " "), "/dev/sda") {
+			t.Fatalf("wipe call %s %v does not target /dev/sda", call.name, call.args)
+		}
 	}
 	if !hasCommandCall(cmd.calls, "sgdisk", "--zap-all", "/dev/sda") {
 		t.Fatalf("expected sgdisk to target /dev/sda, got %#v", cmd.calls)
@@ -4618,13 +4620,13 @@ func TestStreamImagePartitionModeWipesDiskFirst(t *testing.T) {
 		t.Fatalf("expected 'wiping disk before partition stream' in error, got: %v", err)
 	}
 
-	// sgdisk is called first by WipeDisk (before wipefs), so it must appear
-	// as the first recorded command.
+	// WipeDisk lists the partitions first (thorough wipe), so lsblk must
+	// appear as the first recorded command.
 	if len(cmd.calls) < 1 {
 		t.Fatal("expected at least one command to be recorded")
 	}
-	if cmd.calls[0].name != "sgdisk" {
-		t.Fatalf("expected first command to be 'sgdisk' (WipeDisk), got %q", cmd.calls[0].name)
+	if cmd.calls[0].name != "lsblk" {
+		t.Fatalf("expected first command to be 'lsblk' (WipeDisk), got %q", cmd.calls[0].name)
 	}
 }
 

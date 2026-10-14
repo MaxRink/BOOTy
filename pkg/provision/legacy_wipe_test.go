@@ -31,10 +31,11 @@ func withPresets(cfg *config.MachineConfig) *config.MachineConfig {
 	return cfg
 }
 
-// wipeAllCfg returns a config with the native wipe options.
+// wipeAllCfg returns a config with the native options of the legacy wipe.
+// WIPE_DEPTH=quick, because the thorough wipe discards every disk anyway.
 func wipeAllCfg(mode string, wipeAll, discard *bool) *config.MachineConfig {
 	return &config.MachineConfig{Mode: mode, Provision: config.ProvisionConfig{
-		Disk: config.DiskConfig{WipeAllDisks: wipeAll, DiscardNVMe: discard},
+		Disk: config.DiskConfig{WipeAllDisks: wipeAll, DiscardNVMe: discard, WipeDepth: config.WipeDepthQuick},
 	}}
 }
 

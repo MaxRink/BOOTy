@@ -124,7 +124,7 @@ func TestDecommissionDiscardsNVMeOnlyWithDiscardNVMe(t *testing.T) {
 		cfg  *config.MachineConfig
 		want bool
 	}{
-		"default":             {cfg: &config.MachineConfig{Mode: "decommission"}},
+		"default":             {cfg: wipeAllCfg("decommission", nil, nil)},
 		"native":              {cfg: wipeAllCfg("decommission", nil, new(true)), want: true},
 		"preset":              {cfg: withPresets(&config.MachineConfig{Mode: "decommission", LegacyCompat: true}), want: true},
 		"explicit false wins": {cfg: withPresets(presetOff)},

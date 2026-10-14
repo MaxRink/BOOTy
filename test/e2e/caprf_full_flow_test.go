@@ -58,6 +58,9 @@ func newMockCommander() *mockCommander {
 	return &mockCommander{results: make(map[string]cmdResult)}
 }
 
+// FakeDisks: this commander changes no real disk (disk.FakeDisks).
+func (m *mockCommander) FakeDisks() {}
+
 func (m *mockCommander) Run(_ context.Context, name string, args ...string) ([]byte, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -246,6 +249,9 @@ type sequentialCmd struct {
 	results []cmdResult
 	idx     int32
 }
+
+// FakeDisks: this commander changes no real disk (disk.FakeDisks).
+func (s *sequentialCmd) FakeDisks() {}
 
 func (s *sequentialCmd) Run(_ context.Context, _ string, _ ...string) ([]byte, error) {
 	i := atomic.AddInt32(&s.idx, 1) - 1

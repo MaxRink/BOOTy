@@ -34,6 +34,12 @@ const (
 	DiskSelectionLsblk      = "lsblk"
 )
 
+// Values of DiskConfig.WipeDepth.
+const (
+	WipeDepthThorough = "thorough"
+	WipeDepthQuick    = "quick"
+)
+
 // ApplyPresets sets the options that a preset such as LegacyCompat implies.
 // It only sets options that are not set, so an explicit option always wins.
 // Validate calls it first. It is safe to call more than once.
@@ -50,6 +56,7 @@ func (c *Config) applyLegacyCompatPreset() {
 	presetString(&c.SuccessAction, SuccessActionPowerOff)
 	presetString(&c.FailureAction, FailureActionWait)
 	presetString(&c.Provision.Disk.Selection, DiskSelectionLsblk)
+	presetString(&c.Provision.Disk.WipeDepth, WipeDepthQuick)
 	presetBool(&c.Provision.Disk.WipeAllDisks, true)
 	presetBool(&c.Provision.Disk.DiscardNVMe, true)
 	// The legacy scripts use `curl --insecure`, accept plain HTTP URLs and

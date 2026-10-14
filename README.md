@@ -323,6 +323,7 @@ root is mounted.
 | `DISK_LINKS` | `true` | Create the udev `/dev/disk/by-uuid`, `by-partuuid`, `by-label` and `by-partlabel` links before the target chroot, so `update-grub` writes `root=UUID=` |
 | `DISK_SELECTION` | `prefer-nvme` | `lsblk` selects the first large enough disk in legacy `lsblk` order. Preset by `CAPRF_LEGACY_COMPAT` |
 | `WIPE_ALL_DISKS` | `false` | Wipe every disk, not only the target, like `wipe_all_disks`. Preset by `CAPRF_LEGACY_COMPAT` |
+| `WIPE_DEPTH` | `thorough` | `thorough`: stop LVM, dm-crypt and MD on the disk, clear every partition, the partition table and the disk edges, then `blkdiscard` the disk. `quick`: `sgdisk --zap-all` and `wipefs -af` on the disk only. Preset `quick` by `CAPRF_LEGACY_COMPAT`. See [docs/disk.md](docs/disk.md#wipe-behaviour) |
 | `DISCARD_NVME` | `false` | `blkdiscard` every NVMe disk before a wipe of all disks. Preset by `CAPRF_LEGACY_COMPAT` |
 | `NETWORK_WAIT_MAX_ATTEMPTS` | unset (15) | CAPRF legacy compat only: 20 second network wait rounds before the run fails (0-100000). `0` means no round: the run fails at once, like the legacy provisioner |
 | `BOOTY_ALLOW_REMOVABLE` | `false` | Allow USB/removable media as provisioning target |

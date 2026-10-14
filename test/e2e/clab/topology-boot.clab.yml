@@ -105,10 +105,18 @@ topology:
       kind: linux
       image: booty-test:latest
       binds:
-        - data/vars-deprovision:/deploy/vars:ro
+        - data/vars-deprovision-container:/deploy/vars:ro
         - data/no-mdadm-arrays:/usr/local/bin/mdadm:ro
       env:
         BOOTY_NO_REBOOT: "1"
+      exec:
+        # Without DISK_DEVICE, hard deprovision wipes every disk in
+        # /sys/block, which in this privileged container are the disks of
+        # the CI runner. Give the node its own loop disk.
+        # A high loop index that no other node uses. losetup fails, and the
+        # deprovision then fails, when the device can not be attached.
+        - dd if=/dev/zero of=/tmp/deprovision.img bs=1M count=0 seek=1024
+        - sh -c '[ -b /dev/loop63 ] || mknod /dev/loop63 b 7 63; losetup /dev/loop63 /tmp/deprovision.img'
 
     booty-standby:
       kind: linux

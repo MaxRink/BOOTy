@@ -34,6 +34,9 @@ func newMockCommander() *mockCommander {
 	return &mockCommander{results: make(map[string]mockResult)}
 }
 
+// FakeDisks: this commander changes no real disk (disk.FakeDisks).
+func (m *mockCommander) FakeDisks() {}
+
 func (m *mockCommander) Run(_ context.Context, name string, args ...string) ([]byte, error) {
 	m.calls = append(m.calls, mockCall{name: name, args: args})
 	key := name
@@ -263,6 +266,7 @@ func TestWipeDiskValidationAndCommands(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cmd := newMockCommander()
 			mgr := NewManager(cmd)
+			mgr = mgr.WithQuickWipe(true)
 
 			err := mgr.WipeDisk(context.Background(), tt.device)
 			if tt.wantErr != "" {

@@ -13,6 +13,7 @@ func applyParityVar(cfg *config.MachineConfig, key, value string) bool {
 		"PROVISIONER_FILES_TARGET": &cfg.ProvisionerFilesTarget,
 		"GRUB_CMDLINE_MODE":        &cfg.Provision.GRUBCmdlineMode,
 		"NUM_VFS_MODE":             &cfg.Provision.Firmware.NumVFsMode,
+		"WIPE_DEPTH":               &cfg.Provision.Disk.WipeDepth,
 	}
 	if ptr, ok := strFields[key]; ok {
 		*ptr = value

@@ -171,6 +171,9 @@ func TestMountSeparateBootSkipsPartitionLayout(t *testing.T) {
 // output per partition.
 type funcCommander func(name string, args ...string) ([]byte, error)
 
+// FakeDisks: this commander changes no real disk (disk.FakeDisks).
+func (f funcCommander) FakeDisks() {}
+
 func (f funcCommander) Run(_ context.Context, name string, args ...string) ([]byte, error) {
 	return f(name, args...)
 }

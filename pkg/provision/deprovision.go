@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/telekom/BOOTy/pkg/config"
+	"github.com/telekom/BOOTy/pkg/disk"
 )
 
 // Deprovision runs the deprovisioning pipeline.
@@ -87,11 +88,25 @@ func (o *Orchestrator) decommissionWipe(ctx context.Context) error {
 		// wipe_all_disks discards NVMe disks before the signature wipe.
 		o.disk.DiscardNVMeDisks(ctx)
 	}
-	if err := o.disk.WipeAllDisks(ctx); err != nil {
-		o.log.Warn("decommission: disk wipe failed, continuing", "error", err)
-		return nil
+	if err := o.bestEffortWipeAll(ctx); err != nil {
+		return err
 	}
 	o.log.Info("decommission: disk wipe complete")
+	return nil
+}
+
+// bestEffortWipeAll wipes every disk like the legacy wipe_all_disks: a
+// failed disk wipe is logged and the run goes on. A failed in-use check, or
+// every disk in use, fails the run: then BOOTy can not tell what it wiped.
+func (o *Orchestrator) bestEffortWipeAll(ctx context.Context) error {
+	skipped, err := o.disk.WipeAllDisks(ctx)
+	o.skippedDisks = skipped
+	switch {
+	case errors.Is(err, disk.ErrInUseCheck), errors.Is(err, disk.ErrAllDisksInUse):
+		return err
+	case err != nil:
+		o.log.Warn("disk wipe failed, continuing", "error", err)
+	}
 	return nil
 }
 
@@ -239,5 +254,9 @@ func renameGRUBConfig(cfg, bak string) (bool, error) {
 }
 
 func (o *Orchestrator) reportDeprovisionSuccess(ctx context.Context) error {
-	return o.reportTerminalSuccess(ctx, "deprovisioning", "deprovisioning complete")
+	message := "deprovisioning complete"
+	if len(o.skippedDisks) > 0 {
+		message += "; not wiped, in use: " + strings.Join(o.skippedDisks, ", ")
+	}
+	return o.reportTerminalSuccess(ctx, "deprovisioning", message)
 }

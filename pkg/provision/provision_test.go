@@ -36,6 +36,9 @@ func newMockCommander() *mockCommander {
 	return &mockCommander{results: make(map[string]mockResult)}
 }
 
+// FakeDisks: this commander changes no real disk (disk.FakeDisks).
+func (m *mockCommander) FakeDisks() {}
+
 func (m *mockCommander) Run(_ context.Context, name string, args ...string) ([]byte, error) {
 	m.calls = append(m.calls, mockCall{name: name, args: args})
 	key := name
@@ -606,6 +609,9 @@ type sequentialCommander struct {
 	idx     int
 	calls   []mockCall
 }
+
+// FakeDisks: this commander changes no real disk (disk.FakeDisks).
+func (s *sequentialCommander) FakeDisks() {}
 
 func (s *sequentialCommander) Run(_ context.Context, name string, args ...string) ([]byte, error) {
 	s.calls = append(s.calls, mockCall{name: name, args: args})

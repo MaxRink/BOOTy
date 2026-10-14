@@ -20,6 +20,9 @@ type lsblkCommander struct {
 	fail     map[string]bool
 }
 
+// FakeDisks: this commander changes no real disk (disk.FakeDisks).
+func (c lsblkCommander) FakeDisks() {}
+
 func (c lsblkCommander) Run(_ context.Context, name string, args ...string) ([]byte, error) {
 	if name != "lsblk" {
 		return nil, nil

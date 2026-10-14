@@ -52,8 +52,9 @@ The variable changes these behaviours:
   OS `resolv.conf` (`WRITE_RESOLV_CONF=false`).
 - **Disks.** The target disk is selected like `_select_single_disk`
   (`DISK_SELECTION=lsblk`), and `wipe-disks` wipes every disk like
-  `wipe_all_disks` (`WIPE_ALL_DISKS=true`). `decommission` also discards NVMe
-  disks (`DISCARD_NVME=true`).
+  `wipe_all_disks` (`WIPE_ALL_DISKS=true`), with signature wipes on the disks
+  only (`WIPE_DEPTH=quick`). `decommission` also discards NVMe disks
+  (`DISCARD_NVME=true`).
 - **GRUB and console.** The kernel parameters are written like
   `provision.sh`. BOOTy writes no getty units (`GRUB_CMDLINE_MODE=append`).
 - **Ramdisk hostname and NIC firmware log** are set and written like
@@ -101,6 +102,7 @@ Detail for these rows is in [Disk handling](disk.md).
 | Legacy behaviour | BOOTy default | BOOTy with `CAPRF_LEGACY_COMPAT=true` | Status | Native option (preset value) |
 |------------------|---------------|---------------------------------------|--------|------------------------------|
 | `wipe_all_disks` for provision and hard deprovision: `blkdiscard` on NVMe disks, then signature wipes on every disk | Provision wipes only the target disk; `SECURE_ERASE=true` erases it in hardware. Hard deprovision without `DISK_DEVICE` wipes every disk, without `blkdiscard`. | Every disk: `blkdiscard` on NVMe disks, then `sgdisk --zap-all` and `wipefs -af`. Failures are logged and do not stop the run. `SECURE_ERASE` has no effect. Not for dry-run, explicit RAID configs, or a deprovision with `DISK_DEVICE`. | Merged (#591) | `WIPE_ALL_DISKS=true`, `DISCARD_NVME=true` |
+| `wipe_all_disks` clears only the disk signatures (`wipefs -af`); the partition contents come back with the old partition table | Thorough wipe: stop LVM, dm-crypt and MD on the disk, `wipefs` and zero the first and last MiB of each partition, remove PV labels and MD superblocks, `sgdisk --zap-all`, zero the disk edges, `blkdiscard` | `sgdisk --zap-all` and `wipefs -af` on the disk only | Merged (#667) | `WIPE_DEPTH=quick` |
 | `_select_single_disk`: first disk of at least `MIN_DISK_SIZE_GB` in `lsblk` order, NVMe and virtio first, then SCSI/SATA. Removable media are not skipped. | Without `DISK_DEVICE` or `DISK_SERIAL`: NVMe first, then the largest disk. Removable media are skipped unless `BOOTY_ALLOW_REMOVABLE=true`. | Legacy order. A USB disk can be selected when no NVMe or virtio disk qualifies. | Merged (#590) | `DISK_SELECTION=lsblk` |
 | Grow the last GPT Linux partition | Grow the root partition | Same as default | Planned (#625) | Not needed |
 | Mount a separate `/boot` from the image `fstab` when the root has no `/boot/grub` | Not mounted. `update-grub` writes `grub.cfg` on the root filesystem. | Same as default | Planned (#595) | Not needed |

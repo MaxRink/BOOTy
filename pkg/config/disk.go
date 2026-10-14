@@ -61,6 +61,20 @@ type DiskConfig struct {
 	// Default: nil (false)
 	DiscardNVMe *bool `yaml:"discardNVMe,omitempty" json:"discardNVMe,omitempty"`
 
+	// WipeDepth selects how wipe-disks clears a disk when SecureErase is off.
+	// "thorough": stop the LVM, dm-crypt and MD devices on the disk, remove
+	// LVM PV and MD superblocks, the signatures and the first and last MiB of
+	// every partition, then the partition table with the GPT backup, the
+	// disk signatures and the first and last MiB of the disk, and discard
+	// the disk where supported. Restoring the old partition table then finds
+	// no file system, PV or array.
+	// "quick": sgdisk --zap-all and wipefs on the disk only. Partition
+	// contents come back when the old partition table is restored.
+	// Valid values: "thorough", "quick". Preset by legacyCompat: "quick",
+	// because the legacy wipe_all_disks clears only disk signatures.
+	// Default: "" (thorough)
+	WipeDepth string `yaml:"wipeDepth" json:"wipeDepth"`
+
 	// SecureErase uses ATA Secure Erase or NVMe Format instead of wipefs
 	// for disk sanitization before provisioning.
 	// Default: false (use wipefs)

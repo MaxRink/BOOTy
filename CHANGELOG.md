@@ -34,6 +34,12 @@ behaviour.
 - Netplan `set-name` renames the single NIC that its `match` selects, and a glob
   or MAC `match` selects the NIC of a static address, like `netplan apply`.
   Before, BOOTy ignored `set-name` and used the first NIC (#641).
+- Disk wipes are thorough: before the partition table, BOOTy stops LVM,
+  dm-crypt and MD devices on the disk, removes PV labels and MD superblocks,
+  wipes the signatures and the first and last MiB of every partition, then the
+  disk edges, and runs `blkdiscard` where supported. A restored old partition
+  table finds nothing. `WIPE_DEPTH=quick` (preset by `CAPRF_LEGACY_COMPAT`)
+  keeps the old disk-only wipe (#667)
 - A provisioner netplan file or `frr.conf` that exists but does not parse
   (malformed YAML, invalid values such as an out-of-range ASN) now fails the
   network setup and the run. Before, BOOTy fell back to the vars. Unknown YAML
@@ -133,6 +139,11 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 
 ### Security
 
+- disk: wipes, discards and secure erase do not touch a disk that backs a
+  mounted file system or an active swap area, also through LVM, dm-crypt or
+  MD. A wipe of all disks skips such a disk and goes on (the success status
+  names it); a selected target disk fails the run, and so does a failed check
+  (#667)
 - qcow2 images with a backing file or an external data file are rejected before
   `qemu-img convert` (#609)
 - CAPRF transport errors carry only scheme, host, path and a fixed cause (#624)

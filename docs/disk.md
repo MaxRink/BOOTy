@@ -31,9 +31,10 @@ See [docs/configuration.md](configuration.md) for each variable:
 
 - Target disk: `DISK_DEVICE`, `DISK_SERIAL`, `DISK_SERIAL_NUMBER`,
   `DISK_SELECTION`, `MIN_DISK_SIZE_GB`, `BOOTY_ALLOW_REMOVABLE`
-- Wipe: `MODE`, `SECURE_ERASE`, `WIPE_ALL_DISKS`, `DISCARD_NVME`, `DRY_RUN`,
-  `CAPRF_LEGACY_COMPAT` (presets `DISK_SELECTION=lsblk`,
-  `WIPE_ALL_DISKS=true` and `DISCARD_NVME=true`)
+- Wipe: `MODE`, `SECURE_ERASE`, `WIPE_DEPTH`, `WIPE_ALL_DISKS`,
+  `DISCARD_NVME`, `DRY_RUN`, `CAPRF_LEGACY_COMPAT` (presets
+  `DISK_SELECTION=lsblk`, `WIPE_DEPTH=quick`, `WIPE_ALL_DISKS=true` and
+  `DISCARD_NVME=true`)
 - Layout: `PARTITION_LAYOUT`, `IMAGE_MODE`, `IMAGE_SOURCE_ROOT_LABEL`,
   `IMAGE_SOURCE_ROOT_PARTITION`
 - Root partition: `ROOT_PARTITION_LABEL`, `ROOT_PARTITION_NUMBER`
@@ -162,20 +163,91 @@ The lookup fails when:
 
 ## Wipe Behaviour
 
-A quick wipe runs `sgdisk --zap-all` and then `wipefs -af` on a device. It
-removes partition tables and filesystem signatures. It does not overwrite data.
+`WIPE_DEPTH` selects what a wipe of a disk does. A wipe does not write over
+all data. `quick` leaves the data in place. `thorough` ends with `blkdiscard`
+of the whole disk: on most SSDs and NVMe disks the discarded blocks then read
+as zeros or are no longer readable, so this works like an erase of the
+complete disk, but the drive does not guarantee it. For a guaranteed erase
+use `SECURE_ERASE`.
+
+- `thorough` (default): BOOTy lists the partitions and the devices on top of
+  the disk with `lsblk`. It stops the LVM logical volumes
+  (`lvm lvchange -an`), dm-crypt mappings (`cryptsetup close`) and MD arrays
+  (`mdadm --stop`) on the disk, the top ones first. For each partition it
+  removes an LVM PV label (`lvm pvremove -ff -y`) or an MD superblock
+  (`mdadm --zero-superblock`), runs `wipefs -af` and writes zeros to the first
+  and the last MiB. Then it runs `sgdisk --zap-all` (MBR, GPT and the backup
+  GPT at the end of the disk) and `wipefs -af` on the disk, writes zeros to the
+  first and the last MiB of the disk and runs `blkdiscard` on the disk. A
+  device without discard support only logs this. When the old partition table
+  is written back, `blkid` and `wipefs` find no file system, PV, array or LUKS
+  header in the partitions. A holder that cannot be stopped and a failed
+  `wipefs` on the disk fail the wipe. This includes an active LV, dm-crypt
+  mapping or MD array when `lvm`, `cryptsetup` or `mdadm` is not in the
+  ramdisk (for example the slim flavor): the wipe fails. The other failed
+  steps are logged, at INFO when the tool is missing.
+  The wipe also runs before every image write of a provision (`wipe-disks`),
+  so each provision discards the whole target disk. On a large thin
+  provisioned LUN or a slow device the discard can take minutes; set
+  `WIPE_DEPTH=quick` when that matters.
+  Stopping a holder deactivates the whole LV or array: an LVM VG or MD array
+  that spans the wiped disk and a disk that is not wiped stops, and the
+  members on the other disk keep their labels, so the VG or array is
+  incomplete afterwards. BOOTy removes labels only on the wiped disk.
+- `quick` (preset by `CAPRF_LEGACY_COMPAT=true`): `sgdisk --zap-all` and then
+  `wipefs -af` on the disk only. The partition contents stay: when the old
+  partition table is written back, the LVM PVs and VGs, MD members and file
+  systems (with their UUIDs) are found again. The legacy `wipe_all_disks` did
+  less (`wipefs -af` on each disk).
+
+BOOTy never wipes, discards or secure-erases a disk that is in use. Before
+each of these operations it reads `/proc/self/mountinfo` and `/proc/swaps`.
+A device counts as in use when it backs a mounted file system or an active
+swap area, directly or through a device on top (LVM, dm-crypt and MD, through
+`/sys/class/block/<dev>/slaves`); a partition in use makes its disk in use.
+Such a disk is not touched:
+
+- A selected disk (`DISK_DEVICE`, `DISK_SERIAL_NUMBER`, the detected install
+  target, the deprovision disk) fails the wipe with `refusing to wipe <dev>:
+  it backs ...`. With `WIPE_ALL_DISKS=true`, provisioning checks the selected
+  target disk first and fails the same way.
+- A wipe of all disks (hard deprovision without a disk override,
+  `decommission`, `WIPE_ALL_DISKS=true`, secure erase of all disks) skips the
+  disk with a WARN line naming it and the mount, and wipes the other disks.
+  The deprovision success status names the skipped disks
+  (`deprovisioning complete; not wiped, in use: /dev/sdX`). When every disk
+  is in use, nothing is wiped and the run fails.
+
+If `/proc/self/mountinfo` cannot be read, or sysfs (`/sys/dev/block`,
+`/sys/class/block`, `/sys/fs/btrfs/<uuid>/devices`) is missing or does not
+resolve, BOOTy refuses the wipe and the run fails. This also holds for
+`decommission` and `WIPE_ALL_DISKS=true`, which otherwise log a failed disk
+wipe and go on, like the legacy `wipe_all_disks`.
+
+The boot medium is not protected: the ramdisk does not mount the ISO or USB
+stick that it booted from, so a wipe of all disks wipes it like any other
+disk. The mount source
+counts too, for file systems that report an anonymous device number: btrfs
+(with all devices of a multi-device btrfs) and bcachefs (with every device of
+a `/dev/a:/dev/b` source). ZFS names a pool and dataset, not a device, so a
+disk of a mounted ZFS pool is not found. In the
+ramdisk nothing is mounted from a disk, so this changes nothing there. It
+protects a host that runs BOOTy in a privileged container, where
+`/sys/block` lists the host disks. The check is limited to the mount
+namespace of BOOTy: a disk that only another container or the host mounts is
+not found, so do not run a deprovision in a container that sees host disks.
 
 "All disks" means every entry in `/sys/block` except the virtual devices listed
 in [Automatic Detection](#automatic-detection). This includes removable media.
 
 | Mode | Wipe behaviour |
 | --- | --- |
-| `provision` | Quick wipe of the target disk. With `SECURE_ERASE=true`, a hardware erase of the target disk. |
-| `provision` with `WIPE_ALL_DISKS=true` | All disks: with `DISCARD_NVME=true`, `blkdiscard` on each NVMe disk, then a quick wipe of each disk. BOOTy logs failures and continues. `SECURE_ERASE` has no effect. `DISK_DEVICE` does not limit the wipe. |
-| `deprovision` (alias `hard`) | `DISK_DEVICE` set: wipe only that disk. `DISK_DEVICE` empty: quick wipe of all disks. A failed disk fails the run. |
-| `deprovision` with `WIPE_ALL_DISKS=true` | `DISK_DEVICE` empty: the legacy wipe of all disks (`blkdiscard` on NVMe with `DISCARD_NVME=true`, quick wipe, failures logged). `DISK_DEVICE` set: wipe only that disk. |
+| `provision` | Wipe of the target disk. With `SECURE_ERASE=true`, a hardware erase of the target disk. |
+| `provision` with `WIPE_ALL_DISKS=true` | All disks: with `DISCARD_NVME=true`, `blkdiscard` on each NVMe disk, then a wipe of each disk. BOOTy logs failures and continues. `SECURE_ERASE` has no effect. `DISK_DEVICE` does not limit the wipe. |
+| `deprovision` (alias `hard`) | `DISK_DEVICE` set: wipe only that disk. `DISK_DEVICE` empty: wipe of all disks. A failed disk fails the run. |
+| `deprovision` with `WIPE_ALL_DISKS=true` | `DISK_DEVICE` empty: the legacy wipe of all disks (`blkdiscard` on NVMe with `DISCARD_NVME=true`, wipe, failures logged). `DISK_DEVICE` set: wipe only that disk. |
 | `soft-deprovision` (alias `soft`) | No wipe. BOOTy renames `grub.cfg` to `grub.cfg.bak` in `/boot/grub` (Debian) and `/boot/grub2` (RHEL) on the root partition. A `grub.cfg.bak` that already exists counts as done, so a rerun succeeds. If neither directory has a `grub.cfg` or a `grub.cfg.bak`, or the root cannot be unmounted after the rename, the run fails and BOOTy reports the error to `ERROR_URL`. |
-| `decommission` | Quick wipe of all disks, best effort. BOOTy logs failures and continues. With `DISCARD_NVME=true`, `blkdiscard` runs on each NVMe disk first. `DISK_DEVICE` and `SECURE_ERASE` have no effect. Then BOOTy removes all EFI boot entries. |
+| `decommission` | Wipe of all disks, best effort. BOOTy logs failures and continues. With `DISCARD_NVME=true`, `blkdiscard` runs on each NVMe disk first. `DISK_DEVICE` and `SECURE_ERASE` have no effect. Then BOOTy removes all EFI boot entries. |
 | `dry-run` (or `DRY_RUN=true`) | No wipe. The dry-run checks do not write to disk. The disk check uses `DISK_DEVICE` or automatic detection and ignores `DISK_SERIAL`. |
 
 Exceptions in the `wipe-disks` step:
@@ -184,12 +256,12 @@ Exceptions in the `wipe-disks` step:
   only the filesystem signatures of the target root slot before it streams the
   image. See [docs/ab-partitioning.md](ab-partitioning.md).
 - A RAID config disables `WIPE_ALL_DISKS`. BOOTy wipes the
-  RAID member disks in `setup-raid` and then quick-wipes the array device.
+  RAID member disks in `setup-raid` and then wipes the array device.
 - In deprovision modes, `DISK_DEVICE` must be an absolute `/dev/` path to a
   block device. `soft-deprovision` uses `DISK_DEVICE` or automatic detection to
   find the disk. It ignores `DISK_SERIAL`.
 
-`IMAGE_MODE=partition` quick-wipes the target disk again before it writes the
+`IMAGE_MODE=partition` wipes the target disk again before it writes the
 partitions.
 
 ### Secure Erase
@@ -242,7 +314,7 @@ The `setup-raid` step:
 1. Selects the target device. If `DISK_DEVICE` is set, it must name one of the
    array devices. With one array and no `DISK_DEVICE`, the target is
    `/dev/<name>`. With more than one array, `DISK_DEVICE` is required.
-2. Wipes each member disk (quick wipe, or hardware erase with
+2. Wipes each member disk (`WIPE_DEPTH` wipe, or hardware erase with
    `provision.disk.secureErase`).
 3. Creates each array with
    `mdadm --create /dev/<name> --level <level> --raid-devices <n> --run --force --metadata 1.2 <devices>`.

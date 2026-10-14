@@ -242,7 +242,7 @@ func TestWipeAllDisksE2E(t *testing.T) {
 	cmd := newMockCommander()
 	cmd.set("wipefs", []byte(""), nil)
 	cmd.set("sgdisk", []byte(""), nil)
-	if err := disk.NewManager(cmd).WipeAllDisks(context.Background()); err != nil {
+	if _, err := disk.NewManager(cmd).WipeAllDisks(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	var called bool

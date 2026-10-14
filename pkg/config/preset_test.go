@@ -52,14 +52,15 @@ func TestDiskOptionsAndLegacyPreset(t *testing.T) {
 		wantSelection string
 		wantWipeAll   bool
 		wantDiscard   bool
+		wantDepth     string
 	}{
 		{name: "defaults"},
-		{name: "native", disk: DiskConfig{Selection: "LSBLK", WipeAllDisks: new(true), DiscardNVMe: new(true)}, wantSelection: "lsblk", wantWipeAll: true, wantDiscard: true},
-		{name: "preset", legacy: true, wantSelection: "lsblk", wantWipeAll: true, wantDiscard: true},
+		{name: "native", disk: DiskConfig{Selection: "LSBLK", WipeAllDisks: new(true), DiscardNVMe: new(true), WipeDepth: "Quick"}, wantSelection: "lsblk", wantWipeAll: true, wantDiscard: true, wantDepth: "quick"},
+		{name: "preset", legacy: true, wantSelection: "lsblk", wantWipeAll: true, wantDiscard: true, wantDepth: "quick"},
 		{
 			name: "explicit options win over preset", legacy: true,
-			disk:          DiskConfig{Selection: "prefer-nvme", WipeAllDisks: new(false), DiscardNVMe: new(false)},
-			wantSelection: "prefer-nvme",
+			disk:          DiskConfig{Selection: "prefer-nvme", WipeAllDisks: new(false), DiscardNVMe: new(false), WipeDepth: "thorough"},
+			wantSelection: "prefer-nvme", wantDepth: "thorough",
 		},
 	}
 	for _, tt := range tests {
@@ -69,6 +70,9 @@ func TestDiskOptionsAndLegacyPreset(t *testing.T) {
 				t.Fatalf("Validate() = %v", err)
 			}
 			d := cfg.Provision.Disk
+			if d.WipeDepth != tt.wantDepth {
+				t.Fatalf("wipeDepth = %q, want %q", d.WipeDepth, tt.wantDepth)
+			}
 			if d.Selection != tt.wantSelection || BoolOr(d.WipeAllDisks, false) != tt.wantWipeAll || BoolOr(d.DiscardNVMe, false) != tt.wantDiscard {
 				t.Fatalf("disk = %q %v %v, want %q %v %v", d.Selection, BoolOr(d.WipeAllDisks, false), BoolOr(d.DiscardNVMe, false),
 					tt.wantSelection, tt.wantWipeAll, tt.wantDiscard)
@@ -77,6 +81,9 @@ func TestDiskOptionsAndLegacyPreset(t *testing.T) {
 	}
 	if err := (&Config{Provision: ProvisionConfig{Disk: DiskConfig{Selection: "largest"}}}).Validate(); err == nil {
 		t.Fatal("Validate() accepted provision.disk.selection=largest")
+	}
+	if err := (&Config{Provision: ProvisionConfig{Disk: DiskConfig{WipeDepth: "deep"}}}).Validate(); err == nil {
+		t.Fatal("Validate() accepted provision.disk.wipeDepth=deep")
 	}
 }
 
