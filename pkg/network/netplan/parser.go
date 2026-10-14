@@ -217,6 +217,10 @@ func extractEthernets(np *Config, cfg *network.Config) (dhcpCount int, dnsList [
 			dnsList = append(dnsList, eth.Nameservers.Addresses...)
 		}
 		applyEthernetMatch(name, &eth, cfg)
+		if eth.Match == nil {
+			// Without a match block the ethernet ID is the interface name.
+			cfg.InterfaceNames = append(cfg.InterfaceNames, name)
+		}
 		for _, r := range eth.Routes {
 			if r.To == "default" && r.Via != "" && cfg.StaticGateway == "" {
 				cfg.StaticGateway = r.Via
@@ -377,6 +381,7 @@ func applyFRRParams(frr *FRRParams, cfg *network.Config) {
 			cfg.EVPNL2Enabled = true
 		}
 	}
+	cfg.InterfaceNames = append(cfg.InterfaceNames, frr.UnnumberedPeers...)
 	hasUnnumbered := len(frr.UnnumberedPeers) > 0
 	hasNumbered := len(frr.NumberedPeers) > 0
 

@@ -182,6 +182,12 @@ jobs:
             test_regex: "^TestDiskLinksRootUUIDSurvivesDiskOrderQEMU$"
             privileged: true
             setup: ""
+          - scenario: predictable-nic-names
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestPredictableNICNamesQEMU$"
+            privileged: true
+            setup: ""
           - scenario: bootloader-smoke
             qemu_extra: ""
             test_tag: e2e

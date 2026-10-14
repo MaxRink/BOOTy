@@ -322,6 +322,7 @@ root is mounted.
 | `FAILURE_ACTION` | `reboot` | `wait` reports a failed run and keeps the ramdisk running. Default of `RESCUE_MODE`. Preset by `CAPRF_LEGACY_COMPAT` |
 | `MIN_DISK_SIZE_GB` | `0` | Minimum disk size filter (0 = no minimum) |
 | `DISK_LINKS` | `true` | Create the udev `/dev/disk/by-uuid`, `by-partuuid`, `by-label` and `by-partlabel` links before the target chroot, so `update-grub` writes `root=UUID=` |
+| `PREDICTABLE_NIC_NAMES` | `true` | When the netplan files, `frr.conf` or vars name a NIC that does not exist (for example `enp1s0` while the ramdisk calls it `eth0`), rename the NIC that has this systemd predictable name (naming scheme v255) |
 | `DISK_SELECTION` | `prefer-nvme` | `lsblk` selects the first large enough disk in legacy `lsblk` order. Preset by `CAPRF_LEGACY_COMPAT` |
 | `WIPE_ALL_DISKS` | `false` | Wipe every disk, not only the target, like `wipe_all_disks`. Preset by `CAPRF_LEGACY_COMPAT` |
 | `WIPE_DEPTH` | `thorough` | `thorough`: stop LVM, dm-crypt and MD on the disk, clear every partition, the partition table and the disk edges, then `blkdiscard` the disk. `quick`: `sgdisk --zap-all` and `wipefs -af` on the disk only. Preset `quick` by `CAPRF_LEGACY_COMPAT`. See [docs/disk.md](docs/disk.md#wipe-behaviour) |

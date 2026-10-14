@@ -34,6 +34,16 @@ type NetworkConfig struct {
 	// at once, like ${NETWORK_WAIT_MAX_ATTEMPTS:-15} with the value 0.
 	WaitMaxAttempts *int `yaml:"waitMaxAttempts,omitempty" json:"waitMaxAttempts,omitempty"`
 
+	// PredictableNames renames ramdisk links to their predictable names
+	// (systemd net_id, naming scheme v255: eno<index>, ens<slot>,
+	// enp<bus>s<slot>, with f<function> and n<phys_port_name> or d<dev_port>)
+	// when the netplan, frr.conf or vars name an interface that does not
+	// exist, so a config written for the installed OS (enp1s0, ens1f0np0)
+	// finds its links. Configs that only name existing links (eth0) see no
+	// rename. false never renames.
+	// Default: nil (true)
+	PredictableNames *bool `yaml:"predictableNames,omitempty" json:"predictableNames,omitempty"`
+
 	// Sub-sections grouped by network concern.
 	BGP    BGPConfig    `yaml:"bgp"    json:"bgp"`
 	EVPN   EVPNConfig   `yaml:"evpn"   json:"evpn"`

@@ -76,7 +76,7 @@ func undoRenames(done [][2]string, err error) error {
 		if rerr := renameLink(to, from); rerr != nil {
 			errs = append(errs, fmt.Errorf("undo rename %s to %s: %w", from, to, rerr))
 		} else {
-			slog.Info("undid netplan set-name after a failed rename", "from", to, "to", from)
+			slog.Info("undid NIC rename after a failed rename", "from", to, "to", from)
 		}
 	}
 	return errors.Join(errs...)

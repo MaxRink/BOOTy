@@ -69,6 +69,11 @@ type Config struct {
 	// set-name.
 	LinkRenames []LinkMatch
 
+	// InterfaceNames are the interface names that the netplan files
+	// (ethernet IDs without a match block) and frr.conf ("neighbor X
+	// interface") name. ApplyPredictableNames renames NICs to them.
+	InterfaceNames []string
+
 	// LACP bonding fields.
 	BondInterfaces string // Comma-separated NICs to bond (e.g. "eth0,eth1")
 	BondMode       string // Bonding mode (default: "802.3ad" for LACP)

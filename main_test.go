@@ -1288,6 +1288,52 @@ func TestLoadModulesWarnsWhenAModuleNeverLoads(t *testing.T) {
 	}
 }
 
+// A bm4x-style netplan and frr.conf name the NICs only by their predictable
+// names; all of them must reach the predictable-name rename.
+func TestPredictableNamesFromNetplanAndFRR(t *testing.T) {
+	dir := t.TempDir()
+	netplanDir := filepath.Join(dir, "netplan")
+	if err := os.MkdirAll(netplanDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	netplanYAML := `network:
+  version: 2
+  ethernets:
+    enp1s0:
+      mtu: 9000
+      link-local: [ipv6]
+    enp2s0:
+      mtu: 9000
+      link-local: [ipv6]
+`
+	frrConf := `router bgp 4200000101
+ bgp router-id 10.0.0.11
+ neighbor fabric peer-group
+ neighbor fabric remote-as external
+ neighbor enp1s0 interface peer-group fabric
+ neighbor enp2s0 interface peer-group fabric
+`
+	if err := os.WriteFile(filepath.Join(netplanDir, "50-bm4x.yaml"), []byte(netplanYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	frrPath := filepath.Join(dir, "frr.conf")
+	if err := os.WriteFile(frrPath, []byte(frrConf), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	npCfg, err := detectNetplanConfig(netplanDir, frrPath)
+	if err != nil || npCfg == nil {
+		t.Fatalf("detectNetplanConfig() = %v, %v", npCfg, err)
+	}
+	netCfg := &network.Config{}
+	mergeNetplanConfig(netCfg, npCfg)
+	got := network.ConfiguredInterfaceNames(netCfg)
+	for _, want := range []string{"enp1s0", "enp2s0"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("configured names %v miss %s", got, want)
+		}
+	}
+}
+
 func TestDetectNetplanConfigRejectsMalformedFiles(t *testing.T) {
 	writeFile := func(t *testing.T, path, content string) {
 		t.Helper()
