@@ -6,6 +6,7 @@ import (
 	"crypto/sha512"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
@@ -36,10 +37,17 @@ func RefreshHTTPClients() {
 
 // StreamOpts are optional parameters for Stream.
 type StreamOpts struct {
-	// Checksum is the expected hex-encoded checksum of the decompressed data.
+	// Checksum is the expected hex-encoded checksum. ChecksumScope selects
+	// the bytes it covers.
 	Checksum string
 	// ChecksumType is the hash algorithm: "sha256" or "sha512".
 	ChecksumType string
+	// ChecksumScope is ChecksumScopeDownload (default) or
+	// ChecksumScopeDecompressed.
+	ChecksumScope string
+
+	// download is set by withDownloadChecksum.
+	download *downloadChecksum
 }
 
 // Stream downloads an image from a URL (http/https or oci://) and writes it
@@ -53,8 +61,12 @@ func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
 	if len(opts) > 0 {
 		opt = opts[0]
 	}
+	opt, err := withDownloadChecksum(opt)
+	if err != nil {
+		return err
+	}
 
-	decompressed, cleanup, format, err := openAndDecompress(ctx, url)
+	decompressed, cleanup, format, err := openAndDecompress(ctx, url, opt.download)
 	if err != nil {
 		return err
 	}
@@ -84,6 +96,12 @@ func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
 	buf := make([]byte, imageCopyBufferSize)
 	written, err := io.CopyBuffer(out, io.TeeReader(src, counter), buf)
 	stopProgress()
+	if errors.Is(err, ErrChecksumMismatch) {
+		slog.Error("checksum mismatch: wiping partition table to prevent booting corrupt image",
+			"device", device, "error", err)
+		wipeLeadingSectors(device)
+		return err //nolint:wrapcheck // ErrChecksumMismatch from verifyAtEOF, already descriptive
+	}
 	if err != nil {
 		slog.Error("image write failed: wiping partial image", "device", device, "error", err)
 		wipeLeadingSectors(device)
@@ -154,13 +172,15 @@ var convertQCOW2Hook = func(_ context.Context, _ io.Reader, _, _ string, _ Strea
 // the decompressed reader along with a cleanup function and detected format.
 // For qcow2 images, the returned reader is the original stream with the
 // detection bytes preserved so callers can continue consuming the same source.
-func openAndDecompress(ctx context.Context, url string) (io.Reader, func(), Format, error) {
+// A non-nil download hashes the downloaded bytes and is verified before the
+// returned reader reports EOF.
+func openAndDecompress(ctx context.Context, url string, download *downloadChecksum) (io.Reader, func(), Format, error) {
 	body, err := openSource(ctx, url)
 	if err != nil {
 		return nil, nil, FormatRaw, err
 	}
 
-	format, reader, err := DetectFormat(body)
+	format, reader, err := DetectFormat(download.source(body))
 	if err != nil {
 		_ = body.Close()
 		return nil, nil, FormatRaw, fmt.Errorf("detect format: %w", err)
@@ -168,13 +188,9 @@ func openAndDecompress(ctx context.Context, url string) (io.Reader, func(), Form
 	slog.Info("detected image format", "format", format)
 
 	// qcow2 cannot be decompressed inline — return early so caller can route.
-	if format == FormatQCOW2 {
+	if format == FormatQCOW2 || format == FormatRaw {
 		cleanup := func() { _ = body.Close() }
-		return reader, cleanup, FormatQCOW2, nil
-	}
-	if format == FormatRaw {
-		cleanup := func() { _ = body.Close() }
-		return reader, cleanup, FormatRaw, nil
+		return download.verifyAtEOF(reader), cleanup, format, nil
 	}
 
 	decompressed, closer, err := Decompressor(reader, format)
@@ -196,10 +212,7 @@ func openAndDecompress(ctx context.Context, url string) (io.Reader, func(), Form
 		return nil, nil, format, fmt.Errorf("detect decompressed format: %w", err)
 	}
 	slog.Info("detected decompressed image format", "outer_format", format, "payload_format", effectiveFormat)
-	if effectiveFormat == FormatQCOW2 {
-		return effectiveReader, cleanup, FormatQCOW2, nil
-	}
-	return effectiveReader, cleanup, effectiveFormat, nil
+	return download.verifyAtEOF(effectiveReader), cleanup, effectiveFormat, nil
 }
 
 // wrapChecksum wraps the reader with a checksum hash if requested.
@@ -218,8 +231,25 @@ func wrapChecksum(r io.Reader, opt StreamOpts) (io.Reader, hash.Hash, error) {
 	return io.TeeReader(r, h), h, nil
 }
 
+// ErrChecksumMismatch is the error of an IMAGE_CHECKSUM that does not match.
+// Its text "checksum mismatch" also marks the error as permanent.
+var ErrChecksumMismatch = errors.New("checksum mismatch")
+
+// checksumScopeHint names the bytes that a checksum covered.
+func checksumScopeHint(opt StreamOpts) string {
+	if opt.ChecksumScope == ChecksumScopeDownload {
+		return "IMAGE_CHECKSUM_SCOPE=download: the file as downloaded; " +
+			"set IMAGE_CHECKSUM_SCOPE=decompressed for a digest of the decompressed image"
+	}
+	return "IMAGE_CHECKSUM_SCOPE=decompressed: the decompressed image"
+}
+
 // verifyChecksum validates the hash digest against the expected checksum.
+// It verifies a download-scope checksum of opt first.
 func verifyChecksum(h hash.Hash, opt StreamOpts) error {
+	if err := opt.download.verify(); err != nil {
+		return err
+	}
 	if h == nil {
 		return nil
 	}
@@ -229,7 +259,7 @@ func verifyChecksum(h hash.Hash, opt StreamOpts) error {
 	}
 	got := hex.EncodeToString(h.Sum(nil))
 	if subtle.ConstantTimeCompare([]byte(got), []byte(opt.Checksum)) != 1 {
-		return fmt.Errorf("checksum mismatch: computed=%s want=%s",
+		return fmt.Errorf("%w (%s): computed=%s want=%s", ErrChecksumMismatch, checksumScopeHint(opt),
 			got[:min(8, len(got))], opt.Checksum[:min(8, len(opt.Checksum))])
 	}
 	slog.Info("checksum verified", "type", opt.ChecksumType)

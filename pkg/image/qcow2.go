@@ -36,13 +36,22 @@ func init() {
 // The flow is: download → tmpfs → qemu-img convert -f qcow2 -O raw → dd to device.
 // The ramdisk is cleaned up after conversion.
 func ConvertQCOW2(ctx context.Context, url, device string, opts ...StreamOpts) error {
+	var opt StreamOpts
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+	opt, err := withDownloadChecksum(opt)
+	if err != nil {
+		return err
+	}
 	body, err := openSource(ctx, url)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = body.Close() }()
 
-	return ConvertQCOW2FromReader(ctx, body, url, device, opts...)
+	src := opt.download.verifyAtEOF(opt.download.source(body))
+	return ConvertQCOW2FromReader(ctx, src, url, device, opt)
 }
 
 // ConvertQCOW2FromReader writes an already-open qcow2 stream to a tmpfs
@@ -105,15 +114,16 @@ func cleanupRamdisk() {
 	_ = os.RemoveAll(ramdiskPath)
 }
 
-// downloadToFile downloads a URL to a local file path.
-func downloadToFile(ctx context.Context, url, dest string) error {
+// downloadToFile downloads a URL to a local file path. A non-nil download
+// checksum is verified before the download counts as complete.
+func downloadToFile(ctx context.Context, url, dest string, download *downloadChecksum) error {
 	body, err := openSource(ctx, url)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = body.Close() }()
 
-	return writeImageToFile(body, dest)
+	return writeImageToFile(download.verifyAtEOF(download.source(body)), dest)
 }
 
 func writeImageToFile(src io.Reader, dest string) error {

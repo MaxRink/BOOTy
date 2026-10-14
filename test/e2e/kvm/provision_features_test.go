@@ -156,13 +156,12 @@ func TestImageChecksumPassQEMU(t *testing.T) {
 	requireProvisionTools(t)
 
 	rawImage := createTestDiskImage(t, 512)
-
-	// Compute SHA256 of the raw uncompressed image.
-	checksum := computeSHA256(t, rawImage)
-	t.Logf("raw image SHA256: %s", checksum)
-
 	imageGz := compressGzip(t, rawImage)
 	baseURL := startImageServer(t, imageGz)
+
+	// IMAGE_CHECKSUM covers the file as downloaded (IMAGE_CHECKSUM_SCOPE=download).
+	checksum := computeSHA256(t, imageGz)
+	t.Logf("image.gz SHA256: %s", checksum)
 
 	targetDisk := filepath.Join(t.TempDir(), "checksum-pass.qcow2")
 	run(t, "create target qcow2", "qemu-img", "create", "-f", "qcow2", targetDisk, "2G")

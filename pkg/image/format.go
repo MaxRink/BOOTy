@@ -123,7 +123,10 @@ func Decompressor(r io.Reader, f Format) (io.Reader, io.Closer, error) {
 		return gz, gz, nil
 
 	case FormatZstd:
-		zr, err := zstd.NewReader(r)
+		// One goroutine: the default decoder reads ahead from r in the
+		// background, which races with the drain of a download-scope
+		// IMAGE_CHECKSUM after the last frame.
+		zr, err := zstd.NewReader(r, zstd.WithDecoderConcurrency(1))
 		if err != nil {
 			return nil, nil, fmt.Errorf("zstd reader: %w", err)
 		}

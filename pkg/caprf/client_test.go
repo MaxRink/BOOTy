@@ -2473,6 +2473,19 @@ func TestParseVarsLegacyCompat(t *testing.T) {
 	}
 }
 
+func TestParseVarsImageChecksumScope(t *testing.T) {
+	cfg, err := ParseVars(strings.NewReader("IMAGE_CHECKSUM_SCOPE=decompressed\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provision.Image.ChecksumScope != "decompressed" {
+		t.Fatalf("ChecksumScope = %q, want decompressed", cfg.Provision.Image.ChecksumScope)
+	}
+	if _, err := ParseVars(strings.NewReader("IMAGE_CHECKSUM_SCOPE=payload\n")); err == nil {
+		t.Fatal("ParseVars accepted IMAGE_CHECKSUM_SCOPE=payload")
+	}
+}
+
 func TestParseVarsDiskOptions(t *testing.T) {
 	cfg, err := ParseVars(strings.NewReader("DISK_SELECTION=lsblk\nWIPE_ALL_DISKS=true\nDISCARD_NVME=yes\n"))
 	if err != nil {

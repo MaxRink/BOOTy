@@ -381,8 +381,9 @@ root is mounted.
 | `SECUREBOOT_PINNED_DIGESTS` | — | JSON map of component pins keyed by `shim`, `grub`, and `kernel`; individual digest vars override only their component |
 | `MOK_CERT_PATH` | — | *(Phase 2)* Path to DER-encoded MOK certificate for custom kernel signing |
 | `MOK_PASSWORD` | — | *(Phase 2)* One-time password for MokManager confirmation |
-| `IMAGE_CHECKSUM` | — | Expected hex digest of the raw disk image |
+| `IMAGE_CHECKSUM` | — | Expected hex digest of the image file as downloaded (see `IMAGE_CHECKSUM_SCOPE`) |
 | `IMAGE_CHECKSUM_TYPE` | — | Checksum algorithm: `sha256` or `sha512` |
+| `IMAGE_CHECKSUM_SCOPE` | `download` | `download` (file as downloaded) or `decompressed` (decompressed image) |
 | `IMAGE_MODE` | `whole-disk` | Image write mode: `whole-disk`, `partition`, or `ab`; with a declarative partition layout, `whole-disk` streams the selected root filesystem into the declared root partition |
 | `IMAGE_SOURCE_ROOT_LABEL` | — | Source-image GPT partition label to stream into a declarative partition layout root |
 | `IMAGE_SOURCE_ROOT_PARTITION` | — | 1-based source-image partition number for declarative partition layout root streaming |
@@ -684,8 +685,10 @@ or provide `IMAGE_CHECKSUM`; mutable OCI tags without a checksum are rejected
 before destructive storage steps.
 
 ```bash
-# Hex digest of the decompressed image. A "sha256:" or "sha512:" prefix is
-# accepted. Without IMAGE_CHECKSUM_TYPE, BOOTy infers the type from the length.
+# Hex digest of the image file as downloaded (for example the content of
+# ubuntu.img.lz4.sha256). A "sha256:" or "sha512:" prefix is accepted.
+# Without IMAGE_CHECKSUM_TYPE, BOOTy infers the type from the length.
+# IMAGE_CHECKSUM_SCOPE=decompressed checks the decompressed image instead.
 export IMAGE_CHECKSUM="<64 hex digits>"
 export IMAGE_CHECKSUM_TYPE="sha256"
 
@@ -695,8 +698,10 @@ export IMAGE_SIGNATURE_URL="https://images.example.com/ubuntu.img.gz.sig"
 export IMAGE_GPG_PUBKEY="/deploy/signing-key.gpg"
 ```
 
-BOOTy hashes the decompressed bytes while it writes them and compares the
-digest after streaming. GPG verification
+BOOTy hashes the downloaded bytes (or, with `IMAGE_CHECKSUM_SCOPE=decompressed`,
+the decompressed bytes) while it writes them and compares the digest at the end
+of the download, before the image counts as written. A mismatch wipes the start
+of the target disk. GPG verification
 downloads the detached signature and verifies it against the provided public key
 before destructive storage setup starts. When `IMAGE_SIGNATURE_URL` is set,
 `IMAGE_CHECKSUM` is required so the bytes written during the later streaming step

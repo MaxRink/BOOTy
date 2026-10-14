@@ -231,6 +231,8 @@ func runMatrixCell(t *testing.T, useOCI, useRAID bool) {
 	if err := image.Stream(ctx, imageURL, target, image.StreamOpts{
 		Checksum:     cfg.Provision.Image.Checksum,
 		ChecksumType: cfg.Provision.Image.ChecksumType,
+		// The matrix checks the digest of the decompressed image.
+		ChecksumScope: image.ChecksumScopeDecompressed,
 	}); err != nil {
 		t.Fatalf("image.Stream: %v", err)
 	}
@@ -401,8 +403,9 @@ func TestFullProvisioningMatrixImageDataIntegrity(t *testing.T) {
 				}))
 				t.Cleanup(srv.Close)
 				return image.Stream(context.Background(), srv.URL+"/img", dst, image.StreamOpts{
-					Checksum:     checksum,
-					ChecksumType: "sha256",
+					Checksum:      checksum,
+					ChecksumType:  "sha256",
+					ChecksumScope: image.ChecksumScopeDecompressed,
 				})
 			},
 		},
@@ -416,8 +419,9 @@ func TestFullProvisioningMatrixImageDataIntegrity(t *testing.T) {
 				}))
 				t.Cleanup(srv.Close)
 				return image.Stream(context.Background(), srv.URL+"/img.gz", dst, image.StreamOpts{
-					Checksum:     checksum,
-					ChecksumType: "sha256",
+					Checksum:      checksum,
+					ChecksumType:  "sha256",
+					ChecksumScope: image.ChecksumScopeDecompressed,
 				})
 			},
 		},
@@ -430,8 +434,9 @@ func TestFullProvisioningMatrixImageDataIntegrity(t *testing.T) {
 				ref := fmt.Sprintf("%s/booty/integrity:raw", host)
 				pushTestImage(t, srv.URL, ref, rawImage)
 				return image.Stream(context.Background(), "oci://"+ref, dst, image.StreamOpts{
-					Checksum:     checksum,
-					ChecksumType: "sha256",
+					Checksum:      checksum,
+					ChecksumType:  "sha256",
+					ChecksumScope: image.ChecksumScopeDecompressed,
 				})
 			},
 		},
@@ -444,8 +449,9 @@ func TestFullProvisioningMatrixImageDataIntegrity(t *testing.T) {
 				ref := fmt.Sprintf("%s/booty/integrity:gz", host)
 				pushGzipTestImage(t, ref, rawImage)
 				return image.Stream(context.Background(), "oci://"+ref, dst, image.StreamOpts{
-					Checksum:     checksum,
-					ChecksumType: "sha256",
+					Checksum:      checksum,
+					ChecksumType:  "sha256",
+					ChecksumScope: image.ChecksumScopeDecompressed,
 				})
 			},
 		},

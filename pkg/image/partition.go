@@ -32,13 +32,17 @@ func StreamPartitions(ctx context.Context, url, device string, opts ...StreamOpt
 	if len(opts) > 0 {
 		opt = opts[0]
 	}
+	opt, err := withDownloadChecksum(opt)
+	if err != nil {
+		return err
+	}
 
 	if err := setupRamdisk(); err != nil {
 		return fmt.Errorf("setting up ramdisk: %w", err)
 	}
 	defer cleanupRamdisk()
 
-	rawPath, err := downloadAndPrepareRaw(ctx, url)
+	rawPath, err := downloadAndPrepareRaw(ctx, url, opt.download)
 	if err != nil {
 		return err
 	}
@@ -52,7 +56,7 @@ func StreamPartitions(ctx context.Context, url, device string, opts ...StreamOpt
 
 func verifyRawImageChecksum(rawPath string, opt StreamOpts) error {
 	if opt.Checksum == "" {
-		return nil
+		return opt.download.verify()
 	}
 
 	src, err := os.Open(rawPath) //nolint:gosec // controlled ramdisk path
@@ -74,10 +78,10 @@ func verifyRawImageChecksum(rawPath string, opt StreamOpts) error {
 
 // downloadAndPrepareRaw downloads an image to the ramdisk, decompresses it
 // if needed, and converts qcow2 to raw. Returns path to the raw image.
-func downloadAndPrepareRaw(ctx context.Context, url string) (string, error) {
+func downloadAndPrepareRaw(ctx context.Context, url string, download *downloadChecksum) (string, error) {
 	downloadPath := ramdiskPath + "/image.download"
 
-	if err := downloadToFile(ctx, url, downloadPath); err != nil {
+	if err := downloadToFile(ctx, url, downloadPath, download); err != nil {
 		return "", fmt.Errorf("downloading image: %w", err)
 	}
 

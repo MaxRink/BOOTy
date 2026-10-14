@@ -76,6 +76,14 @@ behaviour.
   `by-partuuid`, `by-label` and `by-partlabel` links, so `update-grub` writes
   `root=UUID=` instead of `root=/dev/sdXN`. `DISK_LINKS=false` turns it off
   (#671).
+- `IMAGE_CHECKSUM` is compared with the file as downloaded (for example the
+  `.lz4` file of a published `image.raw.lz4.sha256`), like the CAPRF legacy
+  provisioner. `IMAGE_CHECKSUM_SCOPE=decompressed` keeps the old check of the
+  decompressed image (#664). Upgrade: a config whose `IMAGE_CHECKSUM` is the
+  digest of the decompressed image (or of the converted qcow2) must set
+  `IMAGE_CHECKSUM_SCOPE=decompressed`, else the run fails with "checksum
+  mismatch". For `oci://` sources nothing changes: both scopes hash the
+  uncompressed layer.
 
 ### Behaviour behind `CAPRF_LEGACY_COMPAT=true`
 

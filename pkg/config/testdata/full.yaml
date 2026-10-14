@@ -222,11 +222,13 @@ provision:
     urls:
       - "https://registry.example.com/os-image:v1.2.3"
 
-    # checksum: expected hex digest of the raw (decompressed) image
+    # checksum: expected hex digest of the image; checksumScope selects the bytes
     checksum: "abc123def456abc123def456abc123def456abc123def456abc123def456ab12"
 
     # checksumType: sha256 | sha512 (default: inferred from checksum length)
     checksumType: sha256
+    # checksumScope: download (file as downloaded, default) | decompressed
+    checksumScope: download
 
     # mode: whole-disk (default) | partition | ab
     mode: whole-disk

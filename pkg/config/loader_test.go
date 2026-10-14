@@ -544,6 +544,7 @@ func TestLoadFullYAMLReference(t *testing.T) {
 		{"Provision.Region", cfg.Provision.Region, "eu-west-1"},
 		{"Provision.ProviderID", cfg.Provision.ProviderID, "metal://node-01"},
 		{"Provision.Image.ChecksumType", cfg.Provision.Image.ChecksumType, "sha256"},
+		{"Provision.Image.ChecksumScope", cfg.Provision.Image.ChecksumScope, "download"},
 		{"Provision.Image.Mode", cfg.Provision.Image.Mode, "whole-disk"},
 		{"Provision.Disk.MinSizeGB", cfg.Provision.Disk.MinSizeGB, 100},
 		{"Provision.Disk.NumVFs", cfg.Provision.Disk.NumVFs, 32},

@@ -1444,8 +1444,9 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 	var opts []image.StreamOpts
 	if o.cfg.Provision.Image.Checksum != "" {
 		opts = append(opts, image.StreamOpts{
-			Checksum:     o.cfg.Provision.Image.Checksum,
-			ChecksumType: o.cfg.Provision.Image.ChecksumType,
+			Checksum:      o.cfg.Provision.Image.Checksum,
+			ChecksumType:  o.cfg.Provision.Image.ChecksumType,
+			ChecksumScope: o.cfg.Provision.Image.ChecksumScope,
 		})
 	}
 

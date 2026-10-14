@@ -146,7 +146,10 @@ func TestStreamABQCOW2RootFallback(t *testing.T) {
 		Disk:          target.path,
 		BootPartition: target.partitions[0],
 		RootPartition: target.partitions[1],
-	}, image.StreamOpts{Checksum: hex.EncodeToString(sourceSum[:]), ChecksumType: "sha256"}); err != nil {
+	}, image.StreamOpts{
+		// The digest of the converted raw image, not of the qcow2 download.
+		Checksum: hex.EncodeToString(sourceSum[:]), ChecksumType: "sha256", ChecksumScope: image.ChecksumScopeDecompressed,
+	}); err != nil {
 		t.Fatalf("StreamAB() qcow2 root fallback error: %v", err)
 	}
 	assertPartitionPrefix(t, target.partitions[0], repeatedPayload("efi-keep-qcow2", 1024*1024))

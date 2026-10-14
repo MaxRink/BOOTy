@@ -110,7 +110,7 @@ func TestDownloadAndPrepareRawRejectsUnsupportedVMwareContainer(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := downloadAndPrepareRaw(context.Background(), srv.URL+"/image.vmdk")
+	_, err := downloadAndPrepareRaw(context.Background(), srv.URL+"/image.vmdk", nil)
 	if err == nil {
 		t.Fatal("expected unsupported VMDK error")
 	}

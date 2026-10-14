@@ -1,5 +1,11 @@
 package config
 
+// Values of ImageConfig.ChecksumScope.
+const (
+	ChecksumScopeDownload     = "download"
+	ChecksumScopeDecompressed = "decompressed"
+)
+
 // ImageConfig defines the OS image to stream onto the target disk.
 // Supports multiple image formats (raw, OCI) and integrity verification
 // via checksums and GPG signatures.
@@ -15,8 +21,8 @@ type ImageConfig struct {
 	// Default: nil (false, requires HTTPS or OCI)
 	AllowInsecureHTTP *bool `yaml:"allowInsecureHTTP,omitempty" json:"allowInsecureHTTP,omitempty"`
 
-	// Checksum is the expected hex digest of the raw (decompressed) image.
-	// Verified after streaming completes.
+	// Checksum is the expected hex digest of the image. ChecksumScope
+	// selects the bytes it covers. Verified after streaming completes.
 	// Default: "" (no verification)
 	Checksum string `yaml:"checksum" json:"checksum"`
 
@@ -24,6 +30,16 @@ type ImageConfig struct {
 	// Valid values: "sha256", "sha512"
 	// Default: "" (inferred from checksum length if possible)
 	ChecksumType string `yaml:"checksumType" json:"checksumType"`
+
+	// ChecksumScope selects the bytes that Checksum covers.
+	// "download": the file as downloaded, before decompression or qcow2
+	// conversion, like the checksum files published next to the images
+	// (image.raw.lz4.sha256) and like the CAPRF legacy provisioner.
+	// "decompressed": the decompressed image; for qcow2 the converted raw
+	// image.
+	// Valid values: "download", "decompressed"
+	// Default: "" (download)
+	ChecksumScope string `yaml:"checksumScope" json:"checksumScope"`
 
 	// Mode controls how the image is written to disk.
 	// Valid values: "whole-disk" (default), "partition", "ab"

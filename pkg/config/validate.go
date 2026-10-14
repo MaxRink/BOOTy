@@ -24,6 +24,7 @@ import (
 //     (an explicit value is required later by provision preflight)
 //   - Provision.Image.Mode: "whole-disk", "partition", "ab"
 //   - Provision.Image.ChecksumType: "sha256", "sha512"
+//   - Provision.Image.ChecksumScope: "download", "decompressed"
 //   - Provision.CloudInit.Datasource: "nocloud", "configdrive"
 //   - Provision.OCIPrePulls: valid cache path, import namespace, and image refs
 //   - Provision.ProviderID: no whitespace or control characters
@@ -128,6 +129,9 @@ func (c *Config) validateEnums() []string {
 		},
 		func() string {
 			return validateEnumLower(c.Provision.Image.ChecksumType, "provision.image.checksumType", "sha256", "sha512")
+		},
+		func() string {
+			return validateEnumLower(c.Provision.Image.ChecksumScope, "provision.image.checksumScope", ChecksumScopeDownload, ChecksumScopeDecompressed)
 		},
 		func() string {
 			return validateEnumLower(c.Rescue.Mode, "rescue.mode", "reboot", "retry", "shell", "wait")
@@ -280,6 +284,7 @@ func (c *Config) normalize() {
 	lowerFields := []*string{
 		&c.Provision.TargetOS,
 		&c.Provision.Image.ChecksumType,
+		&c.Provision.Image.ChecksumScope,
 		&c.Network.Mode,
 		&c.Network.BGP.PeerMode,
 		&c.Network.BGP.UnderlayAF,

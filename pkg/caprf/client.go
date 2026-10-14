@@ -1132,6 +1132,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"OVERLAYFS_WORK_DIR":          &cfg.Provision.OverlayFS.WorkDir,
 		"IMAGE_CHECKSUM":              &cfg.Provision.Image.Checksum,
 		"IMAGE_CHECKSUM_TYPE":         &cfg.Provision.Image.ChecksumType,
+		"IMAGE_CHECKSUM_SCOPE":        &cfg.Provision.Image.ChecksumScope,
 		"IMAGE_MODE":                  &cfg.Provision.Image.Mode,
 		"IMAGE_SOURCE_ROOT_LABEL":     &cfg.Provision.Image.SourceRootLabel,
 		"DISK_DEVICE":                 &cfg.Provision.Disk.Device,

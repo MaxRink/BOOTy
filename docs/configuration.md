@@ -170,8 +170,9 @@ behaviour changes of this mode.
 |-----|---------|--------|-------------|
 | `IMAGE` | (unset) | URLs separated by commas or spaces | OS image sources: `https://`, `http://` or `oci://`. With more than one URL, BOOTy probes each URL with a ranged GET and uses the fastest. Required for provisioning. |
 | `IMAGE_ALLOW_INSECURE_HTTP` | `false` | boolean | Accept `http://` image URLs. YAML `provision.image.allowInsecureHTTP`. Preset: `true`. |
-| `IMAGE_CHECKSUM` | (unset) | hex digest, optional `sha256:` or `sha512:` prefix | Expected digest of the decompressed image. Required for `oci://` sources that are not pinned by digest, and with `IMAGE_SIGNATURE_URL`. |
+| `IMAGE_CHECKSUM` | (unset) | hex digest, optional `sha256:` or `sha512:` prefix | Expected digest of the image; `IMAGE_CHECKSUM_SCOPE` selects the bytes. Required for `oci://` sources that are not pinned by digest, and with `IMAGE_SIGNATURE_URL`. A mismatch fails the run: whole-disk streaming wipes the start of the target disk, A/B and partition-layout root streaming invalidate the target partitions they wrote. |
 | `IMAGE_CHECKSUM_TYPE` | from digest length | `sha256`, `sha512` | Hash algorithm of `IMAGE_CHECKSUM`. |
+| `IMAGE_CHECKSUM_SCOPE` | `download` | `download`, `decompressed` | Bytes that `IMAGE_CHECKSUM` covers. `download`: the file as downloaded, before decompression or qcow2 conversion, like the `.sha256` files published next to `.lz4` images and like the CAPRF legacy provisioner. `decompressed`: the decompressed image; for qcow2 the converted raw image. For `oci://` sources both scopes hash the uncompressed layer (`layer.Uncompressed()`), not the compressed blob of the layer digest. A mismatch error names the scope. YAML `provision.image.checksumScope`. |
 | `IMAGE_SIGNATURE_URL` | (unset) | URL | Detached GPG signature of the image. Not supported for `oci://` sources. |
 | `IMAGE_GPG_PUBKEY` | (unset) | file path in the ramdisk | Public key for `IMAGE_SIGNATURE_URL`. |
 | `IMAGE_MODE` | `whole-disk` | `whole-disk`, `partition`, `ab` | How BOOTy writes the image. See [A/B partitioning](#ab-partitioning) for `ab`. |

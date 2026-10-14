@@ -178,3 +178,17 @@ func TestNICFirmwareOptionsAndLegacyPreset(t *testing.T) {
 		t.Fatal("Validate() accepted provision.firmware.numVFsMode=max")
 	}
 }
+
+func TestImageChecksumScopeValidation(t *testing.T) {
+	cfg := Config{Provision: ProvisionConfig{Image: ImageConfig{ChecksumScope: " Decompressed "}}}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() = %v", err)
+	}
+	if cfg.Provision.Image.ChecksumScope != ChecksumScopeDecompressed {
+		t.Fatalf("ChecksumScope = %q, want %q", cfg.Provision.Image.ChecksumScope, ChecksumScopeDecompressed)
+	}
+	bad := Config{Provision: ProvisionConfig{Image: ImageConfig{ChecksumScope: "payload"}}}
+	if err := bad.Validate(); err == nil {
+		t.Fatal("Validate() accepted provision.image.checksumScope=payload")
+	}
+}

@@ -836,7 +836,7 @@ func TestOpenAndDecompressQCOW2KeepsDetectedSource(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	src, cleanup, format, err := openAndDecompress(context.Background(), srv.URL+"/image.qcow2")
+	src, cleanup, format, err := openAndDecompress(context.Background(), srv.URL+"/image.qcow2", nil)
 	if err != nil {
 		t.Fatalf("openAndDecompress() = %v", err)
 	}
@@ -869,7 +869,7 @@ func TestOpenAndDecompressGzipQCOW2KeepsDetectedSource(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	src, cleanup, format, err := openAndDecompress(context.Background(), srv.URL+"/image.qcow2.gz")
+	src, cleanup, format, err := openAndDecompress(context.Background(), srv.URL+"/image.qcow2.gz", nil)
 	if err != nil {
 		t.Fatalf("openAndDecompress() = %v", err)
 	}
@@ -900,7 +900,7 @@ func TestOpenAndDecompressGzipRawReportsPayloadFormat(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	src, cleanup, format, err := openAndDecompress(context.Background(), srv.URL+"/image.raw.gz")
+	src, cleanup, format, err := openAndDecompress(context.Background(), srv.URL+"/image.raw.gz", nil)
 	if err != nil {
 		t.Fatalf("openAndDecompress() = %v", err)
 	}

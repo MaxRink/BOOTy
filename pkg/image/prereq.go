@@ -16,7 +16,7 @@ var ErrFormatProbe = errors.New("image format probe failed")
 // ProbeSourceFormat opens an image source and peeks at its magic bytes without
 // consuming the full image.
 func ProbeSourceFormat(ctx context.Context, source string) (Format, error) {
-	_, cleanup, format, err := openAndDecompress(ctx, source)
+	_, cleanup, format, err := openAndDecompress(ctx, source, nil)
 	if err != nil {
 		return FormatRaw, err
 	}

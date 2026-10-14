@@ -128,8 +128,12 @@ func streamSelectedImagePayload(ctx context.Context, url string, target ABTarget
 	if len(opts) > 0 {
 		opt = opts[0]
 	}
+	opt, err := withDownloadChecksum(opt)
+	if err != nil {
+		return err
+	}
 
-	src, cleanup, format, err := openAndDecompress(ctx, url)
+	src, cleanup, format, err := openAndDecompress(ctx, url, opt.download)
 	if err != nil {
 		return err
 	}
@@ -217,6 +221,9 @@ func streamABRaw(ctx context.Context, src io.Reader, target ABTargets, opt Strea
 		dst:   target.RootPartition,
 	})
 
+	// A download-scope checksum does not decompress the rest: verify()
+	// hashes the remaining raw download. The zstd decoder runs without a
+	// read-ahead goroutine (Decompressor), so nothing else reads the body.
 	if err := copyABStreamRanges(ctx, stream, ranges, checksum != nil); err != nil {
 		return err
 	}

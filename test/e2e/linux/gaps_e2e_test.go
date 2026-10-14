@@ -295,8 +295,9 @@ func TestImageStreamChecksumOnDevice(t *testing.T) {
 
 	ctx := context.Background()
 	err := image.Stream(ctx, ts.URL+"/image.gz", loopDev, image.StreamOpts{
-		Checksum:     checksum,
-		ChecksumType: "sha256",
+		Checksum:      checksum,
+		ChecksumType:  "sha256",
+		ChecksumScope: image.ChecksumScopeDecompressed,
 	})
 	if err != nil {
 		t.Fatalf("Stream with checksum: %v", err)
