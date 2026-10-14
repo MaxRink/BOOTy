@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/telekom/BOOTy/pkg/config"
@@ -254,9 +255,20 @@ func renameGRUBConfig(cfg, bak string) (bool, error) {
 }
 
 func (o *Orchestrator) reportDeprovisionSuccess(ctx context.Context) error {
-	message := "deprovisioning complete"
-	if len(o.skippedDisks) > 0 {
-		message += "; not wiped, in use: " + strings.Join(o.skippedDisks, ", ")
+	return o.reportTerminalSuccess(ctx, "deprovisioning", "deprovisioning complete"+NotWipedNote(o.skippedDisks))
+}
+
+// SkippedDisks returns the disks in use that the wipe of all disks of the
+// last run skipped.
+func (o *Orchestrator) SkippedDisks() []string {
+	return slices.Clone(o.skippedDisks)
+}
+
+// NotWipedNote is the status and ACK suffix that names skipped disks, or
+// "" when no disk was skipped.
+func NotWipedNote(disks []string) string {
+	if len(disks) == 0 {
+		return ""
 	}
-	return o.reportTerminalSuccess(ctx, "deprovisioning", message)
+	return "; not wiped, in use: " + strings.Join(disks, ", ")
 }

@@ -215,7 +215,8 @@ Such a disk is not touched:
   `decommission`, `WIPE_ALL_DISKS=true`, secure erase of all disks) skips the
   disk with a WARN line naming it and the mount, and wipes the other disks.
   The deprovision success status names the skipped disks
-  (`deprovisioning complete; not wiped, in use: /dev/sdX`). When every disk
+  (`deprovisioning complete; not wiped, in use: /dev/sdX`), and so does the
+  `completed` ACK of a standby deprovision command. When every disk
   is in use, nothing is wiped and the run fails.
 
 If `/proc/self/mountinfo` cannot be read, or sysfs (`/sys/dev/block`,

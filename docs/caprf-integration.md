@@ -199,7 +199,7 @@ EXTRA_KERNEL_PARAMS=intel_iommu=on
 |---------|--------|-----------------|
 | `provision` | Success | ACK `completed`, then like a provision run: kexec, reboot or power off. |
 | `provision` | Failure | ACK `failed`, then `RESCUE_MODE`. With `RESCUE_MODE=wait` the ACK comes before the wait. |
-| `deprovision` | Success | ACK `completed`. With `STANDBY_DEPROVISION_SUCCESS_ACTION=standby`: send `standby` to `INIT_URL` and go on with heartbeats and polls in the same boot. Otherwise reboot, or power off with `SUCCESS_ACTION=poweroff`. |
+| `deprovision` | Success | ACK `completed`; when the wipe of all disks skipped disks in use, the message ends with `; not wiped, in use: <disks>`. With `STANDBY_DEPROVISION_SUCCESS_ACTION=standby`: send `standby` to `INIT_URL` and go on with heartbeats and polls in the same boot. Otherwise reboot, or power off with `SUCCESS_ACTION=poweroff`. |
 | `deprovision` | Failure | ACK `failed`, then reboot, or wait with `FAILURE_ACTION=wait`. |
 | `reboot` | | ACK `completed`, then reboot. |
 | `health-check` | | ACK `completed` with message `healthy`, stay in standby. |

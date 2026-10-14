@@ -151,6 +151,8 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   running ramdisk and bearer-token URLs are rejected. `STANDBY_DEPROVISION_SUCCESS_ACTION=standby` returns to standby
   after a deprovision command in the same boot. Agent paths `/agent/...`
   documented (#665)
+- Standby: the `completed` ACK of a deprovision command names the disks in
+  use that the wipe of all disks skipped, like the success status (#679)
 
 ### Security
 

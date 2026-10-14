@@ -33,6 +33,15 @@ type standbyDeprovisioner interface {
 	Deprovision(context.Context) error
 }
 
+// skippedDiskReporter is the optional deprovisioner capability that names
+// the disks in use that a wipe of all disks skipped.
+type skippedDiskReporter interface {
+	SkippedDisks() []string
+}
+
+// The orchestrator must keep the capability, or the ACK loses the note.
+var _ skippedDiskReporter = (*provision.Orchestrator)(nil)
+
 // Name returns the mode identifier.
 func (m *StandbyMode) Name() string { return "standby" }
 
@@ -326,7 +335,11 @@ func (m *StandbyMode) handleDeprovision(ctx context.Context, cmd config.Command,
 		return &commandResult{err: err}
 	}
 
-	m.ack(ctx, cmd.ID, "completed", ackMessage("deprovisioning complete", keys))
+	message := ackMessage("deprovisioning complete", keys)
+	if s, ok := orch.(skippedDiskReporter); ok {
+		message += provision.NotWipedNote(s.SkippedDisks())
+	}
+	m.ack(ctx, cmd.ID, "completed", message)
 	if cfg.Agent.DeprovisionSuccessAction == config.AgentDeprovisionStandby {
 		slog.Info("deprovisioning complete, returning to standby")
 		if err := m.deps.Client.ReportStatus(ctx, config.StatusInit, "standby"); err != nil {

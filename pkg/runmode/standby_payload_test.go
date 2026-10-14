@@ -172,3 +172,26 @@ func TestStandbyCommandConfigIsADeepCopy(t *testing.T) {
 		}
 	}
 }
+
+// skippingDeprovisioner reports disks in use that its wipe skipped.
+type skippingDeprovisioner struct{ skipped []string }
+
+func (skippingDeprovisioner) Deprovision(context.Context) error { return nil }
+func (s skippingDeprovisioner) SkippedDisks() []string          { return s.skipped }
+
+// The completed ACK names the disks in use that the wipe of all disks
+// skipped, like the success status.
+func TestStandbyDeprovisionAckNamesSkippedDisks(t *testing.T) {
+	mode, provider := payloadStandby(t, []config.Command{{ID: "d1", Type: "deprovision", Payload: []byte("HOSTNAME=x")}},
+		func(*config.MachineConfig) error { return nil })
+	mode.deps.Cfg.Agent.DeprovisionSuccessAction = ""
+	mode.newDeprovisioner = func(*config.MachineConfig) standbyDeprovisioner {
+		return skippingDeprovisioner{skipped: []string{"/dev/sdc", "/dev/sdd"}}
+	}
+
+	_ = mode.Run(context.Background())
+	want := "deprovisioning complete with payload keys HOSTNAME; not wiped, in use: /dev/sdc, /dev/sdd"
+	if provider.ackMessages[0] != want {
+		t.Fatalf("ack message = %q, want %q", provider.ackMessages[0], want)
+	}
+}
