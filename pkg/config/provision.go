@@ -90,7 +90,8 @@ type ProvisionConfig struct {
 	DiskLinks *bool `yaml:"diskLinks,omitempty" json:"diskLinks,omitempty"`
 
 	// KexecUnmountTarget unmounts every target mount after the kexec kernel
-	// is loaded and before kexec runs. A busy mount is remounted read-only.
+	// is loaded and before kexec runs. A busy mount of a block device is
+	// remounted read-only; a busy virtual mount is left as it is.
 	// The installed OS then starts with clean filesystems instead of a
 	// journal that needs recovery.
 	// Default: nil (true)

@@ -1237,6 +1237,10 @@ func (m *Manager) UnmountRecursive(root string) error {
 	return errors.Join(errs...)
 }
 
+// ErrMountsUnknown is returned by UnmountOrRemountReadOnly when /proc/mounts
+// can not be read, so nothing is known about the target mounts.
+var ErrMountsUnknown = errors.New("mounts unknown")
+
 // ReleaseReport says what UnmountOrRemountReadOnly did with each mount.
 type ReleaseReport struct {
 	Unmounted  []string // unmounted
@@ -1252,14 +1256,15 @@ type ReleaseReport struct {
 // it is. The error lists the block device mounts that stay writable.
 func (m *Manager) UnmountOrRemountReadOnly(root string) (ReleaseReport, error) {
 	var r ReleaseReport
-	targets, err := mountedSubpaths(root)
+	data, err := readMountsFile("/proc/mounts")
+	if err != nil {
+		return r, fmt.Errorf("%w: read mounts: %w", ErrMountsUnknown, err)
+	}
+	targets, err := mountedSubpathsFrom(root, data)
 	if err != nil {
 		return r, err
 	}
-	sources, err := mountSources()
-	if err != nil {
-		return r, err
-	}
+	sources := mountSourcesFrom(data)
 	var errs []error
 	for _, target := range targets {
 		err := unmountFunc(target, 0)
@@ -1287,19 +1292,15 @@ var remountReadOnlyFunc = func(target string) error {
 	return syscall.Mount("", target, "", syscall.MS_REMOUNT|syscall.MS_RDONLY, "")
 }
 
-// mountSources maps each mount point in /proc/mounts to its source.
-func mountSources() (map[string]string, error) {
-	data, err := readMountsFile("/proc/mounts")
-	if err != nil {
-		return nil, fmt.Errorf("read mounts: %w", err)
-	}
+// mountSourcesFrom maps each mount point in /proc/mounts data to its source.
+func mountSourcesFrom(data []byte) map[string]string {
 	sources := map[string]string{}
 	for line := range strings.Lines(string(data)) {
 		if fields := strings.Fields(line); len(fields) >= 2 {
 			sources[fields[1]] = fields[0]
 		}
 	}
-	return sources, nil
+	return sources
 }
 
 func mountedSubpaths(root string) ([]string, error) {
