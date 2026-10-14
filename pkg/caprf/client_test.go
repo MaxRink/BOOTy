@@ -2756,6 +2756,23 @@ func TestParseVarsNetworkWaitMode(t *testing.T) {
 	}
 }
 
+func TestParseVarsMachineCommandsMode(t *testing.T) {
+	for vars, want := range map[string]string{
+		"MACHINE_COMMANDS_MODE=script\n":                            "script",
+		"CAPRF_LEGACY_COMPAT=true\n":                                "script",
+		"CAPRF_LEGACY_COMPAT=true\nMACHINE_COMMANDS_MODE=command\n": "command",
+		"CAPRF_LEGACY_COMPAT=false\n":                               "",
+	} {
+		cfg, err := ParseVars(strings.NewReader(vars))
+		if err != nil {
+			t.Fatalf("ParseVars(%q): %v", vars, err)
+		}
+		if got := cfg.Provision.MachineCommandsMode; got != want {
+			t.Errorf("ParseVars(%q): MachineCommandsMode = %q, want %q", vars, got, want)
+		}
+	}
+}
+
 func TestParseVarsNetworkWaitMaxAttemptsExplicitZero(t *testing.T) {
 	cfg, err := ParseVars(strings.NewReader("NETWORK_WAIT_MAX_ATTEMPTS=0\n"))
 	if err != nil {
@@ -2781,5 +2798,29 @@ func TestParseVarsStrictness(t *testing.T) {
 	// A value that is not a boolean must not turn strictness off.
 	if _, err := ParseVars(strings.NewReader("FRR_CONFIG_STRICT=flase\n")); err == nil {
 		t.Fatal("FRR_CONFIG_STRICT=flase parsed without error")
+	}
+}
+
+// The legacy scripts read integers as ${KEY:-default}, so an empty value
+// keeps the default instead of failing the vars file.
+func TestParseVarsEmptyIntegersKeepDefaults(t *testing.T) {
+	cfg, err := ParseVars(strings.NewReader("NETWORK_WAIT_MAX_ATTEMPTS=\nNUM_VFS=\nRESCUE_TIMEOUT=\nBGP_HOLD=\nVRF_TABLE_ID=\"\"\n"))
+	if err != nil {
+		t.Fatalf("ParseVars() = %v, want empty integers accepted", err)
+	}
+	if cfg.Network.WaitMaxAttempts != nil || cfg.Provision.Disk.NumVFs != 0 || cfg.Network.BGP.Hold != 0 || cfg.Network.VRF.TableID != 0 {
+		t.Fatalf("empty integers changed the config: wait=%v numVFs=%d hold=%d table=%d",
+			cfg.Network.WaitMaxAttempts, cfg.Provision.Disk.NumVFs, cfg.Network.BGP.Hold, cfg.Network.VRF.TableID)
+	}
+	// A later empty value resets an earlier one, like `source vars`.
+	cfg, err = ParseVars(strings.NewReader("NUM_VFS=8\nNUM_VFS=\nBGP_HOLD=9\nBGP_HOLD=\nNETWORK_WAIT_MAX_ATTEMPTS=3\nNETWORK_WAIT_MAX_ATTEMPTS=\n"))
+	if err != nil {
+		t.Fatalf("ParseVars() = %v", err)
+	}
+	if cfg.Provision.Disk.NumVFs != 0 || cfg.Network.BGP.Hold != 0 || cfg.Network.WaitMaxAttempts != nil {
+		t.Fatalf("empty values did not reset: numVFs=%d hold=%d wait=%v", cfg.Provision.Disk.NumVFs, cfg.Network.BGP.Hold, cfg.Network.WaitMaxAttempts)
+	}
+	if _, err := ParseVars(strings.NewReader("NETWORK_WAIT_MAX_ATTEMPTS=x\n")); err == nil {
+		t.Fatal("ParseVars() accepted NETWORK_WAIT_MAX_ATTEMPTS=x")
 	}
 }

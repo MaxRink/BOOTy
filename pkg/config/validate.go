@@ -129,7 +129,7 @@ func (c *Config) validateEnums() []string {
 			return validateEnumLower(c.Network.Mode, "network.mode", "gobgp", "frr", "static", "dhcp")
 		},
 		func() string {
-			return validateEnumLower(c.Network.WaitMode, "network.waitMode", NetworkWaitDefault, NetworkWaitRounds)
+			return validateEnumLower(c.Network.WaitMode, "network.waitMode (NETWORK_WAIT_MODE)", NetworkWaitDefault, NetworkWaitRounds)
 		},
 		func() string {
 			return validateEnumLower(c.Provision.Image.ChecksumType, "provision.image.checksumType", "sha256", "sha512")
@@ -141,28 +141,31 @@ func (c *Config) validateEnums() []string {
 			return validateEnumLower(c.Rescue.Mode, "rescue.mode", "reboot", "retry", "shell", "wait")
 		},
 		func() string {
-			return validateEnumLower(c.SuccessAction, "successAction", SuccessActionReboot, SuccessActionPowerOff)
+			return validateEnumLower(c.Provision.MachineCommandsMode, "provision.machineCommandsMode (MACHINE_COMMANDS_MODE)", MachineCommandsCommand, MachineCommandsScript)
 		},
 		func() string {
-			return validateEnumLower(c.Provision.Disk.Selection, "provision.disk.selection", DiskSelectionPreferNVMe, DiskSelectionLsblk)
+			return validateEnumLower(c.SuccessAction, "successAction (SUCCESS_ACTION)", SuccessActionReboot, SuccessActionPowerOff)
 		},
 		func() string {
-			return validateEnumLower(c.ProvisionerFilesTarget, "provisionerFilesTarget", ProvisionerFilesTarget, ProvisionerFilesRamdisk)
+			return validateEnumLower(c.Provision.Disk.Selection, "provision.disk.selection (DISK_SELECTION)", DiskSelectionPreferNVMe, DiskSelectionLsblk)
 		},
 		func() string {
-			return validateEnumLower(c.Provision.GRUBCmdlineMode, "provision.grubCmdlineMode", GRUBCmdlineResolved, GRUBCmdlineAppend)
+			return validateEnumLower(c.ProvisionerFilesTarget, "provisionerFilesTarget (PROVISIONER_FILES_TARGET)", ProvisionerFilesTarget, ProvisionerFilesRamdisk)
 		},
 		func() string {
-			return validateEnumLower(c.Provision.Firmware.NumVFsMode, "provision.firmware.numVFsMode", NumVFsModeSet, NumVFsModeRaise)
+			return validateEnumLower(c.Provision.GRUBCmdlineMode, "provision.grubCmdlineMode (GRUB_CMDLINE_MODE)", GRUBCmdlineResolved, GRUBCmdlineAppend)
 		},
 		func() string {
-			return validateEnumLower(c.Provision.Disk.GrowPartition, "provision.disk.growPartition", GrowPartitionRoot, GrowPartitionLastLinux)
+			return validateEnumLower(c.Provision.Firmware.NumVFsMode, "provision.firmware.numVFsMode (NUM_VFS_MODE)", NumVFsModeSet, NumVFsModeRaise)
 		},
 		func() string {
-			return validateEnumLower(c.FailureAction, "failureAction", FailureActionReboot, FailureActionWait)
+			return validateEnumLower(c.Provision.Disk.GrowPartition, "provision.disk.growPartition (GROW_PARTITION)", GrowPartitionRoot, GrowPartitionLastLinux)
 		},
 		func() string {
-			return validateEnumLower(c.Provision.Disk.WipeDepth, "provision.disk.wipeDepth", WipeDepthThorough, WipeDepthQuick)
+			return validateEnumLower(c.FailureAction, "failureAction (FAILURE_ACTION)", FailureActionReboot, FailureActionWait)
+		},
+		func() string {
+			return validateEnumLower(c.Provision.Disk.WipeDepth, "provision.disk.wipeDepth (WIPE_DEPTH)", WipeDepthThorough, WipeDepthQuick)
 		},
 		func() string {
 			return validateEnumLower(c.Agent.DeprovisionSuccessAction, "agent.deprovisionSuccessAction", AgentDeprovisionStandby)
@@ -311,6 +314,7 @@ func (c *Config) normalize() {
 		&c.Provision.AB.ActiveSlot,
 		&c.Provision.AB.TargetSlot,
 		&c.Rescue.Mode,
+		&c.Provision.MachineCommandsMode,
 		&c.SuccessAction,
 		&c.FailureAction,
 		&c.Provision.Disk.Selection,

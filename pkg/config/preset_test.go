@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestLifecycleOptionsAndLegacyPreset(t *testing.T) {
 	tests := []struct {
@@ -257,6 +260,54 @@ func TestDiskSettleTimeoutBounds(t *testing.T) {
 		cfg := Config{Provision: ProvisionConfig{Disk: DiskConfig{SettleTimeoutSec: new(v)}}}
 		if err := cfg.Validate(); (err == nil) != ok {
 			t.Errorf("settleTimeoutSec=%d: Validate() = %v, want ok %v", v, err, ok)
+		}
+	}
+}
+
+func TestMachineCommandsModeAndLegacyPreset(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		cfg  Config
+		want string
+	}{
+		{name: "default"},
+		{name: "native", cfg: Config{Provision: ProvisionConfig{MachineCommandsMode: "Script"}}, want: MachineCommandsScript},
+		{name: "preset", cfg: Config{LegacyCompat: true}, want: MachineCommandsScript},
+		{name: "explicit command wins over preset", cfg: Config{LegacyCompat: true, Provision: ProvisionConfig{MachineCommandsMode: "command"}}, want: MachineCommandsCommand},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := tt.cfg
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("Validate() = %v", err)
+			}
+			if got := cfg.Provision.MachineCommandsMode; got != tt.want {
+				t.Fatalf("MachineCommandsMode = %q, want %q", got, tt.want)
+			}
+		})
+	}
+	if err := (&Config{Provision: ProvisionConfig{MachineCommandsMode: "shell"}}).Validate(); err == nil {
+		t.Fatal("Validate() accepted provision.machineCommandsMode=shell")
+	}
+}
+
+// Errors of the CAPRF parity options name the YAML option and the vars key.
+func TestParityOptionErrorsNameBothKeys(t *testing.T) {
+	for want, cfg := range map[string]Config{
+		"network.waitMode (NETWORK_WAIT_MODE)":                  {Network: NetworkConfig{WaitMode: "x"}},
+		"network.waitMaxAttempts (NETWORK_WAIT_MAX_ATTEMPTS)":   {Network: NetworkConfig{WaitMode: NetworkWaitRounds, WaitMaxAttempts: new(-1)}},
+		"provision.machineCommandsMode (MACHINE_COMMANDS_MODE)": {Provision: ProvisionConfig{MachineCommandsMode: "x"}},
+		"successAction (SUCCESS_ACTION)":                        {SuccessAction: "x"},
+		"failureAction (FAILURE_ACTION)":                        {FailureAction: "x"},
+		"provision.disk.selection (DISK_SELECTION)":             {Provision: ProvisionConfig{Disk: DiskConfig{Selection: "x"}}},
+		"provisionerFilesTarget (PROVISIONER_FILES_TARGET)":     {ProvisionerFilesTarget: "x"},
+		"provision.grubCmdlineMode (GRUB_CMDLINE_MODE)":         {Provision: ProvisionConfig{GRUBCmdlineMode: "x"}},
+		"provision.firmware.numVFsMode (NUM_VFS_MODE)":          {Provision: ProvisionConfig{Firmware: FirmwareConfig{NumVFsMode: "x"}}},
+		"provision.disk.growPartition (GROW_PARTITION)":         {Provision: ProvisionConfig{Disk: DiskConfig{GrowPartition: "x"}}},
+		"provision.disk.wipeDepth (WIPE_DEPTH)":                 {Provision: ProvisionConfig{Disk: DiskConfig{WipeDepth: "x"}}},
+	} {
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Validate() = %v, want an error naming %q", err, want)
 		}
 	}
 }

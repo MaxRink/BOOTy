@@ -502,7 +502,12 @@ the root.
 
 `last-linux` assumes ext4 on a data partition after the root, like
 `provision.sh`. With XFS or btrfs there, `e2fsck` fails before `growpart`
-changes the partition table: the run fails, and no data is lost.
+changes the partition table: the run fails, and no data is lost. The BOOTy
+ramdisk ships `e2fsck`. Without it, BOOTy logs a warning and skips the
+check; `growpart` then enlarges the partition and the offline resize fails
+for XFS or btrfs (they grow only when mounted), so the run fails after the
+table change. The
+partition only grows, so the data stays, but the filesystem keeps its size.
 
 `resize-filesystem` grows the root filesystem. It tries `resize2fs <device>`,
 then `xfs_growfs <mountpoint>`, then `btrfs filesystem resize max <mountpoint>`.

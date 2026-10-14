@@ -14,6 +14,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/telekom/BOOTy/pkg/config"
 )
 
 func withMachineCommands(t *testing.T, files map[string]string) {
@@ -219,5 +221,40 @@ func TestRunMachineCommandsLegacyCompatLogsOutputLines(t *testing.T) {
 	}
 	if strings.Contains(got, "secret") || strings.Count(got, `msg="machine command output"`) != 2 {
 		t.Errorf("logs = %q, want both lines with the token redacted", got)
+	}
+}
+
+// The run-machine-commands step follows MACHINE_COMMANDS_MODE; the
+// CAPRF_LEGACY_COMPAT preset selects script and an explicit command wins.
+func TestOrchestratorMachineCommandsModePrecedence(t *testing.T) {
+	explicitCommand := &config.MachineConfig{LegacyCompat: true}
+	explicitCommand.Provision.MachineCommandsMode = config.MachineCommandsCommand
+	nativeScript := &config.MachineConfig{}
+	nativeScript.Provision.MachineCommandsMode = config.MachineCommandsScript
+	for name, tt := range map[string]struct {
+		cfg        *config.MachineConfig
+		wantScript bool
+	}{
+		"default":                           {cfg: &config.MachineConfig{}},
+		"native script":                     {cfg: nativeScript, wantScript: true},
+		"preset":                            {cfg: withPresets(&config.MachineConfig{LegacyCompat: true}), wantScript: true},
+		"explicit command wins over preset": {cfg: withPresets(explicitCommand)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			withMachineCommands(t, map[string]string{"commands-0.sh": "echo a > /etc/a\n"})
+			fake := &fakeStreaming{}
+			withFakeStreaming(t, fake)
+			o := newTestOrchestrator(t, tt.cfg, &mockProvider{})
+			err := o.runMachineCommands(context.Background())
+			if tt.wantScript {
+				if err != nil || len(fake.calls) != 1 {
+					t.Fatalf("runMachineCommands() = %v with %d script runs, want one script run", err, len(fake.calls))
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "rejected") || len(fake.calls) != 0 {
+				t.Fatalf("runMachineCommands() = %v with %d script runs, want the command rejected", err, len(fake.calls))
+			}
+		})
 	}
 }

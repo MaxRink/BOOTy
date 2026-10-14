@@ -97,6 +97,28 @@ func TestNetworkConfigFromMachineConfigWiresType5Only(t *testing.T) {
 	}
 }
 
+// NETWORK_WAIT_MODE=rounds also restarts FRR after each failed round like
+// wait_for_network; the preset selects it and an explicit default wins.
+func TestNetworkConfigFromMachineConfigWiresLegacyFRRRecovery(t *testing.T) {
+	for name, tt := range map[string]struct {
+		cfg  config.MachineConfig
+		want bool
+	}{
+		"default":               {},
+		"native rounds":         {cfg: config.MachineConfig{Network: config.NetworkConfig{WaitMode: config.NetworkWaitRounds}}, want: true},
+		"preset":                {cfg: config.MachineConfig{LegacyCompat: true}, want: true},
+		"explicit default wins": {cfg: config.MachineConfig{LegacyCompat: true, Network: config.NetworkConfig{WaitMode: config.NetworkWaitDefault}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := tt.cfg
+			cfg.ApplyPresets()
+			if got := networkConfigFromMachineConfig(&cfg).LegacyFRRRecovery; got != tt.want {
+				t.Fatalf("LegacyFRRRecovery = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMergeProvisionIPUsesDetectedNetworkPrefix(t *testing.T) {
 	got := mergeProvisionIP("10.200.0.10/32", "10.200.0.10/24")
 

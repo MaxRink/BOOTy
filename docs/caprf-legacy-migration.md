@@ -18,8 +18,9 @@ the [configuration reference](configuration.md).
    refuses to provision without it. The legacy scripts do not use it.
 3. Do not move hosts that use `DISK_MIRRORING_MODE=raid-1` yet. BOOTy
    ignores the variable and installs on one disk. Planned (#581).
-4. Machine commands need no change. With `CAPRF_LEGACY_COMPAT=true` each
-   file runs as a script, in CAPRF index order. Merged (#587).
+4. Machine commands need no change. With `CAPRF_LEGACY_COMPAT=true` (or
+   `MACHINE_COMMANDS_MODE=script`) each file runs as a script, in CAPRF
+   index order. Merged (#587).
 5. Check images with a separate `/boot` partition. BOOTy does not mount it.
    Planned (#595).
 6. Check machine files that contain symlinks. BOOTy skips them.
@@ -132,7 +133,7 @@ Detail for these rows is in [Disk handling](disk.md).
 | `hostname "$HOSTNAME"` in the ramdisk | Not set in the ramdisk. `/etc/hostname` of the installed OS is written in both modes. | Set for provisioning. A failure is only logged. | Merged (#626) | `RAMDISK_HOSTNAME=true` |
 | `nic_firmware` log lines with the firmware version of every NIC (`ethtool`) | Only with `FIRMWARE_REPORT=true`, as a JSON report to `FIRMWARE_URL` | `nic_firmware` log lines on every provision, also without `FIRMWARE_REPORT` | Merged (#628) | `NIC_FIRMWARE_LOG=true` |
 | `setup_mellanox_num_of_vfs` on every provision: set `NUM_OF_VFS=32` when lower, skip quietly without `mstconfig` or ConnectX NIC | Only with `NUM_VFS` > 0: sets `SRIOV_EN` and `NUM_OF_VFS`. Fails without a Mellanox NIC. A change forces a reboot instead of kexec. | On every provision: raises `NUM_OF_VFS` to 32 (or `NUM_VFS`) with `mstconfig` in the ramdisk on each ConnectX-4/5/6/6 Dx/6 Lx/7 Ethernet function. Skips quietly without `mstconfig` or such a NIC. A failed `mstconfig` query or set fails the run. | Merged (#617) | `NUM_VFS_MODE=raise` |
-| Machine commands: each file runs as a script in a chroot (`#!` line or `/bin/sh`), in CAPRF index order | Each file is one command. Shell syntax (`;`, `\|`, `&&`, `>`, `<`, `$(`, backtick) is rejected. Files run in CAPRF index order (`commands-<N>.sh` by number, other names after them by name). | Each file runs as a script: a `#!` line selects the interpreter, any other file runs with `/bin/sh`. Same order. | Merged (#587) | Not needed |
+| Machine commands: each file runs as a script in a chroot (`#!` line or `/bin/sh`), in CAPRF index order | Each file is one command. Shell syntax (`;`, `\|`, `&&`, `>`, `<`, `$(`, backtick) is rejected. Files run in CAPRF index order (`commands-<N>.sh` by number, other names after them by name). | Each file runs as a script: a `#!` line selects the interpreter, any other file runs with `/bin/sh`. Same order. | Merged (#587) | `MACHINE_COMMANDS_MODE` / `provision.machineCommandsMode` (`script`) |
 | Machine files: `cp -rfv`, symlinks kept | Copied, symlinks skipped | Same as default | Planned (#629) | Not needed |
 
 ### Networking

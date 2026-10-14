@@ -15,6 +15,22 @@ import (
 // commands-<i>.sh, so the commands are full shell scripts with pipes,
 // redirects and command substitution.
 func TestLegacyCompatMachineCommandsQEMU(t *testing.T) {
+	testMachineCommandScripts(t, func(f *fakeCAPRF) map[string]string { return f.vars("provision") })
+}
+
+// MACHINE_COMMANDS_MODE=script runs the same scripts without
+// CAPRF_LEGACY_COMPAT. The default command mode rejects the pipes and
+// redirects, so the run fails when BOOTy ignores the option.
+func TestNativeParityMachineCommandsScriptQEMU(t *testing.T) {
+	testMachineCommandScripts(t, func(f *fakeCAPRF) map[string]string {
+		vars := f.nativeVars("provision")
+		vars["MACHINE_COMMANDS_MODE"] = "script"
+		return vars
+	})
+}
+
+func testMachineCommandScripts(t *testing.T, varsFor func(*fakeCAPRF) map[string]string) {
+	t.Helper()
 	requireRoot(t)
 	qemuAvailable(t)
 	requireProvisionTools(t)
@@ -26,7 +42,7 @@ func TestLegacyCompatMachineCommandsQEMU(t *testing.T) {
 	targetDisk := filepath.Join(t.TempDir(), "legacy-commands-target.qcow2")
 	run(t, "create target disk", "qemu-img", "create", "-f", "qcow2", targetDisk, "2G")
 
-	vars := caprf.vars("provision")
+	vars := varsFor(caprf)
 	vars["IMAGE"] = caprf.baseURL + "/image.gz"
 	vars["IMAGE_ALLOW_INSECURE_HTTP"] = "true"
 	vars["DISK_DEVICE"] = "/dev/vda"
@@ -39,7 +55,7 @@ func TestLegacyCompatMachineCommandsQEMU(t *testing.T) {
 	initramfs := buildProvisionInitramfsWithFiles(t, vars, files)
 
 	output := runQEMUProvision(t, findKernel(t), initramfs, targetDisk, 6*time.Minute)
-	t.Logf("legacy machine commands output tail:\n%s", tail(output, 3000))
+	t.Logf("machine command scripts output tail:\n%s", tail(output, 3000))
 	assertProvisionSucceeded(t, output)
 	caprf.requireStatuses(t, "init", "success")
 

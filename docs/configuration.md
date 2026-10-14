@@ -101,6 +101,7 @@ values are false.
 | `REGION` | (unset) | Kubernetes label value | Kubelet node label `topology.kubernetes.io/region`. |
 | `PROVIDER_ID` | (unset) | string without white space | Kubelet `--provider-id`. Cloud-init also uses it as the instance ID. |
 | `POST_PROVISION_CMDS` | (unset) | commands separated by `;` | Commands that run in the target root chroot near the end of provisioning. Each command can contain only letters, digits, white space and `_ . / : = , @ % + -`. A failed command fails the provisioning. |
+| `MACHINE_COMMANDS_MODE` | `command` | `command`, `script` | How `run-machine-commands` runs the files in `/deploy/machine-commands`, in CAPRF index order. `command`: each file holds one command; shell syntax (`;`, `\|`, `&&`, `>`, `<`, `$(`, backtick) is rejected. `script`: like `run_script_in_chroot`, each file runs as a script in the target root, with its `#!` interpreter or `/bin/sh`. YAML `provision.machineCommandsMode`. Preset: `script`. |
 | `NUM_VFS` | `0` | integer | Number of SR-IOV VFs to set with `mstconfig` on each Mellanox NIC. `0` skips the step. A positive value fails the run when no Mellanox NIC or `mstconfig` device is found. With `NUM_VFS_MODE=raise`, `0` means 32 and missing NICs or `mstconfig` are skipped. |
 | `NUM_VFS_MODE` | `set` | `set`, `raise` | How `setup-mellanox` applies `NUM_VFS`. `set`: only with `NUM_VFS` > 0, sets `SRIOV_EN` and `NUM_OF_VFS`, fails without a Mellanox NIC. `raise`: on every provision, raises `NUM_OF_VFS` to `NUM_VFS` (32 when `0`) with `mstconfig` on each ConnectX-4/5/6/6 Dx/6 Lx/7 Ethernet function, like `setup_mellanox_num_of_vfs`; skips quietly without `mstconfig` or such a NIC; a failed `mstconfig` query or set fails the run. A change forces a reboot instead of kexec. YAML `provision.firmware.numVFsMode`. Preset: `raise`. |
 
@@ -155,6 +156,7 @@ defaults.
 | Raise `NUM_OF_VFS` on every ConnectX NIC | `NUM_VFS_MODE` | `provision.firmware.numVFsMode` | `set` | `raise` |
 | Grow the last GPT Linux partition, not the root | `GROW_PARTITION` | `provision.disk.growPartition` | `root` | `last-linux` |
 | Network wait like `wait_for_network` | `NETWORK_WAIT_MODE` | `network.waitMode` | `default` | `rounds` |
+| Machine commands as scripts, like `run_script_in_chroot` | `MACHINE_COMMANDS_MODE` | `provision.machineCommandsMode` | `command` | `script` |
 
 [CAPRF legacy migration](caprf-legacy-migration.md) describes all
 behaviour changes of this mode.
@@ -162,7 +164,7 @@ behaviour changes of this mode.
 | Key | Default | Values | Effect |
 |-----|---------|--------|--------|
 | `NETWORK_WAIT_MODE` | `default` | `default`, `rounds` | `default`: up to 3 network setups, each waiting up to 5 minutes. `rounds`: like the legacy `wait_for_network`, one network setup and `NETWORK_WAIT_MAX_ATTEMPTS` rounds of 20 seconds; in FRR mode, FRR restarts after each failed round unless a BGP session is established. YAML `network.waitMode`. Preset: `rounds`. |
-| `NETWORK_WAIT_MAX_ATTEMPTS` | (unset, 15 rounds) | integer 0-100000 | With `NETWORK_WAIT_MODE=rounds`: the number of 20 second connectivity rounds before the run fails. `0` means no round: the run fails at once, like `${NETWORK_WAIT_MAX_ATTEMPTS:-15}` in the legacy provisioner. Ignored with the default wait. YAML `network.waitMaxAttempts`. |
+| `NETWORK_WAIT_MAX_ATTEMPTS` | (unset or empty, 15 rounds) | integer 0-100000 | With `NETWORK_WAIT_MODE=rounds`: the number of 20 second connectivity rounds before the run fails. `0` means no round: the run fails at once, like `${NETWORK_WAIT_MAX_ATTEMPTS:-15}` in the legacy provisioner. Ignored with the default wait. YAML `network.waitMaxAttempts`. |
 
 ## Disk and image
 

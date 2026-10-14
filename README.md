@@ -352,8 +352,9 @@ root is mounted.
 | `DISCARD_NVME` | `false` | `blkdiscard` every NVMe disk before a wipe of all disks. Preset by `CAPRF_LEGACY_COMPAT` |
 | `FRR_CONFIG_STRICT` | `true` | `false` logs and skips provisioner `frr.conf` statements that BOOTy does not implement instead of failing. Invalid values and unsupported block openers still fail. See [Networking](docs/networking.md#strict-input-and-the-accepted-grammar) |
 | `NETPLAN_STRICT` | `true` | `false` logs and skips unknown provisioner netplan keys instead of failing. Wrong value types and unknown keys under `match` or in `routes` still fail |
+| `MACHINE_COMMANDS_MODE` | `command` | `script` runs each `/deploy/machine-commands` file as a script, like `run_script_in_chroot`. Preset by `CAPRF_LEGACY_COMPAT` |
 | `NETWORK_WAIT_MODE` | `default` | `rounds` waits like the legacy `wait_for_network`: one network setup and `NETWORK_WAIT_MAX_ATTEMPTS` rounds of 20 seconds. Preset by `CAPRF_LEGACY_COMPAT` |
-| `NETWORK_WAIT_MAX_ATTEMPTS` | unset (15) | With `NETWORK_WAIT_MODE=rounds`: 20 second network wait rounds before the run fails (0-100000). `0` means no round: the run fails at once, like the legacy provisioner |
+| `NETWORK_WAIT_MAX_ATTEMPTS` | unset or empty (15) | With `NETWORK_WAIT_MODE=rounds`: 20 second network wait rounds before the run fails (0-100000). `0` means no round: the run fails at once, like the legacy provisioner |
 | `BOOTY_ALLOW_REMOVABLE` | `false` | Allow USB/removable media as provisioning target |
 | `MACHINE_EXTRA_KERNEL_PARAMS` | — | Additional kernel cmdline parameters |
 | `EXTRA_KERNEL_PARAMS` | — | Additional kernel cmdline parameters, read by the CAPRF legacy provisioner. Appended to `MACHINE_EXTRA_KERNEL_PARAMS` |
@@ -553,9 +554,10 @@ With the variable set, BOOTy keeps the legacy behaviour where the two differ:
   Then BOOTy reports the error. BOOTy otherwise sets up the network up to 3
   times and waits up to 5 minutes each time.
 - Each file in `/deploy/machine-commands` runs as a script in the target
-  root, like `run_script_in_chroot`. A file with a `#!` line uses that
-  interpreter, any other file runs with `/bin/sh`. Without the variable each
-  file must hold one command without shell metacharacters.
+  root, like `run_script_in_chroot` (`MACHINE_COMMANDS_MODE=script`). A file
+  with a `#!` line uses that interpreter, any other file runs with `/bin/sh`.
+  Without the variable each file must hold one command without shell
+  metacharacters.
 
 Without the variable, BOOTy keeps its own defaults.
 

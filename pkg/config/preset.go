@@ -66,6 +66,7 @@ func (c *Config) applyLegacyCompatPreset() {
 	presetString(&c.Provision.Disk.WipeDepth, WipeDepthQuick)
 	presetBool(&c.Provision.Disk.WipeAllDisks, true)
 	presetBool(&c.Provision.Disk.DiscardNVMe, true)
+	presetString(&c.Provision.MachineCommandsMode, MachineCommandsScript)
 	// The legacy scripts use `curl --insecure`, accept plain HTTP URLs and
 	// `source vars`.
 	presetBool(&c.Transport.Insecure, true)

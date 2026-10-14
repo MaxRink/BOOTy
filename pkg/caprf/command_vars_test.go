@@ -38,6 +38,20 @@ func TestMergeCommandVarsPayloadWins(t *testing.T) {
 	}
 }
 
+// An empty payload value clears the base value, like `source vars`.
+func TestMergeCommandVarsEmptyIntegerClearsBase(t *testing.T) {
+	cfg, keys, err := MergeCommandVars([]byte(commandBaseVars+"export NUM_VFS=\"8\"\n"), []byte("NUM_VFS=\n"))
+	if err != nil {
+		t.Fatalf("MergeCommandVars: %v", err)
+	}
+	if cfg.Provision.Disk.NumVFs != 0 {
+		t.Fatalf("NumVFs = %d, want 0 after an empty payload value", cfg.Provision.Disk.NumVFs)
+	}
+	if !slices.Equal(keys, []string{"NUM_VFS"}) {
+		t.Fatalf("keys = %v", keys)
+	}
+}
+
 func TestMergeCommandVarsRejectsRuntimeSettings(t *testing.T) {
 	for payload, want := range map[string]string{
 		"TOKEN=other":                                "transport",

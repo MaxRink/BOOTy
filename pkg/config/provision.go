@@ -6,6 +6,12 @@ const (
 	TargetOSLinux = "linux"
 )
 
+// Values of ProvisionConfig.MachineCommandsMode.
+const (
+	MachineCommandsCommand = "command"
+	MachineCommandsScript  = "script"
+)
+
 // ProvisionConfig holds all settings specific to the provisioning pipeline.
 // This section is only read when Mode is "provision" or "dry-run".
 // It nests sub-configs for image delivery, disk management, firmware,
@@ -45,6 +51,16 @@ type ProvisionConfig struct {
 	// Valid values: "resolved", "append". Preset by legacyCompat: "append".
 	// Default: "" (resolved)
 	GRUBCmdlineMode string `yaml:"grubCmdlineMode" json:"grubCmdlineMode"`
+
+	// MachineCommandsMode selects how run-machine-commands runs the files in
+	// /deploy/machine-commands, in CAPRF index order.
+	// "command": each file holds one command without shell metacharacters.
+	// "script": like run_script_in_chroot of the CAPRF legacy provisioner,
+	// each file runs as a script in the target root, with its #! interpreter
+	// or /bin/sh.
+	// Valid values: "command", "script". Preset by legacyCompat: "script".
+	// Default: "" (command)
+	MachineCommandsMode string `yaml:"machineCommandsMode" json:"machineCommandsMode"`
 
 	// FailureDomain maps to topology.kubernetes.io/zone for the provisioned node.
 	// Default: ""

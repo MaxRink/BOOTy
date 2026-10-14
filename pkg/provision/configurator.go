@@ -1005,10 +1005,10 @@ func copyTreeDestination(srcBase, destRoot, path string, validatedParents map[st
 // chroot, in the order of the CAPRF MachineConfig.Commands list.
 //
 // By default each file must hold one command without shell metacharacters.
-// With legacyCompat each file runs as a script, like run_script_in_chroot in
-// the CAPRF legacy provision.sh: a file with a "#!" line runs with that
-// interpreter, any other file runs with /bin/sh.
-func (c *Configurator) RunMachineCommands(ctx context.Context, legacyCompat bool) error {
+// With asScripts (MACHINE_COMMANDS_MODE=script) each file runs as a script,
+// like run_script_in_chroot in the CAPRF legacy provision.sh: a file with a
+// "#!" line runs with that interpreter, any other file runs with /bin/sh.
+func (c *Configurator) RunMachineCommands(ctx context.Context, asScripts bool) error {
 	entries, err := os.ReadDir(machineCommandsDir)
 	if os.IsNotExist(err) {
 		slog.Info("no machine commands directory found", "path", machineCommandsDir)
@@ -1029,7 +1029,7 @@ func (c *Configurator) RunMachineCommands(ctx context.Context, legacyCompat bool
 		if err != nil {
 			return fmt.Errorf("reading command file %s: %w", name, err)
 		}
-		if legacyCompat {
+		if asScripts {
 			err = c.runMachineCommandScript(ctx, name, data)
 		} else {
 			err = c.runMachineCommand(ctx, name, string(data))

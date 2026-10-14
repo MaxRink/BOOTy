@@ -142,7 +142,7 @@ behaviour.
 | `grow-partition` grows the last GPT Linux partition | #625 | `GROW_PARTITION=last-linux` (#657) |
 | Network wait like `wait_for_network` | #622 | `NETWORK_WAIT_MODE=rounds` (#660) |
 | `MODE=decommission` powers off after success | #586 | `SUCCESS_ACTION` |
-| Machine commands run as scripts in the target chroot, in numeric order | #587 | none yet |
+| Machine commands run as scripts in the target chroot, in numeric order | #587 | `MACHINE_COMMANDS_MODE=script` (#675) |
 
 The preset fills only unset options, so an explicit value (also an explicit
 default) wins. `SUCCESS_ACTION=poweroff` is rejected with
@@ -163,6 +163,7 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 - `GROW_PARTITION` (`root`|`last-linux`) (#657)
 - `NETWORK_WAIT_MODE` (`default`|`rounds`); `NETWORK_WAIT_MAX_ATTEMPTS` now
   applies with `rounds` (#660)
+- `MACHINE_COMMANDS_MODE` (`command`|`script`) (#675)
 - `CAPRF_LEGACY_COMPAT` parity (#585, #588, #589, #590, #591, #594, #617, #622,
   #625, #626, #628)
 - NIC firmware versions are read from ethtool when sysfs has none (#628)
@@ -197,6 +198,8 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 - GoBGP mode: an L3VNI provision VNI without `provision_gateway` (bm4x IPv6
   provisioning network) selects Type-5 only, instead of failing with
   `provision gateway is required for GoBGP VXLAN data plane` (#662).
+- caprf: an empty integer vars value (`NETWORK_WAIT_MAX_ATTEMPTS=`, `NUM_VFS=`, ...)
+  keeps the default, like `${KEY:-default}` in the legacy scripts (#675)
 - network: VRF devices no longer count as physical NICs (#605)
 - network: a DHCP lease without a subnet mask no longer panics PID 1 (#608)
 - gobgp: the periodic RA goroutine stops on teardown (#600)

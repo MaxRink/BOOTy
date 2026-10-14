@@ -1281,6 +1281,10 @@ func applyUint32Var(cfg *config.MachineConfig, key, value string) (bool, error) 
 	}
 
 	if ptr, ok := uint32Fields[key]; ok {
+		if strings.TrimSpace(value) == "" {
+			*ptr = 0 // empty means the default, like ${KEY:-default}
+			return true, nil
+		}
 		n, err := strconv.ParseUint(value, 10, 32)
 		if err != nil {
 			return true, fmt.Errorf("invalid uint32 value for %s=%q: %w", key, value, err)
@@ -1558,7 +1562,12 @@ func applyIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 		return true, nil
 	}
 	if key == "NETWORK_WAIT_MAX_ATTEMPTS" {
-		// Keep an explicit 0 apart from an unset value.
+		// Keep an explicit 0 apart from an unset value; an empty value is
+		// unset, like ${NETWORK_WAIT_MAX_ATTEMPTS:-15}.
+		if strings.TrimSpace(value) == "" {
+			cfg.Network.WaitMaxAttempts = nil
+			return true, nil
+		}
 		var n int
 		if err := setIntField(&n, value); err != nil {
 			return true, fmt.Errorf("invalid %s: %w", key, err)
@@ -1615,8 +1624,13 @@ func parseBoolVar(value string) bool {
 	return v == "true" || v == "1" || v == "yes"
 }
 
-// setIntField sets an int field from a string value.
+// setIntField parses an integer vars value. An empty value resets the
+// field to zero, the default, like ${KEY:-default} in the legacy scripts.
 func setIntField(field *int, value string) error {
+	if strings.TrimSpace(value) == "" {
+		*field = 0
+		return nil
+	}
 	n, err := strconv.Atoi(value)
 	if err != nil {
 		return fmt.Errorf("invalid integer value %q: %w", value, err)
