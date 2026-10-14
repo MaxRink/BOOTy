@@ -19,6 +19,42 @@ type TransportConfig struct {
 	// Default: "" (server default)
 	TokenAlgorithm string `yaml:"tokenAlgorithm" json:"tokenAlgorithm"`
 
+	// TokenExpiresAt is the expiry of Token as an RFC 3339 time, for a token
+	// that BOOTy can not renew (no TokenURL). It needs a correct ramdisk
+	// clock (RTC); BOOTy does not sync the time. Prefer
+	// TokenExpiresInSeconds. BOOTy stops the run
+	// TokenRenewMarginSeconds before it, reports the reason and ends like a
+	// failed run (FailureAction).
+	// Default: "" (expiry unknown, no shutdown)
+	TokenExpiresAt string `yaml:"tokenExpiresAt" json:"tokenExpiresAt"`
+
+	// TokenExpiresInSeconds is the lifetime of Token in seconds, counted from
+	// the start of BOOTy, for a token that BOOTy can not renew. It does not
+	// depend on the ramdisk clock. BOOTy starts after the virtual media
+	// insert and the boot, so the count runs late by that time: CAPRF must
+	// subtract a boot allowance. It wins over TokenExpiresAt. With TokenURL
+	// both are ignored: the expires_in of the exchange is authoritative.
+	// Default: 0 (unset)
+	TokenExpiresInSeconds int `yaml:"tokenExpiresInSeconds" json:"tokenExpiresInSeconds"`
+
+	// TokenRenewMarginSeconds is how long before the token expiry BOOTy
+	// renews the token (TokenURL) or, without TokenURL, stops at
+	// TokenExpiresAt. 0 means 20% of the token lifetime.
+	// Default: 0
+	TokenRenewMarginSeconds int `yaml:"tokenRenewMarginSeconds" json:"tokenRenewMarginSeconds"`
+
+	// TokenRenewRetries is the number of renewal attempts before the
+	// renewal fails for good and BOOTy stops the run. An expired token
+	// stops the attempts early. 0 means 5.
+	// Default: 0 (5)
+	TokenRenewRetries int `yaml:"tokenRenewRetries" json:"tokenRenewRetries"`
+
+	// TokenRenewBackoffSeconds is the wait after the first failed renewal
+	// attempt. It doubles after each further failure, up to 60 seconds, and
+	// never goes past the expiry. 0 means 1 second.
+	// Default: 0 (1)
+	TokenRenewBackoffSeconds int `yaml:"tokenRenewBackoffSeconds" json:"tokenRenewBackoffSeconds"`
+
 	// LogURL is the endpoint for shipping log lines to the server.
 	// Default: ""
 	LogURL string `yaml:"logURL" json:"logURL"`

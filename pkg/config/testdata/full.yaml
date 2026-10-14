@@ -132,6 +132,13 @@ transport:
   # tokenAlgorithm: RS256 | ES256 (default: server default)
   tokenAlgorithm: RS256
 
+  # Token expiry without tokenURL (RFC 3339) and the renewal policy.
+  tokenExpiresAt: "2026-10-14T12:00:00Z"
+  tokenExpiresInSeconds: 1800
+  tokenRenewMarginSeconds: 120
+  tokenRenewRetries: 7
+  tokenRenewBackoffSeconds: 2
+
   initURL:    "https://caprf.example.com/status/init"
   successURL: "https://caprf.example.com/status/success"
   errorURL:   "https://caprf.example.com/status/error"

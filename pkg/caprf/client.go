@@ -38,6 +38,12 @@ type Client struct {
 	cfg          *config.MachineConfig
 	log          *slog.Logger
 	tokenManager *auth.TokenManager
+	// onTokenFatal ends the run when the token can not be renewed or
+	// expires. See SetTokenRenewalFatalHandler.
+	onTokenFatal func(error)
+	// started is the creation time of the client, the start of
+	// TOKEN_EXPIRES_IN.
+	started time.Time
 	// vars is the raw /deploy/vars file, the base of standby command payloads.
 	vars         []byte
 	insecureWarn sync.Map
@@ -70,6 +76,7 @@ func New(varsPath string) (*Client, error) {
 		cfg:        cfg,
 		vars:       vars,
 		log:        slog.Default().With("component", "caprf"),
+		started:    time.Now(),
 	}
 	c.warnTransport()
 	return c, nil
@@ -189,6 +196,7 @@ func NewFromConfig(cfg *config.MachineConfig) *Client {
 		httpClient: newHTTPClient(30*time.Second, config.BoolOr(cfg.Transport.SkipTLSVerify, false)),
 		cfg:        cfg,
 		log:        slog.Default().With("component", "caprf"),
+		started:    time.Now(),
 	}
 	c.warnTransport()
 	return c
@@ -221,6 +229,7 @@ func (c *Client) AcquireToken(ctx context.Context) error {
 		}
 		tm.SetAlgorithm(c.cfg.Transport.TokenAlgorithm)
 	}
+	tm.SetRenewalPolicy(renewalPolicy(&c.cfg.Transport))
 	// bmcMAC is intentionally empty — the token endpoint identifies the
 	// machine by serial (hostname). BMC MAC is only required for PXE
 	// bootstrap flows that are not yet implemented.
@@ -236,21 +245,56 @@ func (c *Client) AcquireToken(ctx context.Context) error {
 	return nil
 }
 
-// SetTokenRenewalFatalHandler sets the callback invoked when token renewal
-// is permanently exhausted.
-func (c *Client) SetTokenRenewalFatalHandler(fn func()) {
-	if c.tokenManager == nil {
-		return
+// SetTokenRenewalFatalHandler sets the callback invoked with the reason when
+// the token renewal fails for good, or when a token without renewal
+// (TOKEN_EXPIRES_AT) reaches its renewal margin.
+func (c *Client) SetTokenRenewalFatalHandler(fn func(error)) {
+	c.onTokenFatal = fn
+	if c.tokenManager != nil {
+		c.tokenManager.SetOnFatal(fn)
 	}
-	c.tokenManager.SetOnFatal(fn)
 }
 
 // StartTokenRenewal begins background JWT renewal if a token was acquired.
+// Without TOKEN_URL but with TOKEN_EXPIRES_AT it starts the expiry watch.
 func (c *Client) StartTokenRenewal(ctx context.Context) error {
-	if c.tokenManager == nil {
+	if c.tokenManager != nil {
+		return c.tokenManager.StartRenewal(ctx)
+	}
+	var expiresAt time.Time
+	switch {
+	case c.cfg.Transport.TokenExpiresInSeconds > 0:
+		// Counted from the start of BOOTy, independent of the RTC.
+		expiresAt = c.started.Add(time.Duration(c.cfg.Transport.TokenExpiresInSeconds) * time.Second)
+	case c.cfg.Transport.TokenExpiresAt != "":
+		var err error
+		if expiresAt, err = time.Parse(time.RFC3339, c.cfg.Transport.TokenExpiresAt); err != nil {
+			return fmt.Errorf("parse TOKEN_EXPIRES_AT: %w", err)
+		}
+	default:
 		return nil
 	}
-	return c.tokenManager.StartRenewal(ctx)
+	go c.watchTokenExpiry(ctx, expiresAt)
+	return nil
+}
+
+// watchTokenExpiry ends the run the renewal margin before a token expires
+// that BOOTy can not renew, while the token can still report the reason.
+func (c *Client) watchTokenExpiry(ctx context.Context, expiresAt time.Time) {
+	margin := auth.RenewMargin(time.Duration(c.cfg.Transport.TokenRenewMarginSeconds)*time.Second, max(time.Until(expiresAt), 0))
+	timer := time.NewTimer(max(time.Until(expiresAt)-margin, 0))
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-ctx.Done():
+		return
+	}
+	err := fmt.Errorf("%w: the token expires at %s (TOKEN_EXPIRES_IN or TOKEN_EXPIRES_AT) and there is no TOKEN_URL to renew it",
+		auth.ErrTokenExpired, expiresAt.Format(time.RFC3339))
+	c.log.Error("token expiry reached", "error", err)
+	if c.onTokenFatal != nil {
+		c.onTokenFatal(err)
+	}
 }
 
 // CurrentToken returns the latest token, preferring the token manager if active.
@@ -1096,6 +1140,9 @@ func applyVar(cfg *config.MachineConfig, key, value string) error {
 		return nil
 	}
 	if handled, err := applyUint32Var(cfg, key, value); handled {
+		return err
+	}
+	if handled, err := applyTokenVar(cfg, key, value); handled {
 		return err
 	}
 	return applySpecialVar(cfg, key, value)

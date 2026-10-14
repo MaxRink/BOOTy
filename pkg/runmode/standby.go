@@ -18,6 +18,7 @@ import (
 )
 
 const (
+	ackTimeout        = 10 * time.Second
 	heartbeatInterval = 30 * time.Second
 	pollInterval      = 10 * time.Second
 )
@@ -248,9 +249,12 @@ func cloneConfig(c *config.MachineConfig) (*config.MachineConfig, error) {
 	return &out, nil
 }
 
-// ack reports a command result. A failed ACK is logged only.
+// ack reports a command result. It also works after ctx was canceled (the
+// token stop cancels the run), with its own 10 second limit.
 func (m *StandbyMode) ack(ctx context.Context, id, status, message string) {
-	if err := m.deps.Client.AcknowledgeCommand(ctx, id, status, message); err != nil {
+	ackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ackTimeout)
+	defer cancel()
+	if err := m.deps.Client.AcknowledgeCommand(ackCtx, id, status, message); err != nil {
 		slog.Warn("failed to ACK command", "cmdID", id, "error", err)
 	}
 }
@@ -295,9 +299,7 @@ func (m *StandbyMode) handleProvision(ctx context.Context, cmd config.Command, c
 			return &commandResult{err: &RescueShellError{}}
 		case rescue.ModeWait:
 			// ACK the failure first: standby reports every failed command.
-			if ackErr := m.deps.Client.AcknowledgeCommand(ctx, cmd.ID, "failed", fmt.Sprintf("provision command failed: %v", provErr)); ackErr != nil {
-				slog.Warn("failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
-			}
+			m.ack(ctx, cmd.ID, "failed", fmt.Sprintf("provision command failed: %v", provErr))
 			slog.Info("waiting for manual intervention")
 			<-ctx.Done()
 			return &commandResult{err: fmt.Errorf("wait mode canceled: %w", ctx.Err())}
@@ -308,9 +310,7 @@ func (m *StandbyMode) handleProvision(ctx context.Context, cmd config.Command, c
 	}
 
 	if !provisionSucceeded {
-		if ackErr := m.deps.Client.AcknowledgeCommand(ctx, cmd.ID, "failed", fmt.Sprintf("provision command failed: %v", provErr)); ackErr != nil {
-			slog.Warn("failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
-		}
+		m.ack(ctx, cmd.ID, "failed", fmt.Sprintf("provision command failed: %v", provErr))
 		return &commandResult{err: provErr}
 	}
 
@@ -325,9 +325,7 @@ func (m *StandbyMode) handleDeprovision(ctx context.Context, cmd config.Command,
 	orch := m.deprovisioner(cfg)
 	if err := orch.Deprovision(ctx); err != nil {
 		slog.Error("hot deprovision failed", "error", err)
-		if ackErr := m.deps.Client.AcknowledgeCommand(ctx, cmd.ID, "failed", fmt.Sprintf("deprovision command failed: %v", err)); ackErr != nil {
-			slog.Warn("failed to ACK command", "cmdID", cmd.ID, "error", ackErr)
-		}
+		m.ack(ctx, cmd.ID, "failed", fmt.Sprintf("deprovision command failed: %v", err))
 		if cfg.WaitOnFailure() {
 			slog.Info("waiting after deprovisioning failure")
 			<-ctx.Done()

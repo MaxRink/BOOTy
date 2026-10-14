@@ -35,6 +35,9 @@ type fakeCAPRF struct {
 	commands   []agentCommand
 	acks       []agentAck
 	heartbeats int
+
+	// Token endpoint, see standby_token_test.go.
+	issued map[string]time.Time // token -> expiry
 }
 
 func startFakeCAPRF(t *testing.T, imagePath string) *fakeCAPRF {
@@ -65,7 +68,7 @@ func (f *fakeCAPRF) handler(imagePath string) http.Handler {
 	})
 	f.agentRoutes(mux)
 	mux.HandleFunc("/status/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer "+fakeCAPRFToken {
+		if !f.authorized(r) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}

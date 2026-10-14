@@ -321,11 +321,12 @@ func TestTokenManager_StartRenewal_RenewsBeforeExpiry(t *testing.T) {
 	defer server.Close()
 
 	tm := mustNewTokenManager(t, server.URL, "bootstrap", slog.Default())
-	// Set an already-expired token so renewLoop fires the immediate path (timer.Reset(0)).
+	// A token inside the renewal margin makes renewLoop renew at once.
 	tm.mu.Lock()
 	tm.token = "initial-jwt"
 	tm.refreshToken = "refresh"
-	tm.expiresAt = time.Now().Add(-time.Second)
+	tm.expiresAt = time.Now().Add(time.Minute)
+	tm.lifetime = time.Hour // 1 min left is inside the 12 min margin: renew at once
 	tm.acquired = true
 	tm.mu.Unlock()
 
@@ -369,14 +370,15 @@ func TestTokenManager_StartRenewal_OnFatalCalledOnExhaustion(t *testing.T) {
 	tm.mu.Lock()
 	tm.token = "initial-jwt"
 	tm.refreshToken = "refresh"
-	tm.expiresAt = time.Now().Add(-time.Second)
+	tm.expiresAt = time.Now().Add(time.Minute)
+	tm.lifetime = time.Hour // 1 min left is inside the 12 min margin: renew at once
 	tm.acquired = true
 	tm.mu.Unlock()
 	tm.backoff = func(_ int) time.Duration { return time.Millisecond }
 
 	var fatalCalls atomic.Int32
 	fatalCalled := make(chan struct{})
-	tm.SetOnFatal(func() {
+	tm.SetOnFatal(func(error) {
 		if fatalCalls.Add(1) == 1 {
 			close(fatalCalled)
 		}
@@ -413,13 +415,14 @@ func TestTokenManager_StartRenewal_ContextCancelDoesNotCallOnFatal(t *testing.T)
 	tm.mu.Lock()
 	tm.token = "initial-jwt"
 	tm.refreshToken = "refresh"
-	tm.expiresAt = time.Now().Add(-time.Second)
+	tm.expiresAt = time.Now().Add(time.Minute)
+	tm.lifetime = time.Hour // 1 min left is inside the 12 min margin: renew at once
 	tm.acquired = true
 	tm.mu.Unlock()
 	tm.backoff = func(_ int) time.Duration { return time.Hour }
 
 	fatalCalled := make(chan struct{}, 1)
-	tm.SetOnFatal(func() {
+	tm.SetOnFatal(func(error) {
 		select {
 		case fatalCalled <- struct{}{}:
 		default:

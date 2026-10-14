@@ -48,8 +48,10 @@ type TokenManager struct {
 	mu               sync.RWMutex
 	client           *http.Client
 	log              *slog.Logger
-	onFatal          func()
+	onFatal          func(error)
 	backoff          func(attempt int) time.Duration
+	policy           RenewalPolicy
+	lifetime         time.Duration // expires_in of the current token
 	algorithm        string
 	acquired         bool
 	renewalStarted   bool // true once StartRenewal launches renewLoop
@@ -79,8 +81,72 @@ func NewTokenManager(tokenURL, bootstrapToken string, log *slog.Logger) (*TokenM
 			},
 		},
 		log:     log.WithGroup("auth"),
-		backoff: defaultBackoff,
+		backoff: cappedBackoff(DefaultRenewBackoff),
+		policy:  RenewalPolicy{Retries: DefaultRenewRetries},
 	}, nil
+}
+
+// Defaults of RenewalPolicy.
+const (
+	DefaultRenewRetries   = 5
+	DefaultRenewBackoff   = time.Second
+	MaxRenewBackoff       = time.Minute
+	defaultMarginFraction = 0.2
+)
+
+// ErrTokenExpired is the error when the token expires, or reaches the
+// renewal margin, and BOOTy can not renew it.
+var ErrTokenExpired = errors.New("token expires without a successful renewal")
+
+// RenewalPolicy controls when and how often the token is renewed.
+type RenewalPolicy struct {
+	// Margin is the time before expiry at which the renewal starts. 0 means
+	// 20% of the token lifetime.
+	Margin time.Duration
+	// Retries is the number of renewal attempts before the renewal fails
+	// for good. 0 means DefaultRenewRetries.
+	Retries int
+	// Backoff is the wait after the first failed attempt; it doubles after
+	// each further failure, up to MaxRenewBackoff. 0 means
+	// DefaultRenewBackoff.
+	Backoff time.Duration
+}
+
+// SetRenewalPolicy sets the renewal margin, attempts and backoff. Must be
+// called before StartRenewal.
+func (tm *TokenManager) SetRenewalPolicy(p RenewalPolicy) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	if p.Retries <= 0 {
+		p.Retries = DefaultRenewRetries
+	}
+	if p.Backoff <= 0 {
+		p.Backoff = DefaultRenewBackoff
+	}
+	tm.policy = p
+	tm.backoff = cappedBackoff(p.Backoff)
+}
+
+// cappedBackoff doubles base per attempt up to MaxRenewBackoff, without a
+// shift that could overflow.
+func cappedBackoff(base time.Duration) func(attempt int) time.Duration {
+	return func(attempt int) time.Duration {
+		d := base
+		for i := 0; i < attempt && d < MaxRenewBackoff; i++ {
+			d *= 2
+		}
+		return min(d, MaxRenewBackoff)
+	}
+}
+
+// RenewMargin returns how long before expiry the renewal starts: the
+// configured margin, or 20% of the lifetime. It is at most half the
+// lifetime, so a renewed token is never renewed again at once.
+func RenewMargin(margin, lifetime time.Duration) time.Duration {
+	if margin <= 0 {
+		margin = time.Duration(float64(lifetime) * defaultMarginFraction)
+	}
+	return min(margin, lifetime/2)
 }
 
 // SetAlgorithm configures the token algorithm (e.g. RS256, ES256) sent in requests.
@@ -91,9 +157,9 @@ func (tm *TokenManager) SetAlgorithm(alg string) {
 	tm.algorithm = alg
 }
 
-// SetOnFatal sets the callback invoked when token renewal is permanently exhausted.
-// Must be called before StartRenewal.
-func (tm *TokenManager) SetOnFatal(fn func()) {
+// SetOnFatal sets the callback invoked when token renewal fails for good or
+// the token expires; it gets the reason. Must be called before StartRenewal.
+func (tm *TokenManager) SetOnFatal(fn func(error)) {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
 	tm.onFatal = fn
@@ -151,7 +217,8 @@ func (tm *TokenManager) Acquire(ctx context.Context, serial, bmcMAC string) erro
 	tm.mu.Lock()
 	tm.token = tokenResp.AccessToken
 	tm.refreshToken = tokenResp.RefreshToken
-	tm.expiresAt = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+	tm.lifetime = time.Duration(tokenResp.ExpiresIn) * time.Second
+	tm.expiresAt = time.Now().Add(tm.lifetime)
 	tm.acquired = true
 	tm.mu.Unlock()
 
@@ -168,8 +235,9 @@ func (tm *TokenManager) Token() string {
 	return tm.token
 }
 
-// StartRenewal begins the background renewal goroutine.
-// Renews at 80% of token lifetime. Must be called after a successful Acquire.
+// StartRenewal begins the background renewal goroutine. It renews the
+// RenewalPolicy margin before expiry (20% of the lifetime by default). Must
+// be called after a successful Acquire.
 // Idempotent: subsequent calls after the first are a no-op.
 func (tm *TokenManager) StartRenewal(ctx context.Context) error {
 	tm.mu.Lock()
@@ -196,15 +264,11 @@ func (tm *TokenManager) renewLoop(ctx context.Context) {
 	for {
 		tm.mu.RLock()
 		remaining := time.Until(tm.expiresAt)
+		margin := RenewMargin(tm.policy.Margin, tm.lifetime)
 		tm.mu.RUnlock()
 
-		if remaining <= 0 {
-			// Token already expired — attempt renewal immediately.
-			timer.Reset(0)
-		} else {
-			// Renew at 80% of remaining lifetime to avoid expiry races.
-			timer.Reset(time.Duration(float64(remaining) * 0.8))
-		}
+		// Renew the margin before expiry; at once when inside it.
+		timer.Reset(max(remaining-margin, 0))
 
 		select {
 		case <-timer.C:
@@ -213,15 +277,15 @@ func (tm *TokenManager) renewLoop(ctx context.Context) {
 					tm.log.Debug("token renewal stopped", "reason", err)
 					return
 				}
-				tm.log.Error("token renewal exhausted", "error", err)
+				tm.log.Error("token renewal failed for good", "error", err)
 				tm.mu.RLock()
 				fatal := tm.onFatal
 				tm.mu.RUnlock()
 				if fatal != nil {
-					fatal()
+					fatal(err)
 					return
 				}
-				tm.log.Warn("token renewal exhausted without fatal handler, continuing retry loop")
+				tm.log.Warn("token renewal failed without fatal handler, continuing retry loop")
 			}
 		case <-ctx.Done():
 			return
@@ -281,7 +345,8 @@ func (tm *TokenManager) renew(ctx context.Context) error {
 	if tokenResp.RefreshToken != "" {
 		tm.refreshToken = tokenResp.RefreshToken
 	}
-	tm.expiresAt = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+	tm.lifetime = time.Duration(tokenResp.ExpiresIn) * time.Second
+	tm.expiresAt = time.Now().Add(tm.lifetime)
 	tm.mu.Unlock()
 
 	tm.log.Info("jwt renewed", "expiresIn", tokenResp.ExpiresIn)
@@ -289,33 +354,45 @@ func (tm *TokenManager) renew(ctx context.Context) error {
 	return nil
 }
 
+// renewWithRetry tries the renewal up to policy.Retries times with backoff.
+// It stops with ErrTokenExpired once the token expired: an expired token
+// can not authenticate a renewal.
 func (tm *TokenManager) renewWithRetry(ctx context.Context) error {
+	tm.mu.RLock()
+	retries, expiresAt := tm.policy.Retries, tm.expiresAt
+	tm.mu.RUnlock()
 	var lastErr error
 
-	for attempt := range 5 {
-		if err := tm.renew(ctx); err != nil {
-			lastErr = err
-			tm.log.Warn("renewal attempt failed", "attempt", attempt+1, "error", err)
-
-			backoff := tm.backoff(attempt)
-
-			select {
-			case <-time.After(backoff):
-			case <-ctx.Done():
-				return fmt.Errorf("renewal canceled: %w", ctx.Err())
-			}
-
-			continue
+	for attempt := range retries {
+		if !time.Now().Before(expiresAt) {
+			return fmt.Errorf("%w: %w", ErrTokenExpired, errOrNone(lastErr))
 		}
-
-		return nil
+		err := tm.renew(ctx)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		tm.log.Warn("renewal attempt failed", "attempt", attempt+1, "of", retries, "error", err)
+		if attempt == retries-1 {
+			break
+		}
+		// Never sleep past the expiry.
+		wait := min(tm.backoff(attempt), max(time.Until(expiresAt), 0))
+		select {
+		case <-time.After(wait):
+		case <-ctx.Done():
+			return fmt.Errorf("renewal canceled: %w", ctx.Err())
+		}
 	}
 
-	return fmt.Errorf("renewal exhausted after 5 attempts: %w", lastErr)
+	return fmt.Errorf("renewal failed after %d attempts: %w", retries, lastErr)
 }
 
-func defaultBackoff(attempt int) time.Duration {
-	return time.Duration(1<<attempt) * time.Second
+func errOrNone(err error) error {
+	if err == nil {
+		return errors.New("no renewal attempt")
+	}
+	return err
 }
 
 func redactTokenURL(rawURL string) string {

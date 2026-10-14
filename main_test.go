@@ -1243,16 +1243,97 @@ func TestFailRunFailureActionWaitReportsAndWaits(t *testing.T) {
 	}
 }
 
-func TestTokenRenewalFatalFailureActionWaitStopsTheTask(t *testing.T) {
-	rebooted, stopped := false, false
-	tokenRenewalFatal(&config.MachineConfig{FailureAction: config.FailureActionWait}, func() { rebooted = true }, func() { stopped = true })
-	if rebooted || !stopped {
-		t.Fatalf("FAILURE_ACTION=wait: rebooted=%v stopped=%v, want the task stopped without reboot", rebooted, stopped)
+func TestTokenRenewalFatalStopsTheTask(t *testing.T) {
+	prevGrace := tokenShutdownGrace
+	tokenShutdownGrace = 10 * time.Millisecond
+	t.Cleanup(func() { tokenShutdownGrace = prevGrace; tokenFatalReason.Store(nil) })
+
+	// FAILURE_ACTION=wait: stop the task, no reboot.
+	var rebooted atomic.Bool
+	stopped := false
+	tokenRenewalFatal(&config.MachineConfig{FailureAction: config.FailureActionWait}, errors.New("renewal failed after 5 attempts"),
+		func() { rebooted.Store(true) }, func() { stopped = true })
+	time.Sleep(50 * time.Millisecond)
+	if rebooted.Load() || !stopped {
+		t.Fatalf("FAILURE_ACTION=wait: rebooted=%v stopped=%v, want the task stopped without reboot", rebooted.Load(), stopped)
 	}
-	rebooted, stopped = false, false
-	tokenRenewalFatal(&config.MachineConfig{}, func() { rebooted = true }, func() { stopped = true })
-	if !rebooted || stopped {
-		t.Fatalf("default: rebooted=%v stopped=%v, want a reboot", rebooted, stopped)
+	if got := tokenStopMessage(); got != "token renewal failed, task stopped: renewal failed after 5 attempts" {
+		t.Fatalf("stop message = %q", got)
+	}
+
+	// Default: stop the task; reboot when it does not stop in time.
+	stopped = false
+	rebootedCh := make(chan struct{})
+	tokenRenewalFatal(&config.MachineConfig{}, errors.New("expired"), func() { close(rebootedCh) }, func() { stopped = true })
+	if !stopped {
+		t.Fatal("default: the task was not stopped")
+	}
+	select {
+	case <-rebootedCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("default: no reboot after the grace period")
+	}
+}
+
+// A task that completes at the same moment cancels the grace reboot.
+func TestTokenGraceRebootStopsOnTerminalSuccess(t *testing.T) {
+	prevGrace := tokenShutdownGrace
+	tokenShutdownGrace = 50 * time.Millisecond
+	t.Cleanup(func() { tokenShutdownGrace = prevGrace; tokenFatalReason.Store(nil) })
+	var rebooted atomic.Bool
+	tokenRenewalFatal(&config.MachineConfig{}, errors.New("expired"), func() { rebooted.Store(true) }, func() {})
+	stopTokenGraceReboot()
+	time.Sleep(150 * time.Millisecond)
+	if rebooted.Load() {
+		t.Fatal("the grace reboot fired after the task completed")
+	}
+}
+
+// A token failure after the task completed arms no grace reboot.
+func TestTokenRenewalFatalAfterTaskDone(t *testing.T) {
+	prevGrace := tokenShutdownGrace
+	tokenShutdownGrace = 20 * time.Millisecond
+	tokenTaskDone.Store(true)
+	t.Cleanup(func() { tokenShutdownGrace = prevGrace; tokenTaskDone.Store(false); tokenFatalReason.Store(nil) })
+	var rebooted, stopped atomic.Bool
+	tokenRenewalFatal(&config.MachineConfig{}, errors.New("expired"), func() { rebooted.Store(true) }, func() { stopped.Store(true) })
+	time.Sleep(100 * time.Millisecond)
+	if rebooted.Load() || stopped.Load() {
+		t.Fatalf("rebooted=%v stopped=%v after the task completed, want neither", rebooted.Load(), stopped.Load())
+	}
+}
+
+// messageReporter records the reported messages.
+type messageReporter struct{ messages []string }
+
+func (r *messageReporter) ReportStatus(_ context.Context, _ config.Status, message string) error {
+	r.messages = append(r.messages, message)
+	return nil
+}
+
+// tokenShutdown reports the reason without a token, then reboots.
+func TestTokenShutdownReportsTheReason(t *testing.T) {
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev); tokenFatalReason.Store(nil) })
+	prevGrace := tokenShutdownGrace
+	tokenShutdownGrace = time.Hour
+	t.Cleanup(func() { tokenShutdownGrace = prevGrace; stopTokenGraceReboot() })
+
+	// The reason as the auth package builds it: URL and status, no token.
+	tokenRenewalFatal(&config.MachineConfig{}, errors.New("renewal failed after 5 attempts: renew token from https://caprf.example.com/agent/token: status 503"),
+		func() {}, func() {})
+	reporter := &messageReporter{}
+	rebooted := false
+	tokenShutdown(context.Background(), &config.MachineConfig{}, reporter, tokenStopMessage(), func() { rebooted = true })
+	if !rebooted || len(reporter.messages) != 1 || !strings.Contains(reporter.messages[0], "status 503") {
+		t.Fatalf("rebooted=%v messages=%v, want one error report and a reboot", rebooted, reporter.messages)
+	}
+	for _, text := range []string{reporter.messages[0], logs.String()} {
+		if strings.Contains(text, "Bearer") || strings.Contains(text, "secret") {
+			t.Fatalf("token material in %q", text)
+		}
 	}
 }
 

@@ -195,3 +195,38 @@ func TestStandbyDeprovisionAckNamesSkippedDisks(t *testing.T) {
 		t.Fatalf("ack message = %q, want %q", provider.ackMessages[0], want)
 	}
 }
+
+// ctxAckProvider refuses an ACK with a canceled context, like an HTTP client.
+type ctxAckProvider struct {
+	*standbyProvider
+}
+
+func (p *ctxAckProvider) AcknowledgeCommand(ctx context.Context, cmdID, status, message string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return p.standbyProvider.AcknowledgeCommand(ctx, cmdID, status, message)
+}
+
+// The failure ACK leaves after the token stop canceled the run context.
+func TestStandbyFailureAckSurvivesACanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	provider := &ctxAckProvider{standbyProvider: &standbyProvider{}}
+	mode := &StandbyMode{deps: Deps{Cfg: standbyConfig(), Client: provider}}
+	cfg := standbyConfig()
+	cfg.Mode = "provision"
+	_ = mode.handleProvision(ctx, config.Command{ID: "p1", Type: "provision"}, cfg, nil)
+
+	mode.newDeprovisioner = func(*config.MachineConfig) standbyDeprovisioner {
+		return standbyDeprovisionerFunc(func(context.Context) error { return errors.New("wipe failed") })
+	}
+	cfg = standbyConfig()
+	cfg.Mode = "deprovision"
+	_ = mode.handleDeprovision(ctx, config.Command{ID: "d1", Type: "deprovision"}, cfg, nil)
+
+	if !slices.Equal(provider.acks, []string{"p1:failed", "d1:failed"}) {
+		t.Fatalf("acks = %v, want both failure ACKs despite the canceled context", provider.acks)
+	}
+}

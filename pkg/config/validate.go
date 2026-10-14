@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"time"
 	"unicode"
 
 	ociname "github.com/google/go-containerregistry/pkg/name"
@@ -91,6 +92,7 @@ func (c *Config) Validate() error {
 	if err := validateSecureBootConfig(c.Provision.Image.Mode, &c.Provision.SecureBoot, &c.Provision.AB); err != nil {
 		errs = append(errs, err.Error())
 	}
+	errs = append(errs, validateTokenRenewal(&c.Transport)...)
 
 	if len(errs) > 0 {
 		return fmt.Errorf("config validation: %s", strings.Join(errs, "; "))
@@ -1108,4 +1110,34 @@ func validateDiskSettle(d *DiskConfig) []string {
 		return []string{fmt.Sprintf("provision.disk.settleTimeoutSec must be between 0 and %d, got %d", MaxDiskSettleTimeoutSec, *t)}
 	}
 	return nil
+}
+
+// MaxTokenRenewRetries bounds TOKEN_RENEW_RETRIES.
+const MaxTokenRenewRetries = 100
+
+// validateTokenRenewal checks the token expiry and renewal options.
+func validateTokenRenewal(t *TransportConfig) []string {
+	var errs []string
+	if t.TokenExpiresAt != "" {
+		if _, err := time.Parse(time.RFC3339, t.TokenExpiresAt); err != nil {
+			errs = append(errs, "transport.tokenExpiresAt (TOKEN_EXPIRES_AT) must be an RFC 3339 time")
+		}
+	}
+	for _, f := range []struct {
+		name  string
+		value int
+	}{
+		{"transport.tokenRenewMarginSeconds (TOKEN_RENEW_MARGIN_SECONDS)", t.TokenRenewMarginSeconds},
+		{"transport.tokenRenewRetries (TOKEN_RENEW_RETRIES)", t.TokenRenewRetries},
+		{"transport.tokenExpiresInSeconds (TOKEN_EXPIRES_IN)", t.TokenExpiresInSeconds},
+		{"transport.tokenRenewBackoffSeconds (TOKEN_RENEW_BACKOFF_SECONDS)", t.TokenRenewBackoffSeconds},
+	} {
+		if f.value < 0 {
+			errs = append(errs, f.name+" must not be negative")
+		}
+	}
+	if t.TokenRenewRetries > MaxTokenRenewRetries {
+		errs = append(errs, fmt.Sprintf("transport.tokenRenewRetries (TOKEN_RENEW_RETRIES) must be at most %d", MaxTokenRenewRetries))
+	}
+	return errs
 }

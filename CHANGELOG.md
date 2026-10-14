@@ -43,6 +43,10 @@ behaviour.
   fail). Statements without effect on
   routing (`neighbor X description`, `bgp log-neighbor-changes`, netplan
   `optional`) pass in both modes (#642).
+- A failed `TOKEN_URL` renewal no longer reboots at once: BOOTy stops the
+  active task, reports `token renewal failed, task stopped: <reason>` to
+  `ERROR_URL`, then reboots (or waits with `FAILURE_ACTION=wait`). The
+  renewal attempts also stop when the token expires (#680)
 - Netplan `set-name` renames the single NIC that its `match` selects, and a glob
   or MAC `match` selects the NIC of a static address, like `netplan apply`.
   Before, BOOTy ignored `set-name` and used the first NIC (#641).
@@ -177,6 +181,12 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   documented (#665)
 - Standby: the `completed` ACK of a deprovision command names the disks in
   use that the wipe of all disks skipped, like the success status (#679)
+- Token renewal and expiry: `TOKEN_RENEW_MARGIN_SECONDS`,
+  `TOKEN_RENEW_RETRIES` and `TOKEN_RENEW_BACKOFF_SECONDS` control the
+  `TOKEN_URL` renewal; `TOKEN_EXPIRES_IN` and `TOKEN_EXPIRES_AT` name the expiry
+  of a token without renewal. When the token can not be renewed or expires, BOOTy stops the
+  active task, reports the reason to `ERROR_URL` and ends like a failed run
+  (#680)
 
 ### Security
 

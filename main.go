@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -593,8 +594,14 @@ func runCAPRF(ctx context.Context) {
 
 	slog.Info("executing mode", "mode", mode.Name())
 	modeErr := mode.Run(runCtx)
-	if cfg.WaitOnFailure() && runCtx.Err() != nil && ctx.Err() == nil && !isTerminalSuccess(modeErr) {
-		failRun(ctx, cfg, client, "token renewal exhausted, task stopped", reboot)
+	if isTerminalSuccess(modeErr) {
+		// A completed task wins over a token failure at the same moment
+		// or later: the grace reboot must not cut the handoff.
+		tokenTaskDone.Store(true)
+		stopTokenGraceReboot()
+	}
+	if runCtx.Err() != nil && ctx.Err() == nil && !isTerminalSuccess(modeErr) {
+		tokenShutdown(ctx, cfg, client, tokenStopMessage(), reboot)
 		return
 	}
 
@@ -751,7 +758,7 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 		}
 	}
 
-	client.SetTokenRenewalFatalHandler(func() { tokenRenewalFatal(cfg, reboot, stopRun) })
+	client.SetTokenRenewalFatalHandler(func(err error) { tokenRenewalFatal(cfg, err, reboot, stopRun) })
 
 	if err := client.StartTokenRenewal(ctx); err != nil {
 		slog.Error("failed to start token renewal", "error", err)
@@ -804,17 +811,72 @@ func isTerminalSuccess(modeErr error) bool {
 	return errors.As(modeErr, &provisionErr) || errors.As(modeErr, &powerOffErr)
 }
 
-// tokenRenewalFatal handles exhausted JWT renewal. FAILURE_ACTION=wait stops
-// the active task with stopRun and then waits instead of rebooting into the
-// ISO.
-func tokenRenewalFatal(cfg *config.MachineConfig, rebootFn, stopRun func()) {
-	provision.DumpDebugState("jwt-renewal-exhausted")
-	if cfg != nil && cfg.WaitOnFailure() {
-		slog.Error("token renewal exhausted, stopping the task")
-		stopRun()
+// tokenFatalReason is the reason of the token renewal failure that stopped
+// the run, for tokenShutdown.
+var tokenFatalReason atomic.Pointer[string]
+
+// tokenShutdownGrace bounds how long the active task may take to stop after
+// a token failure before BOOTy reboots anyway (not with FAILURE_ACTION=wait).
+var tokenShutdownGrace = 2 * time.Minute
+
+// tokenRenewalFatal handles a token that can not be renewed or expires: it
+// stops the active task (the standby loop or a provision) with stopRun, and
+// runCAPRF then reports the reason and ends like a failed run
+// (tokenShutdown). Without FAILURE_ACTION=wait a task that does not stop
+// within tokenShutdownGrace is ended with a reboot.
+func tokenRenewalFatal(cfg *config.MachineConfig, reason error, rebootFn, stopRun func()) {
+	if tokenTaskDone.Load() {
+		// The task already completed; the handoff owns the end of the run.
+		slog.Warn("token can not be renewed after the task completed", "reason", reason)
 		return
 	}
-	slog.Error("token renewal exhausted, rebooting")
+	provision.DumpDebugState("jwt-renewal-exhausted")
+	msg := fmt.Sprintf("token renewal failed, task stopped: %v", reason)
+	tokenFatalReason.Store(&msg)
+	slog.Error("token can not be renewed, stopping the task", "reason", reason)
+	stopRun()
+	if cfg == nil || !cfg.WaitOnFailure() {
+		tokenGraceTimer.Store(time.AfterFunc(tokenShutdownGrace, rebootFn))
+	}
+}
+
+// tokenTaskDone is set when the mode completed its task; a later token
+// failure then arms no grace reboot.
+var tokenTaskDone atomic.Bool
+
+// tokenGraceTimer is the pending grace reboot of tokenRenewalFatal.
+var tokenGraceTimer atomic.Pointer[time.Timer]
+
+// stopTokenGraceReboot cancels a pending grace reboot.
+func stopTokenGraceReboot() {
+	if t := tokenGraceTimer.Load(); t != nil {
+		t.Stop()
+	}
+}
+
+// tokenStopMessage is the reason of a stopped run.
+func tokenStopMessage() string {
+	if msg := tokenFatalReason.Load(); msg != nil {
+		return *msg
+	}
+	return "token renewal failed, task stopped"
+}
+
+// tokenShutdown ends a run that a token failure stopped: it reports the
+// reason to ERROR_URL while the token may still work, then waits with
+// FAILURE_ACTION=wait, else reboots.
+func tokenShutdown(ctx context.Context, cfg *config.MachineConfig, reporter provisionStatusReporter, message string, rebootFn func()) {
+	slog.Error("run stopped", "reason", message)
+	if reporter != nil {
+		reportCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		if err := reporter.ReportStatus(reportCtx, config.StatusError, message); err != nil {
+			slog.Warn("failed to report the token failure", "error", err)
+		}
+		cancel()
+	}
+	if cfg != nil && cfg.WaitOnFailure() {
+		<-ctx.Done()
+	}
 	rebootFn()
 }
 
