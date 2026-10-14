@@ -355,6 +355,7 @@ func buildProvisionInitramfsWithFiles(t *testing.T, vars, files map[string]strin
 	essentialTools := []string{
 		"partprobe", "sgdisk", "sfdisk", "mkfs.ext4", "mkfs.vfat", "e2fsck", "resize2fs", "wipefs", "mdadm", "lvm",
 		"losetup", "dd", "growpart", "partx", "blockdev", "flock", "lsblk", "blkdiscard", "blkid",
+		"efibootmgr",
 	}
 	for _, tool := range essentialTools {
 		toolPath, err := exec.LookPath(tool)

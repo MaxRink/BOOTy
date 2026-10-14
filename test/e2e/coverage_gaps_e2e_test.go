@@ -29,6 +29,8 @@ func parseTestVars(vars string) (*config.MachineConfig, error) {
 // Gap 2: Deprovisioning E2E
 
 func TestDeprovisionHardStepSequenceE2E(t *testing.T) {
+	// BIOS host: the EFI steps run before the wipe and would touch the runner NVRAM.
+	t.Cleanup(provision.SetEFIFirmwarePathForTest(filepath.Join(t.TempDir(), "no-efi")))
 	cmd := newMockCommander()
 	cmd.set("mdadm", []byte(""), nil)
 	cmd.set("wipefs", []byte(""), nil)
@@ -126,6 +128,8 @@ func TestDeprovisionSoftStepSequenceE2E(t *testing.T) {
 }
 
 func TestDeprovisionDefaultIsHardE2E(t *testing.T) {
+	// BIOS host: the EFI steps run before the wipe and would touch the runner NVRAM.
+	t.Cleanup(provision.SetEFIFirmwarePathForTest(filepath.Join(t.TempDir(), "no-efi")))
 	cmd := newMockCommander()
 	cmd.set("mdadm", []byte(""), nil)
 	cmd.set("wipefs", []byte(""), nil)
@@ -498,6 +502,7 @@ func TestCreateEFIBootEntryShimE2E(t *testing.T) {
 }
 
 func TestRemoveEFIBootEntriesGracefulE2E(t *testing.T) {
+	t.Cleanup(provision.SetEFIFirmwarePathForTest(filepath.Join(t.TempDir(), "no-efi"))) // BIOS host: never touch the runner NVRAM
 	c := provision.NewConfigurator(disk.NewManager(newMockCommander()))
 	c.SetRootDir(t.TempDir())
 	if err := c.RemoveEFIBootEntries(context.Background()); err != nil {

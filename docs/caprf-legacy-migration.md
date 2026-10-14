@@ -99,6 +99,7 @@ Status values:
 | `/deploy/vars` is a shell script that `source` runs | Parsed as data: no variable expansion, no command substitution | Same | Deliberately different | Not needed |
 | No target OS check | `TARGET_OS=linux` or `PROVISION_TARGET_OS=linux` required for provisioning | Same | Deliberately different | Not needed |
 | `MODE=decommission` (`force-clean`): `decommission_wipe`, `remove_all_efi_boot_entries`, power off | Wipe every disk with `sgdisk` and `wipefs`, remove every `BootOrder` entry, log failures and continue, reboot | Same, plus `blkdiscard` on every NVMe disk first, then power off | Merged (#586) | `SUCCESS_ACTION=poweroff`, `DISCARD_NVME=true` |
+| EFI boot entries: `mount_efi_vars`, `efibootmgr -c` (provision), `remove_efi_boot_entries` (deprovision) under `set -e` on UEFI; skipped on BIOS | Same: a failure fails the run on UEFI, BIOS skips. Deprovision removes the entries before the wipe (legacy: after). | Same | #669 | `EFI_BOOT_ENTRY_REQUIRED=false` turns "EFI variables unavailable" into warnings |
 | Soft deprovision: rename `grub.cfg` | Rename `grub.cfg` to `grub.cfg.bak` in `/boot/grub` and `/boot/grub2`. An existing `grub.cfg.bak` counts as done. No config at all, or an unmount failure after the rename, is an error. | Same, the disk is selected like `_select_single_disk` | Merged (#590), `/boot/grub2` and errors in #635 | `DISK_SELECTION=lsblk` |
 
 ### Disks

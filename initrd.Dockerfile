@@ -456,6 +456,9 @@ COPY --from=dev /go/src/github.com/telekom/BOOTy/init .
 COPY --from=tools /sbin/ip bin/ip
 COPY --from=tools /usr/sbin/ethtool bin/ethtool
 COPY --from=tools /usr/bin/curl bin/curl
+# EFI boot entries: on UEFI a failed efibootmgr fails provisioning
+# (EFI_BOOT_ENTRY_REQUIRED); its libraries are in /tool-libs.
+COPY --from=tools /usr/bin/efibootmgr bin/efibootmgr
 RUN mkdir -p etc/ssl/certs && cp /etc/ssl/certs/ca-certificates.crt etc/ssl/certs/
 
 # Provisioning disk tools without FRR or LVM support.

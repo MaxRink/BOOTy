@@ -36,6 +36,7 @@ func applyParityVar(cfg *config.MachineConfig, key, value string) bool {
 		"DISK_LINKS":                &cfg.Provision.DiskLinks,
 		"KEXEC_UNMOUNT_TARGET":      &cfg.Provision.KexecUnmountTarget,
 		"PREDICTABLE_NIC_NAMES":     &cfg.Network.PredictableNames,
+		"EFI_BOOT_ENTRY_REQUIRED":   &cfg.Provision.EFIBootEntryRequired,
 	}
 	if ptr, ok := boolFields[key]; ok {
 		b := parseBoolVar(value)

@@ -632,11 +632,37 @@ func (o *Orchestrator) removeEFIBootEntries(ctx context.Context) error {
 		o.log.Info("A/B preserveExisting enabled, preserving existing EFI boot entries")
 		return nil
 	}
-	return o.config.RemoveEFIBootEntries(ctx)
+	return o.efiEntryResult("remove EFI boot entries", o.config.RemoveEFIBootEntries(ctx))
 }
 
 func (o *Orchestrator) mountEFIVars(ctx context.Context) error {
-	return o.config.MountEFIVars(ctx)
+	return o.efiEntryResult("mount efivarfs", o.config.MountEFIVars(ctx))
+}
+
+// mountEFIVarsBestEffort is mount-efivarfs of MODE=decommission, which
+// continues without EFI variables like decommission_wipe.
+func (o *Orchestrator) mountEFIVarsBestEffort(ctx context.Context) error {
+	if err := o.config.MountEFIVars(ctx); err != nil {
+		o.log.Warn("decommission: mounting efivarfs failed, continuing", "error", err)
+	}
+	return nil
+}
+
+// efiEntryResult returns err. With EFI_BOOT_ENTRY_REQUIRED=false it logs
+// and drops errors that only mean "EFI variables unavailable"
+// (ErrEFIVarsUnavailable); other errors, such as a failed efibootmgr -c or
+// a missing EFI loader, stay fatal. The configurator returns no error on
+// BIOS systems, so only UEFI failures get here.
+func (o *Orchestrator) efiEntryResult(action string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if !config.BoolOr(o.cfg.Provision.EFIBootEntryRequired, true) && errors.Is(err, ErrEFIVarsUnavailable) {
+		o.log.Warn(action+" failed, continuing because EFI_BOOT_ENTRY_REQUIRED=false", "error", err)
+		return nil
+	}
+	// The step name and err already say what failed.
+	return err
 }
 
 func (o *Orchestrator) createEFIBootEntry(ctx context.Context) error {
@@ -648,7 +674,7 @@ func (o *Orchestrator) createEFIBootEntry(ctx context.Context) error {
 		o.log.Info("A/B preserveExisting enabled, preserving existing EFI boot entry")
 		return nil
 	}
-	return o.config.CreateEFIBootEntry(ctx, o.targetDisk, o.bootPartition)
+	return o.efiEntryResult("create EFI boot entry", o.config.CreateEFIBootEntry(ctx, o.targetDisk, o.bootPartition))
 }
 
 func (o *Orchestrator) setupMellanox(ctx context.Context) error {

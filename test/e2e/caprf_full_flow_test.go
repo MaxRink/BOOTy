@@ -1380,6 +1380,7 @@ func TestCAPRFImageServeAndStreamE2E(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRemoveEFIBootEntriesE2E(t *testing.T) {
+	t.Cleanup(provision.SetEFIFirmwarePathForTest(filepath.Join(t.TempDir(), "no-efi"))) // BIOS host: never touch the runner NVRAM
 	cmd := newMockCommander()
 
 	diskMgr := disk.NewManager(cmd)
@@ -1387,8 +1388,8 @@ func TestRemoveEFIBootEntriesE2E(t *testing.T) {
 	root := t.TempDir()
 	c.SetRootDir(root)
 
-	// RemoveEFIBootEntries now runs efibootmgr directly on the host
-	// (not via chroot). On non-EFI systems it logs a warning and returns nil.
+	// RemoveEFIBootEntries runs efibootmgr directly on the host (not via
+	// chroot). The test pins a BIOS host, which skips it.
 	if err := c.RemoveEFIBootEntries(context.Background()); err != nil {
 		t.Fatalf("RemoveEFIBootEntries: %v", err)
 	}

@@ -273,6 +273,7 @@ func TestOrchestratorMountEFIVars_ReturnsNilOnNonEFIHost(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestOrchestratorRemoveEFIBootEntries_GracefulWhenMissing(t *testing.T) {
+	withEFIFirmware(t, false) // BIOS: efibootmgr failures are not errors
 	oldCommand := hostCommandCombinedOutput
 	hostCommandCombinedOutput = func(context.Context, string, ...string) ([]byte, error) {
 		return nil, os.ErrNotExist

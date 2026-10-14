@@ -283,6 +283,7 @@ jobs:
           grep -q "bin/busybox" slim-files.txt || (echo "FAIL: busybox missing"; exit 1)
           grep -q "bin/ip" slim-files.txt || (echo "FAIL: ip missing"; exit 1)
           grep -q "sbin/mdadm" slim-files.txt || (echo "FAIL: mdadm missing"; exit 1)
+          grep -q "bin/efibootmgr" slim-files.txt || (echo "FAIL: efibootmgr missing"; exit 1)
           grep -q "bin/wipefs" slim-files.txt || (echo "FAIL: wipefs missing"; exit 1)
           grep -q "bin/sgdisk" slim-files.txt || (echo "FAIL: sgdisk missing"; exit 1)
           grep -q "bin/sfdisk" slim-files.txt || (echo "FAIL: sfdisk missing"; exit 1)

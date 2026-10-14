@@ -454,3 +454,26 @@ func TestDockerfileBusyboxAppletLinksAreRelative(t *testing.T) {
 		t.Fatal("initrd.Dockerfile installs busybox applets with --install, which creates absolute symlinks")
 	}
 }
+
+// TestDockerfileFlavorsShipEFIBootMgr: on UEFI a missing efibootmgr fails
+// provisioning, so every flavor with disk tools ships it.
+func TestDockerfileFlavorsShipEFIBootMgr(t *testing.T) {
+	data, err := os.ReadFile("initrd.Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stages := regexp.MustCompile(`(?m)^FROM .* AS (\S+)$`).FindAllStringSubmatchIndex(string(data), -1)
+	for i, m := range stages {
+		name := string(data[m[2]:m[3]])
+		if name != "busybox" && name != "slim-builder" && name != "gobgp-builder" {
+			continue
+		}
+		end := len(data)
+		if i+1 < len(stages) {
+			end = stages[i+1][0]
+		}
+		if !strings.Contains(string(data[m[0]:end]), "COPY --from=tools /usr/bin/efibootmgr bin/efibootmgr") {
+			t.Errorf("stage %s does not ship efibootmgr", name)
+		}
+	}
+}

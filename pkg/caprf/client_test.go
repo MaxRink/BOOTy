@@ -2546,6 +2546,24 @@ func TestParseVarsDiskLinks(t *testing.T) {
 	}
 }
 
+func TestParseVarsEFIBootEntryRequired(t *testing.T) {
+	for vars, want := range map[string]*bool{
+		"":                                nil,
+		"EFI_BOOT_ENTRY_REQUIRED=false\n": new(false),
+		"EFI_BOOT_ENTRY_REQUIRED=true\n":  new(true),
+		"EFI_BOOT_ENTRY_REQUIRED=yes\n":   new(true),
+	} {
+		cfg, err := ParseVars(strings.NewReader(vars))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := cfg.Provision.EFIBootEntryRequired
+		if (got == nil) != (want == nil) || (got != nil && *got != *want) {
+			t.Errorf("ParseVars(%q).EFIBootEntryRequired = %v, want %v", vars, got, want)
+		}
+	}
+}
+
 func TestParseVarsKexecUnmountTarget(t *testing.T) {
 	for vars, want := range map[string]*bool{
 		"":                             nil,

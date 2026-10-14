@@ -10,6 +10,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -354,6 +355,7 @@ func TestSetupNVMeNamespacesSkippedWhenEmptyE2E(t *testing.T) {
 // causes a parse error at the nvme namespace layout step, propagating as a
 // fatal provisioning failure with the specific error text.
 func TestSetupNVMeNamespacesInvalidConfigE2E(t *testing.T) {
+	t.Cleanup(provision.SetEFIFirmwarePathForTest(filepath.Join(t.TempDir(), "no-efi"))) // BIOS host: never touch the runner NVRAM
 	cfg := &config.MachineConfig{
 		Network: config.NetworkConfig{DNSResolvers: "8.8.8.8"},
 		Health:  config.HealthConfig{Enabled: false},
@@ -392,6 +394,7 @@ func TestSetupNVMeNamespacesInvalidConfigE2E(t *testing.T) {
 // namespace config the orchestrator calls nvme id-ctrl, list-ns, create-ns and
 // attach-ns against the configured controller.
 func TestSetupNVMeNamespacesCommandsCalledE2E(t *testing.T) {
+	t.Cleanup(provision.SetEFIFirmwarePathForTest(filepath.Join(t.TempDir(), "no-efi"))) // BIOS host: never touch the runner NVRAM
 	// Minimal valid config: one controller, one 100% namespace.
 	nvmeCfg := `[{"controller":"/dev/nvme0","namespaces":[{"label":"os","sizePct":100}]}]`
 
