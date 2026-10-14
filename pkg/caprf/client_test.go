@@ -2529,6 +2529,23 @@ func TestParseVarsDiskOptions(t *testing.T) {
 	}
 }
 
+func TestParseVarsPredictableNICNames(t *testing.T) {
+	for vars, want := range map[string]*bool{
+		"":                              nil,
+		"PREDICTABLE_NIC_NAMES=false\n": new(false),
+		"PREDICTABLE_NIC_NAMES=yes\n":   new(true),
+	} {
+		cfg, err := ParseVars(strings.NewReader(vars))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := cfg.Network.PredictableNames
+		if (got == nil) != (want == nil) || (got != nil && *got != *want) {
+			t.Errorf("ParseVars(%q).PredictableNames = %v, want %v", vars, got, want)
+		}
+	}
+}
+
 func TestParseVarsDiskLinks(t *testing.T) {
 	for vars, want := range map[string]*bool{
 		"":                   nil,

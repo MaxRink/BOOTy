@@ -15,9 +15,11 @@ import (
 
 // TestPredictableNICNamesQEMU puts the virtio NIC at PCI 00:05.0 and names
 // it enp0s5 in the vars, like a netplan or frr.conf written for the
-// installed OS. The ramdisk kernel calls it eth0 (no udev, net.ifnames=0).
-// BOOTy renames eth0 to enp0s5 and configures the static IP on it, so the
-// CAPRF callbacks arrive. PREDICTABLE_NIC_NAMES=false leaves eth0 alone.
+// installed OS. On i440fx udev names this NIC ens5 (ACPI hotplug slot 5)
+// with enp0s5 as an alternative name; both resolve to it. The ramdisk
+// kernel calls it eth0 (no udev, net.ifnames=0). BOOTy renames eth0 to
+// enp0s5 and configures the static IP on it, so the CAPRF callbacks
+// arrive. PREDICTABLE_NIC_NAMES=false leaves eth0 alone.
 func TestPredictableNICNamesQEMU(t *testing.T) {
 	requireRoot(t)
 	qemuAvailable(t)

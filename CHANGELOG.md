@@ -113,7 +113,9 @@ behaviour.
 - When the netplan files, `frr.conf` or vars name an interface that does not
   exist (for example `enp1s0` while the ramdisk calls the NIC `eth0`), BOOTy
   renames the link that has this systemd predictable name (naming scheme v255).
-  `PREDICTABLE_NIC_NAMES=false` turns it off (#673).
+  `PREDICTABLE_NIC_NAMES=false` turns it off (#673). ARI functions keep their
+  slot in the path name (`enp65s1f8`), and a slotted bridge names a
+  multifunction NIC behind it, like systemd v255 (#683).
 - The default, gobgp and slim initramfs ship the NVMe, AHCI, MegaRAID, mpt3sas,
   SmartPQI and HPSA storage drivers, software RAID (`md_mod`, `raid0/1/10`,
   `raid456`), `loop`, `8021q` and `efivarfs` modules. Before, only virtio disks

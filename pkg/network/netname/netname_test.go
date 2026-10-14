@@ -106,17 +106,28 @@ func TestNames(t *testing.T) {
 	f.write("devices/pci0000:13/0000:13:00.0/index", "70000\n")
 	f.nic("eth10", "pci0000:13/0000:13:00.0", "1")
 
-	// ARI: function 0 of device 1 is function 8.
+	// ARI: function 0 of device 1 is function 8; the slot stays.
 	f.pciDev("pci0000:40/0000:40:00.0", false)
-	f.write("devices/pci0000:40/0000:40:00.0/ari_enabled", "1\n")
+	f.write("devices/pci0000:40/0000:40:00.0/ari_enabled", "0\n") // the root port's own bus
 	f.pciDev("pci0000:40/0000:40:00.0/0000:41:01.0", false)
+	f.write("devices/pci0000:40/0000:40:00.0/0000:41:01.0/ari_enabled", "1\n")
 	f.nic("eth11", "pci0000:40/0000:40:00.0/0000:41:01.0", "1")
 
-	// A slot of the parent bridge does not name the device behind it.
+	// A slot of the parent bridge does not name a single-function device.
 	f.pciDev("pci0000:50/0000:50:02.0", false)
 	f.write("bus/pci/slots/7/address", "0000:50:02\n")
 	f.pciDev("pci0000:50/0000:50:02.0/0000:51:00.0", false)
 	f.nic("eth12", "pci0000:50/0000:50:02.0/0000:51:00.0", "1")
+	// A multifunction NIC behind a slotted bridge takes the bridge slot
+	// (NAMING_BRIDGE_MULTIFUNCTION_SLOT).
+	f.pciDev("pci0000:60/0000:60:03.0", false)
+	f.write("bus/pci/slots/4/address", "0000:60:03\n")
+	f.pciDev("pci0000:60/0000:60:03.0/0000:61:00.0", true)
+	f.nic("eth13", "pci0000:60/0000:60:03.0/0000:61:00.0", "1")
+	// Slot 255 has the address dddd:bb, a prefix of the device name.
+	f.pciDev("pci0000:70/0000:70:00.0", false)
+	f.write("bus/pci/slots/255/address", "0000:70\n")
+	f.nic("eth14", "pci0000:70/0000:70:00.0", "1")
 
 	// SR-IOV VF, InfiniBand and a virtual link get no names.
 	f.pciDev("pci0000:3a/0000:3a:00.0/0000:3b:00.2", false)
@@ -136,8 +147,10 @@ func TestNames(t *testing.T) {
 		"eth8":   {"eno3", "enp17s0"},
 		"eth9":   {"eno65535", "enp18s0"},
 		"eth10":  {"enp19s0"},
-		"eth11":  {"enp65s0f8"},
+		"eth11":  {"enp65s1f8"},
 		"eth12":  {"enp81s0"},
+		"eth13":  {"ens4f0", "enp97s0f0"},
+		"eth14":  {"ens255", "enp112s0"},
 		"eth4":   nil,
 		"ib0":    nil,
 		"dummy0": nil,

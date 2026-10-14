@@ -1226,3 +1226,23 @@ func TestParseFileRouteKeys(t *testing.T) {
 		t.Fatalf("ParseFile() = %v, want the route error", err)
 	}
 }
+
+// InterfaceNames carries the ethernet IDs without a match block and the
+// frr.conf "neighbor X interface" names to the predictable-name rename.
+func TestToNetworkConfigInterfaceNames(t *testing.T) {
+	np := &Config{}
+	np.Network.Ethernets = map[string]EthernetConfig{
+		"enp1s0":  {},
+		"enp2s0":  {},
+		"uplink0": {Match: &MatchConfig{Name: "ens*"}, SetName: "uplink0"},
+	}
+	frr := &FRRParams{UnnumberedPeers: []string{"ens1f0np0", "enp2s0"}}
+	got := ToNetworkConfig(np, frr).InterfaceNames
+	want := []string{"enp1s0", "enp2s0", "ens1f0np0", "enp2s0"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("InterfaceNames = %v, want %v", got, want)
+	}
+	if got := ToNetworkConfig(np, nil).InterfaceNames; !reflect.DeepEqual(got, []string{"enp1s0", "enp2s0"}) {
+		t.Fatalf("InterfaceNames without frr.conf = %v", got)
+	}
+}

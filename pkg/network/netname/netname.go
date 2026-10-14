@@ -49,14 +49,16 @@ func Names(sysfs, ifname string) []string {
 	if addr.domain > 0 {
 		domain = fmt.Sprintf("P%d", addr.domain)
 	}
-	device, function := addr.device, addr.function
-	if readTrim(filepath.Join(filepath.Dir(dev), "ari_enabled")) == "1" {
-		// ARI: the device number is part of the function number.
-		function += device * 8
-		device = 0
+	function := addr.function
+	if readTrim(filepath.Join(dev, "ari_enabled")) == "1" {
+		// ARI (the NIC's own ari_enabled, like is_pci_ari_enabled): the
+		// device number is part of the function number; net_id v255 keeps
+		// the slot number in the path name.
+		function += addr.device * 8
 	}
+	multifunction := isMultifunction(sysfs, addr)
 	fn := ""
-	if function > 0 || isMultifunction(sysfs, addr) {
+	if function > 0 || multifunction {
 		fn = fmt.Sprintf("f%d", function)
 	}
 
@@ -64,10 +66,10 @@ func Names(sysfs, ifname string) []string {
 	if index, ok := onboardIndex(dev); ok {
 		names = append(names, fmt.Sprintf("eno%d%s", index, suffix))
 	}
-	if slot := hotplugSlot(sysfs, addr); slot > 0 {
+	if slot := hotplugSlot(sysfs, dev, multifunction); slot > 0 {
 		names = append(names, fmt.Sprintf("en%ss%d%s%s", domain, slot, fn, suffix))
 	}
-	names = append(names, fmt.Sprintf("en%sp%ds%d%s%s", domain, addr.bus, device, fn, suffix))
+	names = append(names, fmt.Sprintf("en%sp%ds%d%s%s", domain, addr.bus, addr.device, fn, suffix))
 	return names
 }
 
@@ -124,26 +126,39 @@ func onboardIndex(dev string) (int, bool) {
 	return 0, false
 }
 
-// hotplugSlot returns the number of the PCI hotplug slot whose address is
-// the device's domain:bus:device. Slot directories that are not a positive
-// number ("0", "0-1") are ignored, so QEMU q35 root ports give path names
-// (enp1s0). Slots of parent bridges are not used.
-func hotplugSlot(sysfs string, addr pciAddress) int {
+// hotplugSlot returns the number of the PCI hotplug slot of the device,
+// like net_id v255. Slot directories that are not a positive number ("0",
+// "0-1") are ignored, so QEMU q35 root ports give path names (enp1s0).
+// When no slot matches the device, net_id looks at the bridges above it;
+// a bridge slot names the device only when it is multifunction
+// (NAMING_BRIDGE_MULTIFUNCTION_SLOT).
+func hotplugSlot(sysfs, dev string, multifunction bool) int {
 	slotsDir := filepath.Join(sysfs, "bus", "pci", "slots")
 	entries, err := os.ReadDir(slotsDir)
 	if err != nil {
 		return 0
 	}
-	for _, e := range entries {
-		slot, err := strconv.Atoi(e.Name())
-		if err != nil || slot <= 0 {
-			continue
+	for d := dev; ; d = filepath.Dir(d) {
+		if _, ok := parsePCIAddress(filepath.Base(d)); !ok {
+			return 0
 		}
-		if readTrim(filepath.Join(slotsDir, e.Name(), "address")) == addr.slotPrefix() {
+		for _, e := range entries {
+			slot, err := strconv.Atoi(e.Name())
+			if err != nil || slot <= 0 {
+				continue
+			}
+			// startswith(sysname, address): a slot with number 0xff has the
+			// address dddd:bb.
+			address := readTrim(filepath.Join(slotsDir, e.Name(), "address"))
+			if address == "" || !strings.HasPrefix(filepath.Base(d), address) {
+				continue
+			}
+			if d != dev && !multifunction {
+				return 0
+			}
 			return slot
 		}
 	}
-	return 0
 }
 
 // isMultifunction reports whether the PCI device has more than one
@@ -171,7 +186,7 @@ type Rename struct {
 func Plan(sysfs string, links, wanted []string) []Rename {
 	var renames []Rename
 	for _, want := range wanted {
-		if want == "" || slices.Contains(links, want) || slices.ContainsFunc(renames, func(r Rename) bool { return r.To == want }) {
+		if want == "" || slices.Contains(links, want) {
 			continue
 		}
 		var owners []string
@@ -188,7 +203,9 @@ func Plan(sysfs string, links, wanted []string) []Rename {
 			continue
 		}
 		if i := slices.IndexFunc(renames, func(r Rename) bool { return r.From == owners[0] }); i >= 0 {
-			slog.Warn("NIC already gets another configured name", "nic", owners[0], "name", renames[i].To, "also", want)
+			if renames[i].To != want { // a duplicate wanted name is not a conflict
+				slog.Warn("NIC already gets another configured name", "nic", owners[0], "name", renames[i].To, "also", want)
+			}
 			continue
 		}
 		renames = append(renames, Rename{From: owners[0], To: want})
