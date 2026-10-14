@@ -4968,10 +4968,46 @@ func TestCollectFirmwareLogNICsLogsNICFirmware(t *testing.T) {
 	}
 }
 
+// lastLinuxGrowCfg selects GROW_PARTITION=last-linux.
+func lastLinuxGrowCfg() *config.MachineConfig {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.GrowPartition = config.GrowPartitionLastLinux
+	return cfg
+}
+
+// The grow target follows GROW_PARTITION; the CAPRF_LEGACY_COMPAT preset
+// selects last-linux and an explicit root wins over it.
+func TestGrowTargetPrecedence(t *testing.T) {
+	explicitRoot := &config.MachineConfig{LegacyCompat: true}
+	explicitRoot.Provision.Disk.GrowPartition = config.GrowPartitionRoot
+	for name, tt := range map[string]struct {
+		cfg  *config.MachineConfig
+		want string
+	}{
+		"default":                        {cfg: &config.MachineConfig{}, want: "/dev/sda2"},
+		"native last-linux":              {cfg: lastLinuxGrowCfg(), want: "/dev/sda3"},
+		"preset":                         {cfg: withPresets(&config.MachineConfig{LegacyCompat: true}), want: "/dev/sda3"},
+		"explicit root wins over preset": {cfg: withPresets(explicitRoot), want: "/dev/sda2"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			o, cmd := newTestOrchestratorWithCommander(t, tt.cfg, &mockProvider{})
+			o.targetDisk = "/dev/sda"
+			o.rootPartition = "/dev/sda2"
+			cmd.setResult("sfdisk --json", []byte(`{"partitiontable":{"partitions":[
+				{"node":"/dev/sda2","type":"0FC63DAF-8483-4772-8E79-3D69D8477DE4"},
+				{"node":"/dev/sda3","type":"0FC63DAF-8483-4772-8E79-3D69D8477DE4"}]}}`), nil)
+			got, err := o.growTarget(context.Background())
+			if err != nil || got != tt.want {
+				t.Fatalf("growTarget() = %q, %v; want %q", got, err, tt.want)
+			}
+		})
+	}
+}
+
 // Legacy evidence: provision.sh grows the last GPT Linux partition, which
 // can be a data partition after the root.
-func TestGrowPartitionLegacyCompatGrowsLastLinuxPartition(t *testing.T) {
-	cfg := &config.MachineConfig{LegacyCompat: true}
+func TestGrowPartitionLastLinuxGrowsLastLinuxPartition(t *testing.T) {
+	cfg := lastLinuxGrowCfg()
 	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
 	o.targetDisk = "/dev/sda"
 	o.rootPartition = "/dev/sda2"
@@ -5003,8 +5039,8 @@ func TestGrowPartitionLegacyCompatGrowsLastLinuxPartition(t *testing.T) {
 	}
 }
 
-func TestGrowPartitionLegacyCompatKeepsRootWhenLast(t *testing.T) {
-	cfg := &config.MachineConfig{LegacyCompat: true}
+func TestGrowPartitionLastLinuxKeepsRootWhenLast(t *testing.T) {
+	cfg := lastLinuxGrowCfg()
 	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
 	o.targetDisk = "/dev/sda"
 	o.rootPartition = "/dev/sda2"
@@ -5088,8 +5124,8 @@ func TestEnsureMountpointWithinRoot(t *testing.T) {
 
 // An image without a GPT Linux partition, such as an MBR image, keeps the
 // root as the grow target.
-func TestGrowPartitionLegacyCompatMBRGrowsRoot(t *testing.T) {
-	cfg := &config.MachineConfig{LegacyCompat: true}
+func TestGrowPartitionLastLinuxMBRGrowsRoot(t *testing.T) {
+	cfg := lastLinuxGrowCfg()
 	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
 	o.targetDisk = "/dev/sda"
 	o.rootPartition = "/dev/sda1"
@@ -5117,8 +5153,8 @@ func TestGrowPartitionLegacyCompatMBRGrowsRoot(t *testing.T) {
 
 // Legacy evidence: provision.sh runs e2fsck -p -f before growpart. A
 // filesystem error stops the run before the partition table changes.
-func TestGrowPartitionLegacyCompatCheckFailureKeepsPartitionTable(t *testing.T) {
-	cfg := &config.MachineConfig{LegacyCompat: true}
+func TestGrowPartitionLastLinuxCheckFailureKeepsPartitionTable(t *testing.T) {
+	cfg := lastLinuxGrowCfg()
 	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
 	o.targetDisk = "/dev/sda"
 	o.rootPartition = "/dev/sda2"

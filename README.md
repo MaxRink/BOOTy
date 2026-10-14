@@ -324,6 +324,7 @@ root is mounted.
 | `DISK_SELECTION` | `prefer-nvme` | `lsblk` selects the first large enough disk in legacy `lsblk` order. Preset by `CAPRF_LEGACY_COMPAT` |
 | `WIPE_ALL_DISKS` | `false` | Wipe every disk, not only the target, like `wipe_all_disks`. Preset by `CAPRF_LEGACY_COMPAT` |
 | `WIPE_DEPTH` | `thorough` | `thorough`: stop LVM, dm-crypt and MD on the disk, clear every partition, the partition table and the disk edges, then `blkdiscard` the disk. `quick`: `sgdisk --zap-all` and `wipefs -af` on the disk only. Preset `quick` by `CAPRF_LEGACY_COMPAT`. See [docs/disk.md](docs/disk.md#wipe-behaviour) |
+| `GROW_PARTITION` | `root` | `last-linux` grows the last GPT Linux partition like the legacy `provision.sh`. Preset by `CAPRF_LEGACY_COMPAT` |
 | `DISCARD_NVME` | `false` | `blkdiscard` every NVMe disk before a wipe of all disks. Preset by `CAPRF_LEGACY_COMPAT` |
 | `NETWORK_WAIT_MAX_ATTEMPTS` | unset (15) | CAPRF legacy compat only: 20 second network wait rounds before the run fails (0-100000). `0` means no round: the run fails at once, like the legacy provisioner |
 | `BOOTY_ALLOW_REMOVABLE` | `false` | Allow USB/removable media as provisioning target |
@@ -515,7 +516,8 @@ With the variable set, BOOTy keeps the legacy behaviour where the two differ:
 - `grow-partition` grows the last GPT Linux filesystem partition, like
   `provision.sh`, also when it is a data partition after the root. That
   partition then gets `e2fsck` and `resize2fs`, and the root filesystem keeps
-  its size. BOOTy otherwise grows the root partition.
+  its size (`GROW_PARTITION=last-linux`). BOOTy otherwise grows the root
+  partition.
 - The network wait follows `wait_for_network`: `NETWORK_WAIT_MAX_ATTEMPTS`
   rounds of 20 seconds (default 15, about 5 minutes) on one network setup.
   In FRR mode, FRR restarts after each failed round unless a BGP session is

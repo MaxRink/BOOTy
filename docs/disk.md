@@ -484,12 +484,18 @@ Planned (#595): mount a separate `/boot` from the image fstab.
 | vfat | none | BOOTy fails. vfat is supported only for the EFI system partition. |
 
 `grow-partition` runs `growpart --update on <disk> <root partition number>`.
-`NOCHANGE` (the partition already fills the space) is not an error. BOOTy grows
-only the root partition. If the root partition is not the last partition, it
-usually cannot grow. With `PARTITION_LAYOUT` or in A/B mode, BOOTy skips this
-step.
+`NOCHANGE` (the partition already fills the space) is not an error. By default
+BOOTy grows only the root partition. If the root partition is not the last
+partition, it usually cannot grow. With `PARTITION_LAYOUT` or in A/B mode,
+BOOTy skips this step.
 
-Planned (#625): grow the last Linux partition in CAPRF legacy compat.
+With `GROW_PARTITION=last-linux` (preset by `CAPRF_LEGACY_COMPAT=true`), BOOTy
+grows the last GPT Linux filesystem partition instead, like `provision.sh`,
+also when it is a data partition after the root. When that partition is not
+the root, BOOTy runs `e2fsck -p -f` on it before `growpart`, and
+`resize-filesystem` resizes it offline with `resize2fs`; the root keeps its
+size. Without a GPT Linux partition (for example an MBR image), BOOTy grows
+the root.
 
 `resize-filesystem` grows the root filesystem. It tries `resize2fs <device>`,
 then `xfs_growfs <mountpoint>`, then `btrfs filesystem resize max <mountpoint>`.

@@ -109,7 +109,7 @@ behaviour.
 | Legacy GRUB drop-in, no getty units | #594 | `GRUB_CMDLINE_MODE=append` (#653) |
 | `nic_firmware` log line per NIC | #628 | `NIC_FIRMWARE_LOG=true` (#656) |
 | Mellanox: raise `NUM_OF_VFS` to `NUM_VFS` | #617 | `NUM_VFS_MODE=raise` (#656) |
-| `grow-partition` grows the last GPT Linux partition | #625 | none yet |
+| `grow-partition` grows the last GPT Linux partition | #625 | `GROW_PARTITION=last-linux` (#657) |
 | Network wait like `wait_for_network` | #622 | none |
 | `MODE=decommission` powers off after success | #586 | `SUCCESS_ACTION` |
 | Machine commands run as scripts in the target chroot, in numeric order | #587 | none yet |
@@ -130,6 +130,7 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   `RAMDISK_HOSTNAME` (#652)
 - `GRUB_CMDLINE_MODE` (`resolved`|`append`) (#653)
 - `NIC_FIRMWARE_LOG`, `NUM_VFS_MODE` (`set`|`raise`) (#656)
+- `GROW_PARTITION` (`root`|`last-linux`) (#657)
 - `CAPRF_LEGACY_COMPAT` parity (#585, #588, #589, #590, #591, #594, #617, #622,
   #625, #626, #628)
 - NIC firmware versions are read from ethtool when sysfs has none (#628)

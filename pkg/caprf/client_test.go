@@ -2577,6 +2577,23 @@ func TestParseVarsNICFirmwareOptions(t *testing.T) {
 	}
 }
 
+func TestParseVarsGrowPartition(t *testing.T) {
+	for vars, want := range map[string]string{
+		"GROW_PARTITION=last-linux\n":                     "last-linux",
+		"CAPRF_LEGACY_COMPAT=true\n":                      "last-linux",
+		"CAPRF_LEGACY_COMPAT=true\nGROW_PARTITION=root\n": "root",
+		"HOSTNAME=x\n":                                    "",
+	} {
+		cfg, err := ParseVars(strings.NewReader(vars))
+		if err != nil {
+			t.Fatalf("ParseVars(%q): %v", vars, err)
+		}
+		if got := cfg.Provision.Disk.GrowPartition; got != want {
+			t.Errorf("ParseVars(%q): GrowPartition = %q, want %q", vars, got, want)
+		}
+	}
+}
+
 func TestParseVarsLifecycleActions(t *testing.T) {
 	tests := []struct {
 		vars         string

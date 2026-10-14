@@ -152,6 +152,9 @@ func (c *Config) validateEnums() []string {
 			return validateEnumLower(c.Provision.Firmware.NumVFsMode, "provision.firmware.numVFsMode", NumVFsModeSet, NumVFsModeRaise)
 		},
 		func() string {
+			return validateEnumLower(c.Provision.Disk.GrowPartition, "provision.disk.growPartition", GrowPartitionRoot, GrowPartitionLastLinux)
+		},
+		func() string {
 			return validateEnumLower(c.FailureAction, "failureAction", FailureActionReboot, FailureActionWait)
 		},
 		func() string {
@@ -307,6 +310,7 @@ func (c *Config) normalize() {
 		&c.Provision.GRUBCmdlineMode,
 		&c.Provision.Firmware.NumVFsMode,
 		&c.Provision.Disk.WipeDepth,
+		&c.Provision.Disk.GrowPartition,
 	}
 	for _, f := range lowerFields {
 		if *f != "" {

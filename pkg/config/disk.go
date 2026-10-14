@@ -75,6 +75,18 @@ type DiskConfig struct {
 	// Default: "" (thorough)
 	WipeDepth string `yaml:"wipeDepth" json:"wipeDepth"`
 
+	// GrowPartition selects the partition that grow-partition and
+	// resize-filesystem enlarge to fill the disk.
+	// "root": the root partition.
+	// "last-linux": the last GPT Linux filesystem partition, like
+	// provision.sh of the CAPRF legacy provisioner, also when it is a data
+	// partition after the root. That partition gets e2fsck -p -f before
+	// growpart and an offline resize2fs; the root keeps its size. Without a
+	// GPT Linux partition BOOTy grows the root.
+	// Valid values: "root", "last-linux". Preset by legacyCompat: "last-linux".
+	// Default: "" (root)
+	GrowPartition string `yaml:"growPartition" json:"growPartition"`
+
 	// SecureErase uses ATA Secure Erase or NVMe Format instead of wipefs
 	// for disk sanitization before provisioning.
 	// Default: false (use wipefs)

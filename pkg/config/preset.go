@@ -28,6 +28,12 @@ const (
 	NumVFsModeRaise = "raise"
 )
 
+// Values of DiskConfig.GrowPartition.
+const (
+	GrowPartitionRoot      = "root"
+	GrowPartitionLastLinux = "last-linux"
+)
+
 // Values of DiskConfig.Selection.
 const (
 	DiskSelectionPreferNVMe = "prefer-nvme"
@@ -71,6 +77,7 @@ func (c *Config) applyLegacyCompatPreset() {
 	presetString(&c.Provision.GRUBCmdlineMode, GRUBCmdlineAppend)
 	presetBool(&c.Provision.Firmware.LogNICs, true)
 	presetString(&c.Provision.Firmware.NumVFsMode, NumVFsModeRaise)
+	presetString(&c.Provision.Disk.GrowPartition, GrowPartitionLastLinux)
 }
 
 // presetString sets an unset (blank) string option.

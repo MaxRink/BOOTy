@@ -2710,11 +2710,11 @@ func (o *Orchestrator) growPartition(ctx context.Context) error {
 }
 
 // growTarget returns the partition that grow-partition and
-// resize-filesystem work on: the root, or in legacy compat the last Linux
-// partition. Both steps compute it from the partition table, so a resumed
+// resize-filesystem work on: the root, or with GROW_PARTITION=last-linux the
+// last Linux partition. Both steps compute it from the partition table, so a resumed
 // run resizes the same partition.
 func (o *Orchestrator) growTarget(ctx context.Context) (string, error) {
-	if !o.cfg.LegacyCompat {
+	if o.cfg.Provision.Disk.GrowPartition != config.GrowPartitionLastLinux {
 		return o.rootPartition, nil
 	}
 	last, err := o.lastLinuxPartition(ctx)
@@ -2725,7 +2725,7 @@ func (o *Orchestrator) growTarget(ctx context.Context) (string, error) {
 		return o.rootPartition, nil
 	}
 	if last != o.rootPartition {
-		o.log.Info("legacy compat: the last Linux partition is not the root", "partition", last, "root", o.rootPartition)
+		o.log.Info("growing the last Linux partition, not the root", "partition", last, "root", o.rootPartition)
 	}
 	return last, nil
 }

@@ -220,6 +220,23 @@ func TestLegacyCompatDecommissionWipesAndPowersOffQEMU(t *testing.T) {
 // Legacy evidence: provision.sh grows the last GPT Linux partition with
 // growpart and resize2fs, also when it is a data partition after the root.
 func TestLegacyCompatGrowsLastLinuxPartitionQEMU(t *testing.T) {
+	testGrowsLastLinuxPartition(t, func(f *fakeCAPRF) map[string]string { return f.vars("provision") })
+}
+
+// GROW_PARTITION=last-linux grows the same partition without
+// CAPRF_LEGACY_COMPAT. The default grows the root, so the size checks fail
+// when BOOTy ignores the option.
+func TestNativeParityGrowPartitionLastLinuxQEMU(t *testing.T) {
+	testGrowsLastLinuxPartition(t, func(f *fakeCAPRF) map[string]string {
+		vars := f.nativeVars("provision")
+		vars["GROW_PARTITION"] = "last-linux"
+		vars["SUCCESS_ACTION"] = "poweroff"
+		return vars
+	})
+}
+
+func testGrowsLastLinuxPartition(t *testing.T, varsFor func(*fakeCAPRF) map[string]string) {
+	t.Helper()
 	requireRoot(t)
 	qemuAvailable(t)
 	requireProvisionTools(t)
@@ -243,12 +260,12 @@ func TestLegacyCompatGrowsLastLinuxPartitionQEMU(t *testing.T) {
 	targetDisk := filepath.Join(t.TempDir(), "legacy-compat-grow.qcow2")
 	run(t, "create target disk", "qemu-img", "create", "-f", "qcow2", targetDisk, "2G")
 
-	vars := caprf.vars("provision")
+	vars := varsFor(caprf)
 	vars["IMAGE"] = caprf.baseURL + "/image.gz"
 	vars["IMAGE_ALLOW_INSECURE_HTTP"] = "true"
 	vars["DISK_DEVICE"] = "/dev/vda"
 	output := runQEMUProvision(t, findKernel(t), buildProvisionInitramfs(t, vars), targetDisk, 6*time.Minute)
-	t.Logf("legacy compat grow output tail:\n%s", tail(output, 3000))
+	t.Logf("grow last Linux partition output tail:\n%s", tail(output, 3000))
 	assertProvisionSucceeded(t, output)
 	caprf.requireStatuses(t, "init", "success")
 

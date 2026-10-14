@@ -199,3 +199,29 @@ func TestImageChecksumScopeValidation(t *testing.T) {
 		t.Fatal("Validate() accepted provision.image.checksumScope=payload")
 	}
 }
+
+func TestGrowPartitionOptionAndLegacyPreset(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		cfg  Config
+		want string
+	}{
+		{name: "default"},
+		{name: "native", cfg: Config{Provision: ProvisionConfig{Disk: DiskConfig{GrowPartition: "Last-Linux"}}}, want: "last-linux"},
+		{name: "preset", cfg: Config{LegacyCompat: true}, want: "last-linux"},
+		{name: "explicit root wins over preset", cfg: Config{LegacyCompat: true, Provision: ProvisionConfig{Disk: DiskConfig{GrowPartition: "root"}}}, want: "root"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := tt.cfg
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("Validate() = %v", err)
+			}
+			if got := cfg.Provision.Disk.GrowPartition; got != tt.want {
+				t.Fatalf("GrowPartition = %q, want %q", got, tt.want)
+			}
+		})
+	}
+	if err := (&Config{Provision: ProvisionConfig{Disk: DiskConfig{GrowPartition: "all"}}}).Validate(); err == nil {
+		t.Fatal("Validate() accepted provision.disk.growPartition=all")
+	}
+}
