@@ -74,6 +74,12 @@ func (m *Manager) SetSysfsRoot(root string) {
 	m.sysfsRoot = root
 }
 
+// SetProcRoot changes the procfs root that the in-use check reads, "/proc"
+// by default. Tests use it with a fixture tree.
+func (m *Manager) SetProcRoot(root string) {
+	m.procDir = root
+}
+
 // Run executes a host command through the manager's command runner.
 func (m *Manager) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	return m.cmd.Run(ctx, name, args...)

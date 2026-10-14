@@ -173,6 +173,8 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 
 ### CI, build and tests
 
+- The `WIPE_ALL_DISKS` target in-use test uses a fixture with only the target
+  mounted (#677)
 - KVM scenarios `caprf-legacy-compat`, `caprf-native-parity` and `kexec-persist`
   (#585, #648, #607)
 - e2e: loop device partition nodes are awaited, created without udev and

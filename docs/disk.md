@@ -224,18 +224,20 @@ resolve, BOOTy refuses the wipe and the run fails. This also holds for
 `decommission` and `WIPE_ALL_DISKS=true`, which otherwise log a failed disk
 wipe and go on, like the legacy `wipe_all_disks`.
 
-The boot medium is not protected: the ramdisk does not mount the ISO or USB
-stick that it booted from, so a wipe of all disks wipes it like any other
-disk. The mount source
-counts too, for file systems that report an anonymous device number: btrfs
-(with all devices of a multi-device btrfs) and bcachefs (with every device of
-a `/dev/a:/dev/b` source). ZFS names a pool and dataset, not a device, so a
-disk of a mounted ZFS pool is not found. In the
-ramdisk nothing is mounted from a disk, so this changes nothing there. It
-protects a host that runs BOOTy in a privileged container, where
+The mount source counts too, for file systems that report an anonymous
+device number: btrfs (with all devices of a multi-device btrfs) and bcachefs
+(with every device of a `/dev/a:/dev/b` source). ZFS names a pool and
+dataset, not a device, so a disk of a mounted ZFS pool is not found.
+
+In the ramdisk nothing is mounted from a disk, so the check changes nothing
+there. It protects a host that runs BOOTy in a privileged container, where
 `/sys/block` lists the host disks. The check is limited to the mount
 namespace of BOOTy: a disk that only another container or the host mounts is
 not found, so do not run a deprovision in a container that sees host disks.
+
+The boot medium is not protected: the ramdisk does not mount the ISO or USB
+stick that it booted from, so a wipe of all disks wipes it like any other
+disk.
 
 "All disks" means every entry in `/sys/block` except the virtual devices listed
 in [Automatic Detection](#automatic-detection). This includes removable media.
@@ -243,11 +245,11 @@ in [Automatic Detection](#automatic-detection). This includes removable media.
 | Mode | Wipe behaviour |
 | --- | --- |
 | `provision` | Wipe of the target disk. With `SECURE_ERASE=true`, a hardware erase of the target disk. |
-| `provision` with `WIPE_ALL_DISKS=true` | All disks: with `DISCARD_NVME=true`, `blkdiscard` on each NVMe disk, then a wipe of each disk. BOOTy logs failures and continues. `SECURE_ERASE` has no effect. `DISK_DEVICE` does not limit the wipe. |
+| `provision` with `WIPE_ALL_DISKS=true` | All disks: with `DISCARD_NVME=true`, `blkdiscard` on each NVMe disk, then a wipe of each disk. BOOTy logs failed disk wipes and continues, but the run fails when the selected target disk is in use, when every disk is in use or when the in-use check cannot be made; a disk in use is skipped. `SECURE_ERASE` has no effect. `DISK_DEVICE` does not limit the wipe. |
 | `deprovision` (alias `hard`) | `DISK_DEVICE` set: wipe only that disk. `DISK_DEVICE` empty: wipe of all disks. A failed disk fails the run. |
-| `deprovision` with `WIPE_ALL_DISKS=true` | `DISK_DEVICE` empty: the legacy wipe of all disks (`blkdiscard` on NVMe with `DISCARD_NVME=true`, wipe, failures logged). `DISK_DEVICE` set: wipe only that disk. |
+| `deprovision` with `WIPE_ALL_DISKS=true` | `DISK_DEVICE` empty: the legacy wipe of all disks (`blkdiscard` on NVMe with `DISCARD_NVME=true`, wipe, failed disk wipes logged; a disk in use is skipped, and the run fails when every disk is in use or the in-use check cannot be made). `DISK_DEVICE` set: wipe only that disk. |
 | `soft-deprovision` (alias `soft`) | No wipe. BOOTy renames `grub.cfg` to `grub.cfg.bak` in `/boot/grub` (Debian) and `/boot/grub2` (RHEL) on the root partition. A `grub.cfg.bak` that already exists counts as done, so a rerun succeeds. If neither directory has a `grub.cfg` or a `grub.cfg.bak`, or the root cannot be unmounted after the rename, the run fails and BOOTy reports the error to `ERROR_URL`. |
-| `decommission` | Wipe of all disks, best effort. BOOTy logs failures and continues. With `DISCARD_NVME=true`, `blkdiscard` runs on each NVMe disk first. `DISK_DEVICE` and `SECURE_ERASE` have no effect. Then BOOTy removes all EFI boot entries. |
+| `decommission` | Wipe of all disks, best effort. BOOTy logs failed disk wipes and continues; a disk in use is skipped, and the run fails when every disk is in use or the in-use check cannot be made. With `DISCARD_NVME=true`, `blkdiscard` runs on each NVMe disk first. `DISK_DEVICE` and `SECURE_ERASE` have no effect. Then BOOTy removes all EFI boot entries. |
 | `dry-run` (or `DRY_RUN=true`) | No wipe. The dry-run checks do not write to disk. The disk check uses `DISK_DEVICE` or automatic detection and ignores `DISK_SERIAL`. |
 
 Exceptions in the `wipe-disks` step:
