@@ -73,6 +73,13 @@ type ProvisionConfig struct {
 	// Default: nil (true)
 	DiskLinks *bool `yaml:"diskLinks,omitempty" json:"diskLinks,omitempty"`
 
+	// KexecUnmountTarget unmounts every target mount after the kexec kernel
+	// is loaded and before kexec runs. A busy mount is remounted read-only.
+	// The installed OS then starts with clean filesystems instead of a
+	// journal that needs recovery.
+	// Default: nil (true)
+	KexecUnmountTarget *bool `yaml:"kexecUnmountTarget,omitempty" json:"kexecUnmountTarget,omitempty"`
+
 	// DisableKexec skips kexec into the installed kernel and forces a hard reboot.
 	// Automatically set to true in dry-run mode.
 	// Default: false

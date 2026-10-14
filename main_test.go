@@ -21,6 +21,7 @@ import (
 
 	"github.com/telekom/BOOTy/pkg/caprf"
 	"github.com/telekom/BOOTy/pkg/config"
+	"github.com/telekom/BOOTy/pkg/disk"
 	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/provision"
 	"github.com/telekom/BOOTy/pkg/realm"
@@ -388,7 +389,7 @@ func TestTryKexecSkipsWhenSecureBootReEnableRequested(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Provision.SecureBoot.ReEnable = true
 
-	if tryKexec(cfg, false) {
+	if tryKexec(cfg, false, func() (disk.ReleaseReport, error) { return disk.ReleaseReport{}, nil }) {
 		t.Fatal("tryKexec returned true when secure boot re-enable requires hard reboot")
 	}
 }

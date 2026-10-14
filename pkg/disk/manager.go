@@ -1231,6 +1231,71 @@ func (m *Manager) UnmountRecursive(root string) error {
 	return errors.Join(errs...)
 }
 
+// ReleaseReport says what UnmountOrRemountReadOnly did with each mount.
+type ReleaseReport struct {
+	Unmounted  []string // unmounted
+	ReadOnly   []string // busy block device mounts, remounted read-only
+	LeftAlone  []string // busy virtual mounts (proc, sysfs, the /dev bind), left as they are
+	StillWrite []string // busy block device mounts that could not be remounted read-only
+}
+
+// UnmountOrRemountReadOnly unmounts root and its children, deepest first,
+// so that every filesystem below root is clean on disk, for example before
+// kexec. Only a busy mount of a block device is remounted read-only
+// instead. A busy virtual mount (proc, sysfs, the /dev bind) is left as
+// it is. The error lists the block device mounts that stay writable.
+func (m *Manager) UnmountOrRemountReadOnly(root string) (ReleaseReport, error) {
+	var r ReleaseReport
+	targets, err := mountedSubpaths(root)
+	if err != nil {
+		return r, err
+	}
+	sources, err := mountSources()
+	if err != nil {
+		return r, err
+	}
+	var errs []error
+	for _, target := range targets {
+		err := unmountFunc(target, 0)
+		if err == nil || errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.ENOENT) {
+			r.Unmounted = append(r.Unmounted, target)
+			continue
+		}
+		if !strings.HasPrefix(sources[target], "/dev/") {
+			slog.Warn("cannot unmount, leaving it", "mount", target, "error", err)
+			r.LeftAlone = append(r.LeftAlone, target)
+			continue
+		}
+		if rerr := remountReadOnlyFunc(target); rerr != nil {
+			r.StillWrite = append(r.StillWrite, target)
+			errs = append(errs, fmt.Errorf("unmount %s: %w; remount read-only: %w", target, err, rerr))
+			continue
+		}
+		slog.Info("remounted busy mount read-only", "mount", target, "unmountError", err)
+		r.ReadOnly = append(r.ReadOnly, target)
+	}
+	return r, errors.Join(errs...)
+}
+
+var remountReadOnlyFunc = func(target string) error {
+	return syscall.Mount("", target, "", syscall.MS_REMOUNT|syscall.MS_RDONLY, "")
+}
+
+// mountSources maps each mount point in /proc/mounts to its source.
+func mountSources() (map[string]string, error) {
+	data, err := readMountsFile("/proc/mounts")
+	if err != nil {
+		return nil, fmt.Errorf("read mounts: %w", err)
+	}
+	sources := map[string]string{}
+	for line := range strings.Lines(string(data)) {
+		if fields := strings.Fields(line); len(fields) >= 2 {
+			sources[fields[1]] = fields[0]
+		}
+	}
+	return sources, nil
+}
+
 func mountedSubpaths(root string) ([]string, error) {
 	data, err := readMountsFile("/proc/mounts")
 	if err != nil {

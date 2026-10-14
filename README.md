@@ -313,6 +313,7 @@ root is mounted.
 | `DRY_RUN` | `false` | When `true`, forces `MODE=dry-run`: validates prerequisites without destructive writes |
 | `BOOTY_RESUME` | `false` | Enable checkpoint resume — skip previously completed steps on restart |
 | `DISABLE_KEXEC` | `false` | Skip kexec, always hard-reboot. Must stay `false` for A/B preserve-existing upgrades |
+| `KEXEC_UNMOUNT_TARGET` | `true` | Unmount the target filesystems after the kexec kernel is loaded (busy block device mounts go read-only), so the installed OS starts with clean journals |
 | `CAPRF_LEGACY_COMPAT` | `false` | Preset that behaves like the CAPRF legacy shell provisioner. See [CAPRF legacy compatibility](#caprf-legacy-compatibility) |
 | `SUCCESS_ACTION` | `reboot` | `poweroff` powers off after a successful run instead of kexec or reboot. Preset by `CAPRF_LEGACY_COMPAT` |
 | `PROVISIONER_FILES_TARGET` | `target` | `ramdisk` copies `/deploy/file-system` into the ramdisk before the network starts, like `copy_files`, instead of into the installed OS. Preset by `CAPRF_LEGACY_COMPAT` |
@@ -919,11 +920,15 @@ be wrapped in brackets because `:` separates fields in the compact format.
 
 BOOTy uses kexec for fast reboots into the provisioned OS without full firmware
 re-initialization. After provisioning, BOOTy parses the installed GRUB config,
-loads the kernel and initramfs, then executes the kexec syscall.
+loads the kernel and initramfs, unmounts the target filesystems, then executes
+the kexec syscall.
 
 ```bash
 # Disable kexec (force hard reboot via firmware)
 export DISABLE_KEXEC=true
+
+# Keep the target mounted read-write at kexec (default: unmount it first)
+export KEXEC_UNMOUNT_TARGET=false
 ```
 
 BOOTy skips kexec when firmware values changed during provisioning (for

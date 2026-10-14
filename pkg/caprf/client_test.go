@@ -2526,6 +2526,23 @@ func TestParseVarsDiskLinks(t *testing.T) {
 	}
 }
 
+func TestParseVarsKexecUnmountTarget(t *testing.T) {
+	for vars, want := range map[string]*bool{
+		"":                             nil,
+		"KEXEC_UNMOUNT_TARGET=false\n": new(false),
+		"KEXEC_UNMOUNT_TARGET=yes\n":   new(true),
+	} {
+		cfg, err := ParseVars(strings.NewReader(vars))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := cfg.Provision.KexecUnmountTarget
+		if (got == nil) != (want == nil) || (got != nil && *got != *want) {
+			t.Errorf("ParseVars(%q).KexecUnmountTarget = %v, want %v", vars, got, want)
+		}
+	}
+}
+
 func TestParseVarsFilesOptions(t *testing.T) {
 	cfg, err := ParseVars(strings.NewReader("PROVISIONER_FILES_TARGET=ramdisk\nWRITE_RESOLV_CONF=false\nRAMDISK_HOSTNAME=true\n"))
 	if err != nil {

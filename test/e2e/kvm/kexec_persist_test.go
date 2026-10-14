@@ -21,7 +21,8 @@ const (
 // kernel that the last writes before the handoff reached the disk. The
 // marker directory is created by a post-provision command, so it is written
 // just before kexec. Without a sync before kexec it stays in the page cache
-// and is lost.
+// and is lost. Without the unmount before kexec the ext4 journal needs
+// recovery in the second kernel.
 func TestKexecHandoffPersistsTargetWritesQEMU(t *testing.T) {
 	requireRoot(t)
 	qemuAvailable(t)
@@ -63,6 +64,22 @@ exit 1
 		if !strings.Contains(out, want) {
 			t.Fatalf("second kernel output missing %q. tail:\n%s", want, tail([]byte(out), 4000))
 		}
+	}
+	// KEXEC_UNMOUNT_TARGET: the root was unmounted before kexec, so the
+	// second kernel mounts a clean ext4 without journal recovery.
+	// The root is really unmounted, not only remounted read-only: no file of
+	// the target (grub.cfg, kernel, initramfs) stays open.
+	release := ""
+	for line := range strings.Lines(out) {
+		if strings.Contains(line, "released target filesystems before kexec") {
+			release = line
+		}
+	}
+	if !strings.Contains(release, "/newroot]") || !strings.Contains(release, "readOnly=[]") {
+		t.Fatalf("the target root was not unmounted before kexec: %q. tail:\n%s", release, tail([]byte(out), 4000))
+	}
+	if _, second, ok := strings.Cut(out, "attempting kexec"); !ok || strings.Contains(second, "recovery required") {
+		t.Fatalf("the target root needed journal recovery after kexec. tail:\n%s", tail([]byte(out), 4000))
 	}
 }
 
