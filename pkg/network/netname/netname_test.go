@@ -1,9 +1,12 @@
 package netname
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -128,6 +131,11 @@ func TestNames(t *testing.T) {
 	f.pciDev("pci0000:70/0000:70:00.0", false)
 	f.write("bus/pci/slots/255/address", "0000:70\n")
 	f.nic("eth14", "pci0000:70/0000:70:00.0", "1")
+	// A slot with an empty or without an address names no NIC.
+	f.write("bus/pci/slots/12/address", "\n")
+	f.write("bus/pci/slots/13/power", "1\n")
+	f.pciDev("pci0000:80/0000:80:00.0", false)
+	f.nic("eth15", "pci0000:80/0000:80:00.0", "1")
 
 	// SR-IOV VF, InfiniBand and a virtual link get no names.
 	f.pciDev("pci0000:3a/0000:3a:00.0/0000:3b:00.2", false)
@@ -151,6 +159,7 @@ func TestNames(t *testing.T) {
 		"eth12":  {"enp81s0"},
 		"eth13":  {"ens4f0", "enp97s0f0"},
 		"eth14":  {"ens255", "enp112s0"},
+		"eth15":  {"enp128s0"},
 		"eth4":   nil,
 		"ib0":    nil,
 		"dummy0": nil,
@@ -184,17 +193,26 @@ func TestPlan(t *testing.T) {
 		name   string
 		wanted []string
 		want   []Rename
+		warn   bool
 	}{
 		{name: "bm4x frr.conf names", wanted: []string{"enp1s0", "enp2s0"}, want: []Rename{{"eth0", "enp1s0"}, {"eth1", "enp2s0"}}},
 		{name: "kernel names stay", wanted: []string{"eth0", "eth1"}},
-		{name: "unknown name is left to the network setup", wanted: []string{"ens7", "enp2s0", "enp2s0"}, want: []Rename{{"eth1", "enp2s0"}}},
-		{name: "two NICs compute the same name", wanted: []string{"eno1"}},
-		{name: "one NIC computes two wanted names", wanted: []string{"ens9", "enp32s0"}, want: []Rename{{"eth2", "ens9"}}},
+		{name: "unknown name is left to the network setup", wanted: []string{"ens7", "enp2s0"}, want: []Rename{{"eth1", "enp2s0"}}},
+		{name: "a duplicate wanted name is no conflict", wanted: []string{"enp2s0", "enp2s0"}, want: []Rename{{"eth1", "enp2s0"}}},
+		{name: "two NICs compute the same name", wanted: []string{"eno1"}, warn: true},
+		{name: "one NIC computes two wanted names", wanted: []string{"ens9", "enp32s0"}, want: []Rename{{"eth2", "ens9"}}, warn: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+			t.Cleanup(func() { slog.SetDefault(prev) })
 			if got := Plan(f.root, links, tt.wanted); !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("Plan() = %v, want %v", got, tt.want)
+			}
+			if got := strings.Contains(logs.String(), "level=WARN"); got != tt.warn {
+				t.Fatalf("warning logged = %v, want %v; logs:\n%s", got, tt.warn, logs.String())
 			}
 		})
 	}

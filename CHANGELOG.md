@@ -131,7 +131,8 @@ behaviour.
   number error that waiting can not fix (several disks with the serial, a disk
   below `MIN_DISK_SIZE_GB`, also when only `lsblk` sees the serial) ends the
   wait at once. A disk that reports 0 sectors is not there yet, not too
-  small (#670, #684).
+  small. Automatic disk selection skips a disk with 0 sectors (the
+  legacy-compatible selection still takes it) (#670, #684).
 - On a system booted via UEFI, a failure to mount efivarfs, to create the EFI
   boot entry or to remove the managed EFI boot entries now fails provisioning or
   deprovisioning, like the legacy scripts. Before, BOOTy logged a warning and

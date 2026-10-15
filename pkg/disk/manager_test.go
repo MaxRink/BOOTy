@@ -1455,6 +1455,23 @@ func TestIsRemovableMediaAllowEnv(t *testing.T) {
 	}
 }
 
+// A disk that reports 0 sectors is not a candidate for the automatic
+// selection, also when it is NVMe.
+func TestDetectDiskPreferNVMeSkipsZeroSectorDisk(t *testing.T) {
+	sysfs := t.TempDir()
+	writeSysfsBlockDevice(t, sysfs, "nvme0n1", "0\n", 0, "")
+	writeSysfsBlockDevice(t, sysfs, "sda", "0\n", 100, "")
+
+	mgr := newManagerWithSysfs(newMockCommander(), sysfs)
+	disk, err := mgr.DetectDisk(t.Context(), 0)
+	if err != nil {
+		t.Fatalf("DetectDisk: unexpected error: %v", err)
+	}
+	if disk != "/dev/sda" {
+		t.Fatalf("DetectDisk = %q, want /dev/sda", disk)
+	}
+}
+
 func TestFindDiskBySerialSelectsMatchingDisk(t *testing.T) {
 	sysfs := t.TempDir()
 	writeSysfsBlockDevice(t, sysfs, "sda", "0\n", 40, "BOOT-DISK")
