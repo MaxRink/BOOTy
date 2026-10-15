@@ -18,7 +18,7 @@ require (
 	github.com/vishvananda/netns v0.0.5
 	github.com/zcalusic/sysinfo v1.1.3
 	golang.org/x/net v0.60.0
-	golang.org/x/sys v0.48.0
+	golang.org/x/sys v0.49.0
 	google.golang.org/protobuf v1.36.12
 	gopkg.in/yaml.v3 v3.0.1
 )
