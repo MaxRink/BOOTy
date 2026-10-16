@@ -173,6 +173,10 @@ func TestManagedEFIBootEntryLine(t *testing.T) {
 		{line: "Boot0005* Windows Boot Manager", want: false},
 		{line: "BootOrder: 0001,0002", want: false},
 		{line: "Boot0006* Fedora", want: false},
+		// The second mirror disk entry, removed by the legacy pattern too.
+		{line: "Boot0007* ubuntu-disk2 HD(1,GPT,...)/File(\\EFI\\ubuntu\\shimx64.efi)", want: true},
+		{line: "Boot0008* debian-disk2", want: true},
+		{line: "Boot0009* ubuntu-disk3", want: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.line, func(t *testing.T) {

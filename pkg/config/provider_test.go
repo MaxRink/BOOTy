@@ -455,6 +455,13 @@ func TestValidate(t *testing.T) {
 		{name: "network persistence bare bond requires address or vlan", cfg: Config{PersistNetwork: true, OSFamily: "ubuntu", Network: NetworkConfig{Bond: BondConfig{Interfaces: "eth0,eth1"}}}, wantErr: "network.bond.interfaces requires network.static.ip or network.vlan.config"},
 		{name: "invalid network persistence os family", cfg: Config{OSFamily: "windows"}, wantErr: "invalid osFamily"},
 		{name: "valid sysext preload mode", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{DefaultMode: "preload"}}}},
+		{name: "normalizes disk mirroring mode", cfg: Config{Provision: ProvisionConfig{Disk: DiskConfig{MirroringMode: " RAID-1 "}}}, wantNormalized: func(t *testing.T, cfg *Config) {
+			t.Helper()
+			if cfg.Provision.Disk.MirroringMode != "raid-1" {
+				t.Fatalf("MirroringMode = %q, want raid-1", cfg.Provision.Disk.MirroringMode)
+			}
+		}},
+		{name: "invalid disk mirroring mode", cfg: Config{Provision: ProvisionConfig{Disk: DiskConfig{MirroringMode: "raid-5"}}}, wantErr: "mirroringMode"},
 		{name: "normalizes sysext default mode", cfg: Config{Provision: ProvisionConfig{Sysext: SysextConfig{DefaultMode: "PreLoad"}}}, wantNormalized: func(t *testing.T, cfg *Config) {
 			t.Helper()
 			if cfg.Provision.Sysext.DefaultMode != "preload" {

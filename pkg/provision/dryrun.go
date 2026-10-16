@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/telekom/BOOTy/pkg/config"
+	"github.com/telekom/BOOTy/pkg/disk"
 	"github.com/telekom/BOOTy/pkg/health"
 	"github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/network"
@@ -108,6 +109,9 @@ func (o *Orchestrator) DryRun(ctx context.Context) error {
 
 func (o *Orchestrator) dryRunConfigValidation(_ context.Context) DryRunResult {
 	if err := o.validatePartitionLayoutConfig(); err != nil {
+		return DryRunResult{Status: DryRunFail, Message: err.Error()}
+	}
+	if err := o.validateMirroringMode(); err != nil {
 		return DryRunResult{Status: DryRunFail, Message: err.Error()}
 	}
 
@@ -243,6 +247,20 @@ func (o *Orchestrator) dryRunDiskDetection(ctx context.Context) DryRunResult {
 			Message: fmt.Sprintf("configured disk %s exists", o.cfg.Provision.Disk.Device)}
 	}
 
+	if serial := strings.TrimSpace(o.cfg.Provision.Disk.SerialNumber); serial != "" {
+		d, err := o.disk.FindDiskBySerial(ctx, serial, o.cfg.Provision.Disk.MinSizeGB)
+		if err != nil {
+			return DryRunResult{Status: DryRunFail,
+				Message: fmt.Sprintf("configured disk serial %s not found: %v", serial, err)}
+		}
+		return DryRunResult{Status: DryRunPass,
+			Message: fmt.Sprintf("configured disk serial %s is %s", serial, d)}
+	}
+
+	if result, ok := o.dryRunMirrorPair(ctx); ok {
+		return result
+	}
+
 	d, err := o.disk.DetectDisk(ctx, o.cfg.Provision.Disk.MinSizeGB)
 	if err != nil {
 		return DryRunResult{Status: DryRunFail,
@@ -250,6 +268,25 @@ func (o *Orchestrator) dryRunDiskDetection(ctx context.Context) DryRunResult {
 	}
 	return DryRunResult{Status: DryRunPass,
 		Message: fmt.Sprintf("detected disk %s", d)}
+}
+
+// dryRunMirrorPair reports the disk pair that detect-disk would mirror onto.
+// ok is false when mirroring is off or auto mode falls back to one disk.
+func (o *Orchestrator) dryRunMirrorPair(ctx context.Context) (DryRunResult, bool) {
+	mode := o.mirroringMode()
+	if mode != disk.MirroringModeRAID1 && mode != disk.MirroringModeAuto {
+		return DryRunResult{}, false
+	}
+	first, second, found, err := o.disk.DetectMirrorPair(ctx, o.cfg.Provision.Disk.MinSizeGB)
+	switch {
+	case err != nil:
+		return DryRunResult{Status: DryRunFail, Message: fmt.Sprintf("mirror pair detection: %v", err)}, true
+	case found:
+		return DryRunResult{Status: DryRunPass, Message: fmt.Sprintf("detected mirror pair %s and %s", first, second)}, true
+	case mode == disk.MirroringModeRAID1:
+		return DryRunResult{Status: DryRunFail, Message: "disk mirroring mode raid-1 requested but no pair of equally sized disks was found"}, true
+	}
+	return DryRunResult{}, false
 }
 
 func (o *Orchestrator) dryRunImagePrerequisites(ctx context.Context) DryRunResult {

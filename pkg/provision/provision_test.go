@@ -1317,9 +1317,10 @@ func TestProvisionStepsContainEFIVars(t *testing.T) {
 	// provisioning input validation,
 	// setup-nvme-namespaces, setup-raid, mount-boot, mount-shared-data,
 	// overlayFS config, apply-sysexts, OCI pre-pulls, serial console
-	// resolution, EFI fallback install, and secureboot chain verification.
-	if len(steps) != 47 {
-		t.Errorf("expected 47 provisioning steps, got %d", len(steps))
+	// resolution, EFI fallback install, secureboot chain verification, and the
+	// disk mirroring steps (mirror-root, configure-mdadm, install-esp-sync, mirror EFI entry).
+	if len(steps) != 51 {
+		t.Errorf("expected 51 provisioning steps, got %d", len(steps))
 	}
 }
 

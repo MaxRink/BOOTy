@@ -134,6 +134,35 @@ func (m *Manager) StopRAIDArrays(ctx context.Context) error {
 	return nil
 }
 
+// ClearRAIDSuperblocks zeroes the MD superblock of every block device that
+// lsblk reports as linux_raid_member, whole disks as well as partitions, like
+// clear_mdadm_superblocks of the CAPRF legacy provisioner. It must run after
+// StopRAIDArrays, which releases the members. The quick wipe clears only the
+// disk signatures, so without this the metadata 1.0 superblocks at the end of
+// old member partitions survive and come back with a replicated or restored
+// partition table. disks limits the scan to those disks and their
+// partitions; without disks it covers every block device. A failed zeroing
+// is logged and the run goes on, like the legacy script.
+func (m *Manager) ClearRAIDSuperblocks(ctx context.Context, disks ...string) error {
+	args := append([]string{"-ln", "-o", "PATH,FSTYPE"}, disks...)
+	out, err := m.cmd.Run(ctx, "lsblk", args...)
+	if err != nil {
+		return fmt.Errorf("list block devices for RAID superblocks: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	for line := range strings.Lines(string(out)) {
+		fields := strings.Fields(line)
+		if len(fields) != 2 || fields[1] != "linux_raid_member" {
+			continue
+		}
+		slog.Info("zeroing RAID superblock", "device", fields[0])
+		if zeroOut, zeroErr := m.cmd.Run(ctx, "mdadm", "--zero-superblock", fields[0]); zeroErr != nil {
+			slog.Warn("mdadm --zero-superblock failed, continuing", "device", fields[0],
+				"output", strings.TrimSpace(string(zeroOut)), "error", zeroErr)
+		}
+	}
+	return nil
+}
+
 func isNoArraysFound(out []byte, err error) bool {
 	combined := strings.ToLower(strings.TrimSpace(string(out)))
 	if err != nil {

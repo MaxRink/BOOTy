@@ -3,7 +3,6 @@
 package kvm
 
 import (
-	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
@@ -232,12 +231,14 @@ func compressGzip(t *testing.T, src string) string {
 	}
 	defer out.Close()
 
-	gz := gzip.NewWriter(out)
-	if _, err := io.Copy(gz, in); err != nil {
+	// The mirror test converts a cloud image to a large raw file, mostly
+	// sparse/zero-filled. Use gzip's fast level: the guest only needs a valid
+	// gzip stream, while the default level can spend the whole 15-minute test
+	// budget compressing unused image space on a busy runner.
+	cmd := exec.Command("gzip", "-1", "-c", src)
+	cmd.Stdout = out
+	if err := cmd.Run(); err != nil {
 		t.Fatalf("gzip copy: %v", err)
-	}
-	if err := gz.Close(); err != nil {
-		t.Fatalf("gzip close: %v", err)
 	}
 
 	return dst
@@ -331,6 +332,15 @@ func buildProvisionInitramfsWithFiles(t *testing.T, vars, files map[string]strin
 		buildBooty(t, bootyBin)
 	}
 	copyBinary(t, bootyBin, filepath.Join(rootDir, "booty"))
+	// The mirrored-ESP provisioner installs this helper from the ramdisk.
+	// Keep the KVM fixture equivalent to the production initrd image so the
+	// failover tests exercise installation and synchronization together.
+	espSyncBin := filepath.Join(dir, "booty-esp-sync")
+	buildESPSync(t, espSyncBin)
+	if err := os.MkdirAll(filepath.Join(rootDir, "usr", "lib", "booty"), 0o755); err != nil {
+		t.Fatalf("create ESP synchronizer asset directory: %v", err)
+	}
+	copyBinary(t, espSyncBin, filepath.Join(rootDir, "usr", "lib", "booty", "booty-esp-sync"))
 
 	// Copy busybox.
 	busyboxBin := findBusybox(t)
@@ -355,7 +365,9 @@ func buildProvisionInitramfsWithFiles(t *testing.T, vars, files map[string]strin
 	essentialTools := []string{
 		"partprobe", "sgdisk", "sfdisk", "mkfs.ext4", "mkfs.vfat", "e2fsck", "resize2fs", "wipefs", "mdadm", "lvm",
 		"losetup", "dd", "growpart", "partx", "blockdev", "flock", "lsblk", "blkdiscard", "blkid",
-		"efibootmgr",
+		// Root disk mirroring: resizepart for growpart and efibootmgr for
+		// the boot entries on UEFI runs.
+		"resizepart", "efibootmgr",
 	}
 	for _, tool := range essentialTools {
 		toolPath, err := exec.LookPath(tool)
@@ -399,7 +411,7 @@ func buildProvisionInitramfsWithFiles(t *testing.T, vars, files map[string]strin
 	// Write /init script.
 	initScript := `#!/bin/sh
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
-for mod in virtio_pci virtio_net e1000 e1000e virtio_scsi sd_mod fat vfat nls_cp437 nls_iso8859-1 nls_ascii nls_utf8; do
+for mod in virtio_pci virtio_net virtio_blk e1000 e1000e virtio_scsi sd_mod fat vfat nls_cp437 nls_iso8859-1 nls_ascii nls_utf8 efivarfs md_mod raid1; do
 	modprobe "$mod" 2>/dev/null || true
 done
 exec /booty
@@ -718,6 +730,15 @@ func mountReadOnlyWithRetry(t *testing.T, devPath, mountDir string, beforeRetry 
 	t.Fatalf("mount provisioned root: mount [-o ro %s %s] failed: %v\n%s", devPath, mountDir, err, out)
 }
 
+func buildESPSync(t *testing.T, output string) {
+	t.Helper()
+	cmd := exec.Command("go", "build", "-trimpath", "-ldflags", "-s -w", "-o", output, "github.com/telekom/BOOTy/cmd/booty-esp-sync")
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build ESP synchronizer: %v\n%s", err, out)
+	}
+}
+
 func buildBooty(t *testing.T, output string) {
 	t.Helper()
 	cmd := exec.Command("go", "build",
@@ -772,6 +793,7 @@ func copyFilesystemModulesForRelease(t *testing.T, rootDir, release string) {
 		"vfat", "fat", "nls_cp437", "nls_iso8859-1", "nls_ascii", "nls_utf8",
 		"virtio_pci", "virtio_net", "e1000", "e1000e",
 		"virtio_scsi", "sd_mod",
+		"virtio_blk", "md_mod", "raid1", "efivarfs",
 	} {
 		copyKernelModuleWithDependencies(t, rootDir, release, module, copied, map[string]bool{})
 	}

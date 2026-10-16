@@ -56,14 +56,19 @@ func TestDiskOptionsAndLegacyPreset(t *testing.T) {
 		wantWipeAll   bool
 		wantDiscard   bool
 		wantDepth     string
+		wantRAIDClear string
 	}{
 		{name: "defaults"},
-		{name: "native", disk: DiskConfig{Selection: "LSBLK", WipeAllDisks: new(true), DiscardNVMe: new(true), WipeDepth: "Quick"}, wantSelection: "lsblk", wantWipeAll: true, wantDiscard: true, wantDepth: "quick"},
-		{name: "preset", legacy: true, wantSelection: "lsblk", wantWipeAll: true, wantDiscard: true, wantDepth: "quick"},
+		{
+			name:          "native",
+			disk:          DiskConfig{Selection: "LSBLK", WipeAllDisks: new(true), DiscardNVMe: new(true), WipeDepth: "Quick", RAIDSuperblockClear: " All "},
+			wantSelection: "lsblk", wantWipeAll: true, wantDiscard: true, wantDepth: "quick", wantRAIDClear: "all",
+		},
+		{name: "preset", legacy: true, wantSelection: "lsblk", wantWipeAll: true, wantDiscard: true, wantDepth: "quick", wantRAIDClear: "all"},
 		{
 			name: "explicit options win over preset", legacy: true,
-			disk:          DiskConfig{Selection: "prefer-nvme", WipeAllDisks: new(false), DiscardNVMe: new(false), WipeDepth: "thorough"},
-			wantSelection: "prefer-nvme", wantDepth: "thorough",
+			disk:          DiskConfig{Selection: "prefer-nvme", WipeAllDisks: new(false), DiscardNVMe: new(false), WipeDepth: "thorough", RAIDSuperblockClear: "wiped"},
+			wantSelection: "prefer-nvme", wantDepth: "thorough", wantRAIDClear: "wiped",
 		},
 	}
 	for _, tt := range tests {
@@ -76,6 +81,9 @@ func TestDiskOptionsAndLegacyPreset(t *testing.T) {
 			if d.WipeDepth != tt.wantDepth {
 				t.Fatalf("wipeDepth = %q, want %q", d.WipeDepth, tt.wantDepth)
 			}
+			if d.RAIDSuperblockClear != tt.wantRAIDClear {
+				t.Fatalf("raidSuperblockClear = %q, want %q", d.RAIDSuperblockClear, tt.wantRAIDClear)
+			}
 			if d.Selection != tt.wantSelection || BoolOr(d.WipeAllDisks, false) != tt.wantWipeAll || BoolOr(d.DiscardNVMe, false) != tt.wantDiscard {
 				t.Fatalf("disk = %q %v %v, want %q %v %v", d.Selection, BoolOr(d.WipeAllDisks, false), BoolOr(d.DiscardNVMe, false),
 					tt.wantSelection, tt.wantWipeAll, tt.wantDiscard)
@@ -87,6 +95,9 @@ func TestDiskOptionsAndLegacyPreset(t *testing.T) {
 	}
 	if err := (&Config{Provision: ProvisionConfig{Disk: DiskConfig{WipeDepth: "deep"}}}).Validate(); err == nil {
 		t.Fatal("Validate() accepted provision.disk.wipeDepth=deep")
+	}
+	if err := (&Config{Provision: ProvisionConfig{Disk: DiskConfig{RAIDSuperblockClear: "target"}}}).Validate(); err == nil {
+		t.Fatal("Validate() accepted provision.disk.raidSuperblockClear=target")
 	}
 }
 
@@ -293,17 +304,18 @@ func TestMachineCommandsModeAndLegacyPreset(t *testing.T) {
 // Errors of the CAPRF parity options name the YAML option and the vars key.
 func TestParityOptionErrorsNameBothKeys(t *testing.T) {
 	for want, cfg := range map[string]Config{
-		"network.waitMode (NETWORK_WAIT_MODE)":                  {Network: NetworkConfig{WaitMode: "x"}},
-		"network.waitMaxAttempts (NETWORK_WAIT_MAX_ATTEMPTS)":   {Network: NetworkConfig{WaitMode: NetworkWaitRounds, WaitMaxAttempts: new(-1)}},
-		"provision.machineCommandsMode (MACHINE_COMMANDS_MODE)": {Provision: ProvisionConfig{MachineCommandsMode: "x"}},
-		"successAction (SUCCESS_ACTION)":                        {SuccessAction: "x"},
-		"failureAction (FAILURE_ACTION)":                        {FailureAction: "x"},
-		"provision.disk.selection (DISK_SELECTION)":             {Provision: ProvisionConfig{Disk: DiskConfig{Selection: "x"}}},
-		"provisionerFilesTarget (PROVISIONER_FILES_TARGET)":     {ProvisionerFilesTarget: "x"},
-		"provision.grubCmdlineMode (GRUB_CMDLINE_MODE)":         {Provision: ProvisionConfig{GRUBCmdlineMode: "x"}},
-		"provision.firmware.numVFsMode (NUM_VFS_MODE)":          {Provision: ProvisionConfig{Firmware: FirmwareConfig{NumVFsMode: "x"}}},
-		"provision.disk.growPartition (GROW_PARTITION)":         {Provision: ProvisionConfig{Disk: DiskConfig{GrowPartition: "x"}}},
-		"provision.disk.wipeDepth (WIPE_DEPTH)":                 {Provision: ProvisionConfig{Disk: DiskConfig{WipeDepth: "x"}}},
+		"network.waitMode (NETWORK_WAIT_MODE)":                       {Network: NetworkConfig{WaitMode: "x"}},
+		"network.waitMaxAttempts (NETWORK_WAIT_MAX_ATTEMPTS)":        {Network: NetworkConfig{WaitMode: NetworkWaitRounds, WaitMaxAttempts: new(-1)}},
+		"provision.machineCommandsMode (MACHINE_COMMANDS_MODE)":      {Provision: ProvisionConfig{MachineCommandsMode: "x"}},
+		"successAction (SUCCESS_ACTION)":                             {SuccessAction: "x"},
+		"failureAction (FAILURE_ACTION)":                             {FailureAction: "x"},
+		"provision.disk.selection (DISK_SELECTION)":                  {Provision: ProvisionConfig{Disk: DiskConfig{Selection: "x"}}},
+		"provisionerFilesTarget (PROVISIONER_FILES_TARGET)":          {ProvisionerFilesTarget: "x"},
+		"provision.grubCmdlineMode (GRUB_CMDLINE_MODE)":              {Provision: ProvisionConfig{GRUBCmdlineMode: "x"}},
+		"provision.firmware.numVFsMode (NUM_VFS_MODE)":               {Provision: ProvisionConfig{Firmware: FirmwareConfig{NumVFsMode: "x"}}},
+		"provision.disk.growPartition (GROW_PARTITION)":              {Provision: ProvisionConfig{Disk: DiskConfig{GrowPartition: "x"}}},
+		"provision.disk.wipeDepth (WIPE_DEPTH)":                      {Provision: ProvisionConfig{Disk: DiskConfig{WipeDepth: "x"}}},
+		"provision.disk.raidSuperblockClear (RAID_SUPERBLOCK_CLEAR)": {Provision: ProvisionConfig{Disk: DiskConfig{RAIDSuperblockClear: "x"}}},
 	} {
 		err := cfg.Validate()
 		if err == nil || !strings.Contains(err.Error(), want) {

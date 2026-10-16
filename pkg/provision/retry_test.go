@@ -172,6 +172,7 @@ func TestDefaultPolicies(t *testing.T) {
 	required := []string{
 		"report-init", "configure-dns", "stream-image",
 		"setup-raid", "detect-disk", "partprobe", "report-success",
+		"create-efi-boot-entry", "create-mirror-efi-boot-entry",
 	}
 	for _, name := range required {
 		if _, ok := DefaultPolicies[name]; !ok {

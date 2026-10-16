@@ -364,6 +364,11 @@ provision:
     # and the table) | quick (signature wipes on the disks only, like wipe_all_disks)
     wipeDepth: quick
 
+    # raidSuperblockClear (RAID_SUPERBLOCK_CLEAR): wiped (default: zero the RAID
+    # superblocks on the disks that wipe-disks wipes) | all (every disk, like
+    # clear_mdadm_superblocks)
+    raidSuperblockClear: all
+
     # growPartition (GROW_PARTITION): root (default) | last-linux (last GPT Linux partition)
     growPartition: last-linux
 

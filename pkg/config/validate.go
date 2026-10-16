@@ -122,6 +122,10 @@ func (c *Config) validateProvisionFeatureConfigs() []string {
 }
 
 func (c *Config) validateEnums() []string {
+	return append(c.validatePrimaryEnums(), c.validateFeatureEnums()...)
+}
+
+func (c *Config) validatePrimaryEnums() []string {
 	validators := []func() string{
 		func() string {
 			return validateEnum(c.Mode, "mode", "provision", "deprovision", "soft-deprovision", "soft", "hard", "decommission", "standby", "dry-run", "check")
@@ -172,11 +176,24 @@ func (c *Config) validateEnums() []string {
 			return validateEnumLower(c.Provision.Disk.WipeDepth, "provision.disk.wipeDepth (WIPE_DEPTH)", WipeDepthThorough, WipeDepthQuick)
 		},
 		func() string {
+			return validateEnumLower(c.Provision.Disk.RAIDSuperblockClear, "provision.disk.raidSuperblockClear (RAID_SUPERBLOCK_CLEAR)",
+				RAIDSuperblockClearWiped, RAIDSuperblockClearAll)
+		},
+		func() string {
 			return validateEnumLower(c.Agent.DeprovisionSuccessAction, "agent.deprovisionSuccessAction", AgentDeprovisionStandby)
 		},
 		func() string {
 			return validateEnumLower(c.Network.BGP.PeerMode, "network.bgp.peerMode", "unnumbered", "dual", "numbered")
 		},
+		func() string {
+			return validateEnumLower(c.Provision.Disk.MirroringMode, "provision.disk.mirroringMode", "raid-1", "auto", "none")
+		},
+	}
+	return collectValidationErrors(validators)
+}
+
+func (c *Config) validateFeatureEnums() []string {
+	validators := []func() string{
 		func() string {
 			return validateEnumLower(c.Network.BGP.UnderlayAF, "network.bgp.underlayAF", "ipv4")
 		},
@@ -194,6 +211,10 @@ func (c *Config) validateEnums() []string {
 		},
 	}
 
+	return collectValidationErrors(validators)
+}
+
+func collectValidationErrors(validators []func() string) []string {
 	var errs []string
 	for _, v := range validators {
 		if msg := v(); msg != "" {
@@ -305,6 +326,7 @@ func (c *Config) normalize() {
 		&c.Provision.TargetOS,
 		&c.Provision.Image.ChecksumType,
 		&c.Provision.Image.ChecksumScope,
+		&c.Provision.Disk.MirroringMode,
 		&c.Network.Mode,
 		&c.Network.WaitMode,
 		&c.Network.BGP.PeerMode,
@@ -326,6 +348,7 @@ func (c *Config) normalize() {
 		&c.Provision.GRUBCmdlineMode,
 		&c.Provision.Firmware.NumVFsMode,
 		&c.Provision.Disk.WipeDepth,
+		&c.Provision.Disk.RAIDSuperblockClear,
 		&c.Provision.Disk.GrowPartition,
 		&c.Agent.DeprovisionSuccessAction,
 	}

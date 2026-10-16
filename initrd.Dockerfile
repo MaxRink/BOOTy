@@ -79,6 +79,7 @@ RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
       -X github.com/telekom/BOOTy/pkg/buildinfo.commit=${BOOTY_BUILD} \
       -X github.com/telekom/BOOTy/pkg/buildinfo.flavor=${BOOTY_FLAVOR}" -o init
 RUN upx -9 init
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -w" -o esp-sync ./cmd/booty-esp-sync
 
 # Build a removable UEFI fallback loader that BOOTy can copy into a target ESP.
 # The embedded config loads EFI/BOOT/grub.cfg from the ESP; BOOTy writes that
@@ -182,6 +183,7 @@ RUN apt-get -o Acquire::Retries=5 update && \
     #   Mellanox/NVIDIA:  mlx4_core mlx4_en mlx5_core mlxfw
     #   Emulex/Broadcom:  be2net
     #   Device-mapper:    dm_mod dm_crypt (LUKS encryption)
+    #   Software RAID:    md_mod raid1 (DISK_MIRRORING_MODE, explicit RAID arrays)
     #   IPMI:             ipmi_msghandler ipmi_devintf ipmi_si ipmi_ssif
     for m in \
         virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev \
@@ -198,6 +200,7 @@ RUN apt-get -o Acquire::Retries=5 update && \
         mlx4_core mlx4_en mlx5_core mlxfw \
         be2net \
         dm_mod dm_crypt \
+        md_mod raid1 \
         ipmi_msghandler ipmi_devintf ipmi_si ipmi_ssif; do \
         # Copy module + all transitive dependencies via modprobe
         modprobe --show-depends -d /tmp/kernel -S "$KVER" "$m" 2>/dev/null \
@@ -301,6 +304,8 @@ COPY --from=lvm /LVM2.2.03.27/tools/lvm sbin/
 RUN for cmd in pvcreate vgs vgcreate lvcreate; do ln -sf lvm "sbin/${cmd}"; done
 COPY --from=sfdisk /util-linux/sfdisk.static bin/sfdisk
 COPY --from=dev /go/src/github.com/telekom/BOOTy/init .
+RUN mkdir -p usr/lib/booty
+COPY --from=dev /go/src/github.com/telekom/BOOTy/esp-sync usr/lib/booty/booty-esp-sync
 COPY --from=efi-fallback /out/ usr/lib/booty/efi/
 
 # FRR binaries for EVPN networking
@@ -451,6 +456,8 @@ RUN cp /usr/bin/growpart bin/growpart
 
 # BOOTy init binary (static, CGO-enabled)
 COPY --from=dev /go/src/github.com/telekom/BOOTy/init .
+RUN mkdir -p usr/lib/booty
+COPY --from=dev /go/src/github.com/telekom/BOOTy/esp-sync usr/lib/booty/booty-esp-sync
 
 # Minimal networking tools (DHCP mode — no FRR, no BGP)
 COPY --from=tools /sbin/ip bin/ip
@@ -480,6 +487,8 @@ COPY --from=tools /usr/sbin/mkfs.xfs sbin/mkfs.xfs
 COPY --from=tools /usr/sbin/xfs_growfs sbin/xfs_growfs
 COPY --from=tools /usr/sbin/xfs_repair sbin/xfs_repair
 COPY --from=tools /usr/bin/btrfs bin/btrfs
+# UEFI boot entries for the target disk and, with DISK_MIRRORING_MODE, the mirror disk.
+COPY --from=tools /usr/bin/efibootmgr bin/efibootmgr
 
 # Copy pre-collected shared libraries (slim was previously missing lib copying
 # entirely, breaking all dynamically linked tool binaries at runtime).
@@ -522,6 +531,8 @@ COPY --from=busybox /build/initramfs/bin/growpart bin/growpart
 
 # BOOTy init binary (with GoBGP compiled in)
 COPY --from=dev /go/src/github.com/telekom/BOOTy/init .
+RUN mkdir -p usr/lib/booty
+COPY --from=dev /go/src/github.com/telekom/BOOTy/esp-sync usr/lib/booty/booty-esp-sync
 COPY --from=efi-fallback /out/ usr/lib/booty/efi/
 
 # LVM + sfdisk for disk management

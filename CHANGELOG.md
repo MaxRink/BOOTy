@@ -31,6 +31,14 @@ behaviour.
 
 ### Behaviour changes in all modes
 
+- Provisioning and hard deprovision zero the superblock of every
+  `linux_raid_member` (whole disks and partitions) on the disks they wipe,
+  after `stop-raid` stopped the arrays: provisioning on the target and mirror
+  disk, or on every disk with `WIPE_ALL_DISKS=true`; hard deprovision on the
+  device override and its mirror companion, else on every disk. The new
+  `RAID_SUPERBLOCK_CLEAR=all` (preset by `CAPRF_LEGACY_COMPAT`) zeroes them on
+  every disk of the host in `stop-raid`, like `clear_mdadm_superblocks` of the
+  CAPRF provisioner (#581).
 - GoBGP mode with `frr.conf` neighbors: the vars `BGP_PEER_MODE`,
   `BGP_INTERFACES`, `BGP_NEIGHBORS`, `BGP_REMOTE_ASN`, `BGP_KEEPALIVE` and
   `BGP_HOLD` no longer apply (each session takes its own values or the
@@ -221,6 +229,14 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   of a token without renewal. When the token can not be renewed or expires, BOOTy stops the
   active task, reports the reason to `ERROR_URL` and ends like a failed run
   (#680)
+- `DISK_MIRRORING_MODE` (`raid-1`|`auto`|`none`): mirrors the root as
+  `/dev/md2` and a separate `/boot` as `/dev/md1` with RAID1 metadata 1.0
+  across two equal disks, like the CAPRF provisioner. It copies the ESP to the
+  second disk with a `<label>-disk2` UEFI boot entry, installs GRUB on both
+  disks on BIOS, and installs the `booty-esp-sync` service that copies later
+  ESP changes to the other disk. Soft deprovision refuses a mirrored root (#581)
+- `RAID_SUPERBLOCK_CLEAR` (`wiped`|`all`): disks on which provisioning zeroes
+  old RAID superblocks (#581)
 
 ### Security
 

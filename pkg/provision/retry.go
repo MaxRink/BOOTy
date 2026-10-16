@@ -29,6 +29,8 @@ var DefaultPolicies = map[string]RetryPolicy{
 	"partprobe":             {MaxRetries: 3, InitialDelay: 1 * time.Second, MaxDelay: 5 * time.Second, Jitter: 0.0, Transient: true},
 	"report-success":        {MaxRetries: 5, InitialDelay: 2 * time.Second, MaxDelay: 30 * time.Second, Jitter: 0.2, Transient: true},
 	"create-efi-boot-entry": {MaxRetries: 2, InitialDelay: 1 * time.Second, MaxDelay: 5 * time.Second, Jitter: 0.0, Transient: true},
+	// The second disk boot entry uses efibootmgr like create-efi-boot-entry.
+	"create-mirror-efi-boot-entry": {MaxRetries: 2, InitialDelay: 1 * time.Second, MaxDelay: 5 * time.Second, Jitter: 0.0, Transient: true},
 }
 
 // WithRetry executes fn with the given retry policy.

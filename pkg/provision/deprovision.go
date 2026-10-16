@@ -72,7 +72,7 @@ func (o *Orchestrator) deprovisionSteps(mode string) []Step {
 			Step{"remove-efi-entries", o.removeEFIBootEntries},
 			Step{"select-deprovision-disk", o.selectDeprovisionDisk},
 			Step{"disable-lvm", o.disableLVM},
-			Step{"stop-raid", o.stopRAID},
+			Step{"stop-raid", o.stopRAIDForDeprovision},
 			Step{"wipe-disks", o.wipeOrSecureEraseDisks},
 		)
 	}
@@ -126,6 +126,9 @@ func (o *Orchestrator) selectDeprovisionDisk(ctx context.Context) error {
 	if device == "" {
 		device, name = strings.TrimSpace(o.cfg.Provision.Disk.Device), "provision.disk.device/DISK_DEVICE"
 	}
+	// The ramdisk has no udev and BOOTy creates no /dev/disk links before
+	// the deprovision disk selection, so an alias can never exist here.
+	// detect-disk of provisioning uses the same rule.
 	if err := checkRamdiskDevicePath(name, device); err != nil {
 		return err
 	}
@@ -139,6 +142,13 @@ func (o *Orchestrator) selectDeprovisionDisk(ctx context.Context) error {
 		return nil
 	}
 	o.targetDisk = device
+	// If a configured target is a member of an assembled BOOTy mirror, retain
+	// its companion before stop-raid tears the array down. Auto mode may also
+	// have selected a single disk, so only an observed array membership expands
+	// the wipe scope.
+	if err := o.captureMirrorCompanion(ctx, device); err != nil {
+		return err
+	}
 	o.log.Info("using configured deprovision disk", "device", device)
 	return nil
 }
@@ -154,6 +164,9 @@ func (o *Orchestrator) configuredDeprovisionDisk() (string, error) {
 		device := strings.TrimSpace(candidate.device)
 		if device == "" {
 			continue
+		}
+		if err := checkRamdiskDevicePath(candidate.name, device); err != nil {
+			return "", err
 		}
 		if err := validateConfiguredBlockDevice(candidate.name, device); err != nil {
 			return "", err
@@ -201,6 +214,18 @@ func (o *Orchestrator) softDeprovision(ctx context.Context) error {
 	root, err := o.disk.FindRootPartition(parts)
 	if err != nil {
 		return fmt.Errorf("finding root: %w", err)
+	}
+	// A member of a DISK_MIRRORING_MODE array mounts as a plain filesystem,
+	// but writing to it bypasses the array, and the other disk stays
+	// bootable. Hard deprovision without a device override wipes both disks.
+	fsType, err := o.disk.FilesystemType(ctx, root.Node)
+	if err != nil {
+		// Without the type BOOTy can not rule out a RAID member, and a
+		// mount could still recognize the filesystem inside it.
+		return fmt.Errorf("detecting root filesystem type: %w", err)
+	}
+	if fsType == "linux_raid_member" {
+		return fmt.Errorf("root partition %s is a RAID member of a mirrored install; soft deprovision supports single-disk roots only, use hard deprovision without a device override", root.Node)
 	}
 	if err := o.disk.MountPartition(ctx, root.Node, newroot); err != nil {
 		return fmt.Errorf("mounting root: %w", err)
@@ -284,4 +309,101 @@ func NotWipedNote(disks []string) string {
 		return ""
 	}
 	return "; not wiped, in use: " + strings.Join(disks, ", ")
+}
+
+func canonicalBlockDevice(device string) string {
+	if !strings.HasPrefix(device, "/dev/disk/") {
+		return device
+	}
+	resolved, err := evalRootSymlinks(device)
+	if err != nil || !strings.HasPrefix(resolved, "/dev/") {
+		return ""
+	}
+	return resolved
+}
+
+// wholeDiskForPartition returns the whole disk that holds device, or device
+// itself when it is no partition, such as a whole disk, /dev/md2 or
+// /dev/dm-0. It asks sysfs instead of parsing the name: a partition has a
+// "partition" attribute, and its sysfs directory sits in the directory of
+// its parent disk. A device that sysfs does not know is an error, because
+// then the wipe scope can not be told.
+func wholeDiskForPartition(device string) (string, error) {
+	if !strings.HasPrefix(device, "/dev/") {
+		return "", fmt.Errorf("%q is not a /dev/ path", device)
+	}
+	dir := filepath.Join(sysBlockRoot, filepath.Base(device))
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s in sysfs: %w", device, err)
+	}
+	if _, err := os.Stat(filepath.Join(resolved, "partition")); errors.Is(err, fs.ErrNotExist) {
+		return device, nil
+	} else if err != nil {
+		return "", fmt.Errorf("check whether %s is a partition: %w", device, err)
+	}
+	return "/dev/" + filepath.Base(filepath.Dir(resolved)), nil
+}
+
+func (o *Orchestrator) captureMirrorCompanion(ctx context.Context, target string) error {
+	mode := o.mirroringMode()
+	if mode != disk.MirroringModeRAID1 && mode != disk.MirroringModeAuto {
+		return nil
+	}
+	targetDisk, err := wholeDiskForPartition(target)
+	if err != nil {
+		return fmt.Errorf("refusing scoped deprovision: %w", err)
+	}
+	var companion string
+	for _, array := range []string{disk.MirrorRootArray, disk.MirrorBootArray} {
+		arrayCompanion, err := o.mirrorArrayCompanion(ctx, array, targetDisk)
+		if err != nil {
+			return err
+		}
+		if arrayCompanion == "" {
+			continue
+		}
+		if companion != "" && companion != arrayCompanion {
+			return fmt.Errorf("refusing scoped deprovision: mirror arrays disagree on companion disk (%s and %s)", companion, arrayCompanion)
+		}
+		companion = arrayCompanion
+	}
+	if companion != "" {
+		o.mirrorDisk = companion
+	}
+	return nil
+}
+
+func (o *Orchestrator) mirrorArrayCompanion(ctx context.Context, array, targetDisk string) (string, error) {
+	members, err := o.disk.MirrorMembers(ctx, array)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "no such") || strings.Contains(strings.ToLower(err.Error()), "not found") {
+			return "", nil
+		}
+		return "", err
+	}
+	disks := make(map[string]struct{}, len(members))
+	for _, originalMember := range members {
+		member := canonicalBlockDevice(originalMember)
+		if member == "" {
+			return "", fmt.Errorf("refusing scoped deprovision: cannot resolve mirror member %q", originalMember)
+		}
+		wholeDisk, err := wholeDiskForPartition(member)
+		if err != nil {
+			return "", fmt.Errorf("refusing scoped deprovision: mirror member %s: %w", originalMember, err)
+		}
+		disks[wholeDisk] = struct{}{}
+	}
+	if _, ok := disks[targetDisk]; !ok {
+		return "", nil
+	}
+	if len(disks) != 2 {
+		return "", fmt.Errorf("refusing scoped deprovision: mirror array %s has %d whole-disk members, want exactly 2", array, len(disks))
+	}
+	for candidate := range disks {
+		if candidate != targetDisk {
+			return candidate, nil
+		}
+	}
+	return "", nil
 }

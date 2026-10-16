@@ -643,6 +643,96 @@ func (c *Configurator) InstallEFIFallbackLoader(ctx context.Context, diskDev, ro
 	return nil
 }
 
+const espSyncService = `[Unit]
+Description=Synchronize the mirrored EFI system partition
+After=local-fs.target
+ConditionPathIsMountPoint=/boot/efi
+
+[Service]
+Type=simple
+ExecStart=/usr/local/libexec/booty-esp-sync --source /boot/efi --partuuid-a %s --partuuid-b %s --lock /run/lock/booty-esp-sync.lock --marker /run/booty/esp-sync.ready
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+`
+
+// validateESPPARTUUIDs trims both ESP PARTUUIDs and rejects empty, equal
+// or malformed values, which end up on the service command line.
+func validateESPPARTUUIDs(sourcePartUUID, destinationPartUUID string) (source, destination string, err error) {
+	sourcePartUUID = strings.TrimSpace(sourcePartUUID)
+	destinationPartUUID = strings.TrimSpace(destinationPartUUID)
+	if sourcePartUUID == "" || destinationPartUUID == "" || sourcePartUUID == destinationPartUUID {
+		return "", "", fmt.Errorf("invalid mirrored ESP PARTUUIDs")
+	}
+	for name, value := range map[string]string{"source": sourcePartUUID, "destination": destinationPartUUID} {
+		for _, r := range value {
+			if !isPARTUUIDChar(r) {
+				return "", "", fmt.Errorf("invalid %s ESP PARTUUID %q", name, value)
+			}
+		}
+	}
+	return sourcePartUUID, destinationPartUUID, nil
+}
+
+func isPARTUUIDChar(r rune) bool {
+	return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F') || r == '-'
+}
+
+// InstallESPSync installs the target-side synchronizer only for a mirrored
+// installation. PARTUUIDs are recorded so the service never guesses a peer
+// disk from filesystem UUIDs shared by both ESPs.
+func (c *Configurator) InstallESPSync(sourcePartUUID, destinationPartUUID string) error {
+	sourcePartUUID, destinationPartUUID, err := validateESPPARTUUIDs(sourcePartUUID, destinationPartUUID)
+	if err != nil {
+		return err
+	}
+	asset := filepath.Join(ramdiskRoot, "usr", "lib", "booty", "booty-esp-sync")
+	if _, err := os.Stat(asset); err != nil {
+		return fmt.Errorf("ESP synchronizer asset %s: %w", asset, err)
+	}
+	const helper = "/usr/local/libexec/booty-esp-sync"
+	helperPath := filepath.Join(c.rootDir, strings.TrimPrefix(helper, "/"))
+	if err := ensureTargetParentWithinRoot(c.rootDir, filepath.Dir(helperPath)); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(helperPath), 0o755); err != nil {
+		return fmt.Errorf("create ESP synchronizer directory: %w", err)
+	}
+	if err := copyRegularFile(asset, helperPath, 0o755); err != nil {
+		return fmt.Errorf("install ESP synchronizer: %w", err)
+	}
+	return c.installESPSyncFiles(sourcePartUUID, destinationPartUUID)
+}
+
+func (c *Configurator) installESPSyncFiles(sourcePartUUID, destinationPartUUID string) error {
+	configPath := filepath.Join(c.rootDir, "etc", "booty", "esp-sync.conf")
+	configText := fmt.Sprintf("source_partuuid=%s\ndestination_partuuid=%s\n", sourcePartUUID, destinationPartUUID)
+	if err := writeTargetRootFile(c.rootDir, configPath, []byte(configText)); err != nil {
+		return fmt.Errorf("write ESP synchronizer config: %w", err)
+	}
+	unitPath := filepath.Join(c.rootDir, "etc", "systemd", "system", "booty-esp-sync.service")
+	unit := fmt.Sprintf(espSyncService, sourcePartUUID, destinationPartUUID)
+	if err := writeTargetRootFile(c.rootDir, unitPath, []byte(unit)); err != nil {
+		return fmt.Errorf("write ESP synchronizer service: %w", err)
+	}
+	wants := filepath.Join(c.rootDir, "etc", "systemd", "system", "multi-user.target.wants")
+	if err := ensureTargetParentWithinRoot(c.rootDir, wants); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(wants, 0o755); err != nil {
+		return fmt.Errorf("create ESP synchronizer wants directory: %w", err)
+	}
+	link := filepath.Join(wants, "booty-esp-sync.service")
+	if err := os.Remove(link); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("replace ESP synchronizer enablement: %w", err)
+	}
+	if err := os.Symlink("../booty-esp-sync.service", link); err != nil {
+		return fmt.Errorf("enable ESP synchronizer: %w", err)
+	}
+	return nil
+}
 func (c *Configurator) installBundledEFIFallbackLoader(rootDev string) error {
 	loaderName, err := efiRemovableLoaderName(runtime.GOARCH)
 	if err != nil {
@@ -1469,6 +1559,21 @@ func isHexString(s string) bool {
 // since efibootmgr requires EFI firmware NVRAM access. On UEFI a missing
 // efivarfs is an error.
 func (c *Configurator) CreateEFIBootEntry(ctx context.Context, diskDev, bootPart string) error {
+	return c.createEFIBootEntry(ctx, diskDev, bootPart, "")
+}
+
+// mirrorEFIBootEntrySuffix is appended to the label of the firmware boot
+// entry for the second mirror disk, like "${EFI_BOOT_ENTRY_LABEL}-disk2" in
+// raid_configure_efibootmgr of the CAPRF legacy provisioner.
+const mirrorEFIBootEntrySuffix = "-disk2"
+
+// CreateMirrorEFIBootEntry creates the firmware boot entry for the ESP copy
+// on the second mirror disk, labeled "<label>-disk2".
+func (c *Configurator) CreateMirrorEFIBootEntry(ctx context.Context, diskDev, bootPart string) error {
+	return c.createEFIBootEntry(ctx, diskDev, bootPart, mirrorEFIBootEntrySuffix)
+}
+
+func (c *Configurator) createEFIBootEntry(ctx context.Context, diskDev, bootPart, labelSuffix string) error {
 	if bootPart == "" {
 		slog.Warn("no EFI partition found, skipping EFI boot entry creation")
 		return nil
@@ -1499,7 +1604,7 @@ func (c *Configurator) CreateEFIBootEntry(ctx context.Context, diskDev, bootPart
 	if err != nil {
 		return fmt.Errorf("detect EFI loader: %w", err)
 	}
-	label := efiBootEntryLabel(loader)
+	label := efiBootEntryLabel(loader) + labelSuffix
 
 	// Determine partition number from the partition device path.
 	partNum := partNumberFromDevice(bootPart)
@@ -1599,6 +1704,9 @@ func isManagedEFIBootEntryLine(line string) bool {
 	if label == "" {
 		return false
 	}
+	// The entry of the second mirror disk is "<vendor>-disk2". The legacy
+	// removal pattern "Boot<n>* (ubuntu)" matches it too.
+	label = strings.TrimSuffix(strings.ToLower(label), mirrorEFIBootEntrySuffix)
 	for _, vendor := range managedEFIVendors {
 		if strings.EqualFold(label, vendor) {
 			return true

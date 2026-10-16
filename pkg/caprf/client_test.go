@@ -86,6 +86,7 @@ export MODE="provision"
 export MIN_DISK_SIZE_GB="100"
 export NETWORK_WAIT_MAX_ATTEMPTS="4"
 export DISK_SERIAL_NUMBER="RAID-DISK-1"
+export DISK_MIRRORING_MODE="raid-1"
 export LOG_URL="http://caprf.example.com/log"
 export INIT_URL="http://caprf.example.com/status/init"
 export ERROR_URL="http://caprf.example.com/status/error"
@@ -133,6 +134,9 @@ export DEBUG_URL="http://caprf.example.com/debug"
 	}
 	if cfg.Provision.Disk.SerialNumber != "RAID-DISK-1" {
 		t.Fatalf("unexpected disk serial number: %s", cfg.Provision.Disk.SerialNumber)
+	}
+	if cfg.Provision.Disk.MirroringMode != "raid-1" {
+		t.Fatalf("unexpected disk mirroring mode: %s", cfg.Provision.Disk.MirroringMode)
 	}
 	if cfg.Transport.LogURL != "http://caprf.example.com/log" {
 		t.Fatalf("unexpected log URL: %s", cfg.Transport.LogURL)
@@ -2662,6 +2666,23 @@ func TestParseVarsGrowPartition(t *testing.T) {
 		}
 		if got := cfg.Provision.Disk.GrowPartition; got != want {
 			t.Errorf("ParseVars(%q): GrowPartition = %q, want %q", vars, got, want)
+		}
+	}
+}
+
+func TestParseVarsRAIDSuperblockClear(t *testing.T) {
+	for vars, want := range map[string]string{
+		"RAID_SUPERBLOCK_CLEAR=all\n":                             "all",
+		"CAPRF_LEGACY_COMPAT=true\n":                              "all",
+		"CAPRF_LEGACY_COMPAT=true\nRAID_SUPERBLOCK_CLEAR=wiped\n": "wiped",
+		"HOSTNAME=x\n": "",
+	} {
+		cfg, err := ParseVars(strings.NewReader(vars))
+		if err != nil {
+			t.Fatalf("ParseVars(%q): %v", vars, err)
+		}
+		if got := cfg.Provision.Disk.RAIDSuperblockClear; got != want {
+			t.Errorf("ParseVars(%q): RAIDSuperblockClear = %q, want %q", vars, got, want)
 		}
 	}
 }

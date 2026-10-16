@@ -42,7 +42,7 @@ GOLANGCI_LINT ?= bin/golangci-lint-$(GOLANGCI_LINT_VERSION)-$(LINT_GOTOOLCHAIN)-
 
 CLAB_TEST_IMAGE ?= test/e2e/clab/images/test.img.gz
 
-.PHONY: all build build-all clean install uninstall fmt fmt-check lint test docker dockerx86 iso slim micro gobgp gobgp-iso dockerx86slim dockerx86micro dockerx86gobgp arm64 arm64-slim arm64-gobgp test-iso getramdisk getramdisk-arm64 test-kvm test-e2e clab-test-image clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-test-image booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab booty-gobgp-test-image clab-gobgp-up clab-gobgp-down test-e2e-gobgp clab-gobgp-vrnetlab-up clab-gobgp-vrnetlab-down test-e2e-gobgp-vrnetlab clab-type5-up clab-type5-down test-e2e-type5 clab-prodtpl-up clab-prodtpl-down test-e2e-prodtpl clab-production-up clab-production-down test-e2e-production test-e2e-production-full booty-dhcpd-test-image clab-dhcp-up clab-dhcp-down test-e2e-dhcp clab-bond-up clab-bond-down test-e2e-bond clab-lacp-up clab-lacp-down test-e2e-lacp clab-static-up clab-static-down test-e2e-static clab-multi-nic-up clab-multi-nic-down test-e2e-multi-nic check check-build-vars check-docker-vars check-oci-vars oci-push oci-push-initramfs oci-push-binary
+.PHONY: all build build-all build-esp-sync clean install uninstall fmt fmt-check lint test docker dockerx86 iso slim micro gobgp gobgp-iso dockerx86slim dockerx86micro dockerx86gobgp arm64 arm64-slim arm64-gobgp test-iso getramdisk getramdisk-arm64 test-kvm test-e2e clab-test-image clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-test-image booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab booty-gobgp-test-image clab-gobgp-up clab-gobgp-down test-e2e-gobgp clab-gobgp-vrnetlab-up clab-gobgp-vrnetlab-down test-e2e-gobgp-vrnetlab clab-type5-up clab-type5-down test-e2e-type5 clab-prodtpl-up clab-prodtpl-down test-e2e-prodtpl clab-production-up clab-production-down test-e2e-production test-e2e-production-full booty-dhcpd-test-image clab-dhcp-up clab-dhcp-down test-e2e-dhcp clab-bond-up clab-bond-down test-e2e-bond clab-lacp-up clab-lacp-down test-e2e-lacp clab-static-up clab-static-down test-e2e-static clab-multi-nic-up clab-multi-nic-down test-e2e-multi-nic check check-build-vars check-docker-vars check-oci-vars oci-push oci-push-initramfs oci-push-binary
 
 export TARGET VERSION BUILD TARGETOS TARGETARCH DOCKERTAG REPOSITORY
 
@@ -91,6 +91,11 @@ build-all: check-build-vars $(SRC)
 	@mkdir -p dist/amd64 dist/arm64
 	@GOOS="$$TARGETOS" GOARCH=amd64 go build -trimpath -ldflags "$(GO_LDFLAGS)" -o "dist/amd64/$$TARGET"
 	@GOOS="$$TARGETOS" GOARCH=arm64 go build -trimpath -ldflags "$(GO_LDFLAGS)" -o "dist/arm64/$$TARGET"
+	@CGO_ENABLED=0 GOOS="$$TARGETOS" GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o dist/amd64/booty-esp-sync ./cmd/booty-esp-sync
+	@CGO_ENABLED=0 GOOS="$$TARGETOS" GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o dist/arm64/booty-esp-sync ./cmd/booty-esp-sync
+
+build-esp-sync: check-build-vars
+	@CGO_ENABLED=0 GOOS="$$TARGETOS" GOARCH="$$TARGETARCH" go build -trimpath -ldflags "-s -w" -o booty-esp-sync ./cmd/booty-esp-sync
 
 clean: check-build-vars
 	@rm -f -- "$$TARGET" "$${TARGET}.sha256"

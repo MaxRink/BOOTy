@@ -46,6 +46,12 @@ const (
 	WipeDepthQuick    = "quick"
 )
 
+// Values of DiskConfig.RAIDSuperblockClear.
+const (
+	RAIDSuperblockClearWiped = "wiped"
+	RAIDSuperblockClearAll   = "all"
+)
+
 // ApplyPresets sets the options that a preset such as LegacyCompat implies.
 // It only sets options that are not set, so an explicit option always wins.
 // Validate calls it first. It is safe to call more than once.
@@ -64,6 +70,7 @@ func (c *Config) applyLegacyCompatPreset() {
 	presetString(&c.FailureAction, FailureActionWait)
 	presetString(&c.Provision.Disk.Selection, DiskSelectionLsblk)
 	presetString(&c.Provision.Disk.WipeDepth, WipeDepthQuick)
+	presetString(&c.Provision.Disk.RAIDSuperblockClear, RAIDSuperblockClearAll)
 	presetBool(&c.Provision.Disk.WipeAllDisks, true)
 	presetBool(&c.Provision.Disk.DiscardNVMe, true)
 	presetString(&c.Provision.MachineCommandsMode, MachineCommandsScript)

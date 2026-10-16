@@ -62,7 +62,7 @@ CAPRF-compatible `/deploy/vars` file.
 - **Filesystem support** — ext2, ext3, ext4, xfs, btrfs mount/resize; vfat mount/format for EFI system partitions
 - **LLDP discovery** — Raw AF_PACKET-based LLDP listener for switch topology discovery
 - **Post-provision hooks** — Execute arbitrary commands in chroot after OS configuration
-- **46-step provisioning pipeline** — provisioning input validation, RAID cleanup, NVMe namespace setup, RAID array setup, disk detection, partition layout, image streaming, shared data mounting, optional target overlayFS configuration, partition growth, LVM, filesystem resize, optional sysext loading, OCI image pre-pulls, OS configuration, serial console resolution, EFI fallback installation, final Secure Boot chain verification, cloud-init injection, EFI boot, Mellanox SR-IOV, post-provision hooks
+- **51-step provisioning pipeline**: provisioning input validation, RAID cleanup, disk mirroring, NVMe namespace setup, RAID array setup, disk detection, partition layout, image streaming, shared data mounting, optional target overlayFS configuration, partition growth, LVM, filesystem resize, optional sysext loading, OCI image pre-pulls, OS configuration, serial console resolution, EFI fallback installation, final Secure Boot chain verification, cloud-init injection, EFI boot, Mellanox SR-IOV, post-provision hooks
 - **systemd-sysext provisioning** — Optional digest-checked sysext preload or active loading into the provisioned OS image
 - **Ubuntu overlayFS configuration** — Optional target-root overlayroot config for immutable Ubuntu images, with tmpfs or operator-provided persistent backing storage
 - **Kexec support** — Fast reboot into installed kernel without full BIOS POST (auto-disabled after firmware changes)
@@ -348,6 +348,7 @@ root is mounted.
 | `DISK_SELECTION` | `prefer-nvme` | `lsblk` selects the first large enough disk in legacy `lsblk` order. Preset by `CAPRF_LEGACY_COMPAT` |
 | `WIPE_ALL_DISKS` | `false` | Wipe every disk, not only the target, like `wipe_all_disks`. Preset by `CAPRF_LEGACY_COMPAT` |
 | `WIPE_DEPTH` | `thorough` | `thorough`: stop LVM, dm-crypt and MD on the disk, clear every partition, the partition table and the disk edges, then `blkdiscard` the disk. `quick`: `sgdisk --zap-all` and `wipefs -af` on the disk only. Preset `quick` by `CAPRF_LEGACY_COMPAT`. See [docs/disk.md](docs/disk.md#wipe-behaviour) |
+| `RAID_SUPERBLOCK_CLEAR` | `wiped` | Disks on which provisioning zeroes old RAID superblocks (`mdadm --zero-superblock` on every `linux_raid_member`): `wiped` only the disks that `wipe-disks` wipes, right before the wipe; `all` every disk in `stop-raid`, like `clear_mdadm_superblocks`. Hard deprovision zeroes them on the disks it wipes with both values. Preset by `CAPRF_LEGACY_COMPAT`: `all` |
 | `GROW_PARTITION` | `root` | `last-linux` grows the last GPT Linux partition like the legacy `provision.sh`. Preset by `CAPRF_LEGACY_COMPAT` |
 | `DISCARD_NVME` | `false` | `blkdiscard` every NVMe disk before a wipe of all disks. Preset by `CAPRF_LEGACY_COMPAT` |
 | `FRR_CONFIG_STRICT` | `true` | `false` logs and skips provisioner `frr.conf` statements that BOOTy does not implement instead of failing. Invalid values and unsupported block openers still fail. See [Networking](docs/networking.md#strict-input-and-the-accepted-grammar) |
@@ -434,6 +435,7 @@ root is mounted.
 | `AB_SOURCE_ROOT_PARTITION` | — | 1-based source-image partition number to copy when no stable label exists |
 | `DISK_DEVICE` | auto-detect | Explicit disk device path override (e.g. `/dev/sda`) |
 | `DISK_SERIAL_NUMBER` | — | Select the target disk by exact sysfs serial number when `DISK_DEVICE` is unset |
+| `DISK_MIRRORING_MODE` | unset | Mirror the installed system with RAID1 (metadata 1.0) across the largest pair of disks with equal size and sector size, like the CAPRF legacy provisioner: root as `/dev/md2`, a separate `/boot` (ext2/3/4) as `/dev/md1`, the ESP copied with a firmware boot entry for the second disk on UEFI, GRUB installed on both disks on BIOS. `raid-1` (pair required), `auto` (single disk when no pair exists), `none`. Disks that share an NVMe controller, serial number or WWID do not count as a pair. The image must be GPT partitioned (MBR images fail in `mirror-root`, after the image is written) and needs mdadm; a separate `/boot` must have the extended boot partition type or be the `/boot` entry of the image fstab, and other extra partitions are rejected. `/`, `/boot` and `/boot/efi` fstab entries that name a partition of one disk are rewritten to the arrays or the ESP UUID. Both ESP copies keep one FAT UUID, as with the legacy provisioner, so `/boot/efi` mounts from either disk alone. For an image with an ESP, BOOTy also installs the `booty-esp-sync` service into the installed system (`/usr/local/libexec/booty-esp-sync`, `/etc/systemd/system/booty-esp-sync.service`, enabled): it copies changes of the mounted `/boot/efi`, such as bootloader updates, to the ESP on the other disk; disable it with `systemctl disable booty-esp-sync.service`, see [docs/disk.md](docs/disk.md#esp-synchronization). The UEFI boot entry of the second disk is labeled `<label>-disk2` (for example `ubuntu-disk2`), like the legacy provisioner; with `EFI_BOOT_ENTRY_REQUIRED=false` and no EFI variables it is skipped and the second disk boots through the removable fallback loader. Soft deprovision refuses a mirrored root; use hard deprovision without `deprovision.device` or `DISK_DEVICE`, because with a device override it wipes only that disk and the other mirror disk stays bootable. The slim flavor ships no kernel modules, so its kernel must provide `md_mod` and `raid1`. Ignored when `DISK_DEVICE` or `DISK_SERIAL_NUMBER` selects the disk; rejected before any disk change with explicit RAID, NVMe namespace setup, a partition layout or an image mode other than whole-disk (such as A/B) |
 | `ROOT_PARTITION_LABEL` | — | Whole-disk image root GPT partition label/PARTLABEL; use when multiple Linux partitions exist |
 | `ROOT_PARTITION_NUMBER` | — | Whole-disk image root partition number; use only when no stable root partition label exists |
 | `IMAGE_SIGNATURE_URL` | — | URL to detached GPG signature for image verification |
@@ -604,7 +606,7 @@ is in the ramdisk, so it helps only when provisioning runs again in the same
 boot, for example with `RESCUE_MODE=retry`. A new run skips the completed
 steps, except the steps that rebuild runtime state or check safety rules:
 `validate-provision-inputs`, `verify-image`, `mount-efivarfs`,
-`setup-mellanox`, `detect-disk`, `parse-partitions`, `enable-lvm`,
+`setup-mellanox`, `detect-disk`, `parse-partitions`, `mirror-root`, `enable-lvm`,
 `mount-root`, `mount-boot`, `mount-shared-data`, `setup-chroot-binds`,
 `configure-serial-console`, `configure-grub` and `teardown-chroot`.
 
@@ -1379,7 +1381,7 @@ vrnetlab topologies and the test levels.
 │   │   ├── persist/           # Persist network config into target OS (netplan, NM, systemd-networkd)
 │   │   ├── vrf/               # VRF configuration and validation
 │   │   └── vlan/              # VLAN 802.1Q tagging via netlink
-│   ├── provision/              # Orchestrator (46-step provision, deprovision)
+│   ├── provision/              # Orchestrator (51-step provision, deprovision)
 │   │   └── configurator.go    # OS config: hostname, kubelet, GRUB, DNS, EFI, Mellanox SR-IOV
 │   ├── realm/                  # Device, mount, network, shell operations
 │   ├── rescue/                 # Rescue mode behavior and retry policy

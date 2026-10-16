@@ -14,6 +14,7 @@ func applyParityVar(cfg *config.MachineConfig, key, value string) bool {
 		"GRUB_CMDLINE_MODE":        &cfg.Provision.GRUBCmdlineMode,
 		"NUM_VFS_MODE":             &cfg.Provision.Firmware.NumVFsMode,
 		"WIPE_DEPTH":               &cfg.Provision.Disk.WipeDepth,
+		"RAID_SUPERBLOCK_CLEAR":    &cfg.Provision.Disk.RAIDSuperblockClear,
 		"GROW_PARTITION":           &cfg.Provision.Disk.GrowPartition,
 		"NETWORK_WAIT_MODE":        &cfg.Network.WaitMode,
 		"MACHINE_COMMANDS_MODE":    &cfg.Provision.MachineCommandsMode,

@@ -596,6 +596,7 @@ func TestLoadFullYAMLReference(t *testing.T) {
 		{"Provision.Disk.WipeAllDisks", showBool(cfg.Provision.Disk.WipeAllDisks), "true"},
 		{"Provision.Disk.DiscardNVMe", showBool(cfg.Provision.Disk.DiscardNVMe), "true"},
 		{"Provision.Disk.WipeDepth", cfg.Provision.Disk.WipeDepth, WipeDepthQuick},
+		{"Provision.Disk.RAIDSuperblockClear", cfg.Provision.Disk.RAIDSuperblockClear, RAIDSuperblockClearAll},
 		{"Provision.Disk.GrowPartition", cfg.Provision.Disk.GrowPartition, GrowPartitionLastLinux},
 		{"Provision.Firmware.LogNICs", showBool(cfg.Provision.Firmware.LogNICs), "true"},
 		{"Provision.Firmware.NumVFsMode", cfg.Provision.Firmware.NumVFsMode, NumVFsModeRaise},

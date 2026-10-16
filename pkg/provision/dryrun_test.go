@@ -213,6 +213,19 @@ func TestDryRunConfigValidation(t *testing.T) {
 			wantTarget: config.TargetOSLinux,
 		},
 		{
+			name: "disk mirroring with A/B image mode",
+			cfg: func() *config.MachineConfig {
+				c := &config.MachineConfig{Hostname: "node1"}
+				c.Provision.TargetOS = config.TargetOSLinux
+				c.Provision.Image.URLs = []string{"http://example.com/img"}
+				c.Provision.Image.Mode = config.ImageModeAB
+				c.Provision.Disk.MirroringMode = "raid-1"
+				return c
+			}(),
+			expect:      DryRunFail,
+			wantMessage: "mirroring",
+		},
+		{
 			name: "missing target os",
 			cfg: func() *config.MachineConfig {
 				c := &config.MachineConfig{Hostname: "node1"}
@@ -507,6 +520,30 @@ func TestDryRunDiskDetection_Configured(t *testing.T) {
 	result := o.dryRunDiskDetection(context.Background())
 	if result.Status != DryRunFail {
 		t.Errorf("got %s, want fail for non-device path: %s", result.Status, result.Message)
+	}
+}
+
+func TestDryRunMirrorPairSkipped(t *testing.T) {
+	for _, dc := range []config.DiskConfig{
+		{},
+		{MirroringMode: "none"},
+	} {
+		cfg := &config.MachineConfig{}
+		cfg.Provision.Disk = dc
+		o := NewOrchestrator(cfg, &dryRunProvider{}, newTestDiskManager())
+		if result, ok := o.dryRunMirrorPair(context.Background()); ok {
+			t.Errorf("dryRunMirrorPair(%+v) = %+v, want skipped", dc, result)
+		}
+	}
+}
+
+func TestDryRunDiskDetection_MissingSerial(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.SerialNumber = "BOOTY-DRYRUN-NO-SUCH-SERIAL"
+	cfg.Provision.Disk.MirroringMode = "raid-1"
+	o := NewOrchestrator(cfg, &dryRunProvider{}, disk.NewManager(nil))
+	if result := o.dryRunDiskDetection(context.Background()); result.Status != DryRunFail {
+		t.Errorf("got %s, want fail for a missing disk serial: %s", result.Status, result.Message)
 	}
 }
 

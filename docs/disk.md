@@ -32,9 +32,9 @@ See [docs/configuration.md](configuration.md) for each variable:
 - Target disk: `DISK_DEVICE`, `DISK_SERIAL`, `DISK_SERIAL_NUMBER`,
   `DISK_SELECTION`, `MIN_DISK_SIZE_GB`, `BOOTY_ALLOW_REMOVABLE`
 - Wipe: `MODE`, `SECURE_ERASE`, `WIPE_DEPTH`, `WIPE_ALL_DISKS`,
-  `DISCARD_NVME`, `DRY_RUN`, `CAPRF_LEGACY_COMPAT` (presets
-  `DISK_SELECTION=lsblk`, `WIPE_DEPTH=quick`, `WIPE_ALL_DISKS=true` and
-  `DISCARD_NVME=true`)
+  `DISCARD_NVME`, `RAID_SUPERBLOCK_CLEAR`, `DRY_RUN`, `CAPRF_LEGACY_COMPAT`
+  (presets `DISK_SELECTION=lsblk`, `WIPE_DEPTH=quick`, `WIPE_ALL_DISKS=true`,
+  `DISCARD_NVME=true` and `RAID_SUPERBLOCK_CLEAR=all`)
 - Layout: `PARTITION_LAYOUT`, `IMAGE_MODE`, `IMAGE_SOURCE_ROOT_LABEL`,
   `IMAGE_SOURCE_ROOT_PARTITION`
 - Root partition: `ROOT_PARTITION_LABEL`, `ROOT_PARTITION_NUMBER`
@@ -52,10 +52,14 @@ The provisioning pipeline then runs the disk steps in this order:
 
 1. `disable-lvm` and `stop-raid`: deactivate LVM volume groups
    (`lvm vgchange -an`) and stop all md arrays (`mdadm --stop --scan`).
+   With `RAID_SUPERBLOCK_CLEAR=all`, `stop-raid` then zeroes the RAID
+   superblocks on every disk.
 2. `setup-nvme-namespaces`: apply `NVME_NAMESPACES`.
 3. `setup-raid`: wipe the RAID member disks and create the arrays.
 4. `detect-disk`: select the target disk.
-5. `wipe-disks`: wipe the target disk or all disks.
+5. `wipe-disks`: wipe the target disk or all disks. With the default
+   `RAID_SUPERBLOCK_CLEAR=wiped`, it first zeroes the RAID superblocks on
+   the disks that it wipes.
 6. `apply-partition-layout`: create the declared GPT layout and LVM volumes.
 7. `stream-image`: write the image.
 8. `partprobe`, `parse-partitions`: read the new partition table and find the
@@ -133,7 +137,12 @@ On hosts with more than one disk, select the root disk by a stable value:
   disk. It does not help when the disks have the same size.
 
 BOOTy runs without udev, so the ramdisk has no `/dev/disk/by-id` or
-`/dev/disk/by-path` links; do not use them in `DISK_DEVICE`.
+`/dev/disk/by-path` links; do not use them in `DISK_DEVICE`. BOOTy itself
+creates only the `by-uuid`, `by-partuuid`, `by-label` and `by-partlabel`
+links (`DISK_LINKS`), and only after the disk selection, for the target
+chroot. So `DISK_DEVICE` and `deprovision.device` must be kernel names
+(`/dev/sda`, `/dev/nvme0n1`): provisioning, hard deprovision and soft
+deprovision reject a path below `/dev/disk/` at once.
 
 ### Serial Lookup
 
@@ -324,8 +333,72 @@ The `setup-raid` step:
 
 ## Disk Mirroring
 
-Planned (#581): RAID-1 root disk mirroring with `DISK_MIRRORING_MODE`. On
-`main`, BOOTy ignores `DISK_MIRRORING_MODE`.
+`DISK_MIRRORING_MODE` mirrors the installed system with RAID1 across two
+disks, like the CAPRF legacy provisioner: root as `/dev/md2`, a separate
+`/boot` as `/dev/md1`. `raid-1` needs a pair of disks with equal size and
+sector size, `auto` falls back to one disk, `none` is the default. See
+[Configuration](configuration.md#disk-and-image) and the `DISK_MIRRORING_MODE`
+row of the README for the full rules.
+
+The quick wipe (`WIPE_DEPTH=quick`, preset by `CAPRF_LEGACY_COMPAT`) does not
+clear the metadata 1.0 superblocks at the end of old member partitions, so a
+replicated partition table would bring them back. So BOOTy zeroes the
+superblock of every `linux_raid_member` (whole disks and partitions) after
+`stop-raid` stopped the arrays. `RAID_SUPERBLOCK_CLEAR` selects the disks:
+`wiped` (default) zeroes them in `wipe-disks`, only on the target disk and the
+mirror disk, or on every disk with `WIPE_ALL_DISKS=true`; `all` (preset by
+`CAPRF_LEGACY_COMPAT`) zeroes them in `stop-raid` on every disk, like
+`clear_mdadm_superblocks` of the legacy provisioner. Hard deprovision zeroes
+them on the disks it wipes: with a device override the selected disk and its
+mirror companion, else every disk. BOOTy never assembles existing arrays while it provisions: the
+ramdisk has no `mdadm.conf`, so a scan would also start foreign or stale
+arrays. The installed system gets `/etc/mdadm/mdadm.conf` (and
+`/etc/mdadm.conf`) with the legacy line `AUTO +imsm +1.x -all` and the
+`ARRAY` lines of `/dev/md2` and `/dev/md1`.
+
+On UEFI, the `create-mirror-efi-boot-entry` step copies the ESP to the second
+disk and creates the firmware boot entry `<label>-disk2` for it (for example
+`ubuntu-disk2`), like `raid_configure_efibootmgr` of the legacy provisioner.
+The removal of old boot entries also removes `<label>-disk2`.
+`EFI_BOOT_ENTRY_REQUIRED=false` applies to this entry too. Without EFI
+variables, the step checks that the ESP has the removable fallback loader
+(`EFI/BOOT/BOOTX64.EFI` or `BOOTAA64.EFI`), copies the ESP and skips the
+entry.
+
+### ESP Synchronization
+
+The ESP is no RAID member, because the firmware reads it directly. BOOTy copies
+it to the second disk once during provisioning. So that later bootloader
+updates in the installed system reach both disks, the `install-esp-sync` step
+installs the `booty-esp-sync` service into every mirrored target with an ESP:
+
+| Path in the installed system | Content |
+|---|---|
+| `/usr/local/libexec/booty-esp-sync` | The helper, copied from `/usr/lib/booty/booty-esp-sync` of the ramdisk |
+| `/etc/systemd/system/booty-esp-sync.service` | The unit, with the PARTUUIDs of both ESPs on the command line |
+| `/etc/systemd/system/multi-user.target.wants/booty-esp-sync.service` | The link that enables the unit |
+| `/etc/booty/esp-sync.conf` | The PARTUUIDs of both ESPs (`source_partuuid`, `destination_partuuid`) |
+
+The service starts when `/boot/efi` is mounted. At start and after each change
+below `/boot/efi` it finds the ESP that is mounted, selects the other ESP by
+its PARTUUID (never by the FAT UUID, which both copies share), mounts it at
+`/run/booty/esp-sync` and makes it an exact copy: new and changed files are
+written through a staging directory on the destination, files that are gone
+from the source are removed. It holds `/run/lock/booty-esp-sync.lock` while it
+copies and writes `/run/booty/esp-sync.ready` after each copy. After a boot
+from one disk of a degraded mirror, the other ESP is missing: the service logs
+this once and keeps watching, it does not fail.
+
+To turn it off, disable the unit in the installed system, for example with a
+post-provision command or cloud-init:
+
+```sh
+systemctl disable --now booty-esp-sync.service
+```
+
+`systemctl mask booty-esp-sync.service` also keeps a later package or script
+from enabling it again. Without the service, copy the ESP to the other disk
+after each bootloader update.
 
 ## NVMe Namespaces
 
@@ -468,12 +541,11 @@ partition. With `PARTITION_LAYOUT`, it uses the partition with mountpoint
 `/boot/efi`. The `mount-boot` step mounts it at `/boot/efi` in the target root.
 Without an EFI system partition, BOOTy logs a warning and skips the mount.
 
-BOOTy does not read the `/etc/fstab` of the image. If the image keeps `/boot` on
-a separate partition, BOOTy does not mount it. Steps that use `/boot`, such as
-the GRUB configuration and kexec, then see the `/boot` directory of the root
-filesystem.
-
-Planned (#595): mount a separate `/boot` from the image fstab.
+For mirrored whole-disk images, BOOTy reads the image `/etc/fstab`, identifies
+the separate `/boot` partition (or the GPT XBOOTLDR partition), mirrors it as
+`/dev/md1`, and mounts that array before GRUB and initramfs updates. Ambiguous
+extra Linux partitions are rejected. Non-mirrored images keep `/boot` on the
+root filesystem unless a declarative partition layout supplies the mount.
 
 ## Filesystem Check, Partition Growth and Resize
 

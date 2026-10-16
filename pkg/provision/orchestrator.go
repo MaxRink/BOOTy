@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -93,6 +94,10 @@ type Orchestrator struct {
 	targetDisk string
 	// skippedDisks are the disks in use that a wipe of all disks skipped.
 	skippedDisks     []string
+	mirrorDisk       string           // second root disk when DISK_MIRRORING_MODE selected a pair
+	resumeMirrorPair [2]string        // mirror pair restored from a resume checkpoint
+	targetPartitions []disk.Partition // partitions parse-partitions found on targetDisk
+	mirrorArrays     []string         // md arrays that mirror-root assembled
 	rootPartition    string
 	bootPartition    string
 	sharedMounts     []string
@@ -149,6 +154,7 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"stream-image", o.streamImage},
 		{"partprobe", o.partprobe},
 		{"parse-partitions", o.parsePartitions},
+		{"mirror-root", o.mirrorRoot},
 		{"check-filesystem", o.checkFilesystem},
 		{"enable-lvm", o.enableLVM},
 		{"mount-root", o.mountRoot},
@@ -163,6 +169,8 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"setup-chroot-binds", o.setupChrootBinds},
 		{"grow-partition", o.growPartition},
 		{"resize-filesystem", o.resizeFilesystem},
+		{"configure-mdadm", o.configureMdadm},
+		{"install-esp-sync", o.installESPSync},
 		{"configure-kubelet", o.configureKubelet},
 		{"prepare-oci-prepulls", o.prepareOCIPrePulls},
 		{"configure-serial-console", o.configureSerialConsole},
@@ -178,6 +186,7 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"run-machine-commands", o.runMachineCommands},
 		{"run-post-provision-cmds", o.runPostProvisionCmds},
 		{"create-efi-boot-entry", o.createEFIBootEntry},
+		{"create-mirror-efi-boot-entry", o.createMirrorEFIBootEntry},
 		{"teardown-chroot", o.teardownChroot},
 		{"report-success", o.reportSuccess},
 	}
@@ -231,6 +240,7 @@ func resumeStateSteps() map[string]struct{} {
 		"setup-mellanox":            {},
 		"detect-disk":               {},
 		"parse-partitions":          {},
+		"mirror-root":               {},
 		"enable-lvm":                {},
 		"mount-root":                {},
 		"mount-boot":                {},
@@ -265,6 +275,10 @@ func (o *Orchestrator) loadOrCreateCheckpoint() (*Checkpoint, error) {
 func (o *Orchestrator) restoreCheckpointDerivedState(cp *Checkpoint) {
 	if cp == nil || o.cfg.Provision.Disk.Device != "" {
 		return
+	}
+	if cp.MirrorTargetDisk != "" {
+		o.resumeMirrorPair = [2]string{cp.MirrorTargetDisk, cp.MirrorDisk}
+		o.log.Info("restored mirror disk selection from checkpoint", "disk1", cp.MirrorTargetDisk, "disk2", cp.MirrorDisk)
 	}
 	if len(o.cfg.Provision.Disk.RAID) > 0 && cp.RAIDTargetDevice != "" {
 		o.cfg.Provision.Disk.Device = cp.RAIDTargetDevice
@@ -326,6 +340,10 @@ func (o *Orchestrator) recordCheckpointDerivedState(stepName string, cp *Checkpo
 	case "setup-raid":
 		if len(o.cfg.Provision.Disk.RAID) > 0 && o.cfg.Provision.Disk.Device != "" {
 			cp.RAIDTargetDevice = o.cfg.Provision.Disk.Device
+		}
+	case "detect-disk":
+		if mode := o.mirroringMode(); mode == disk.MirroringModeRAID1 || mode == disk.MirroringModeAuto {
+			cp.MirrorTargetDisk, cp.MirrorDisk = o.targetDisk, o.mirrorDisk
 		}
 	}
 }
@@ -619,8 +637,47 @@ func splitCommaValues(raw string) []string {
 	return values
 }
 
+// stopRAID stops every MD array. With RAID_SUPERBLOCK_CLEAR=all it then
+// zeroes the superblocks of all RAID members on the host, like
+// clear_mdadm_superblocks of the CAPRF legacy provisioner. With the default
+// "wiped", wipe-disks zeroes them on the disks it wipes, which are known only
+// after detect-disk.
 func (o *Orchestrator) stopRAID(ctx context.Context) error {
-	return o.disk.StopRAIDArrays(ctx)
+	if err := o.disk.StopRAIDArrays(ctx); err != nil {
+		return err
+	}
+	if o.cfg.Provision.Disk.RAIDSuperblockClear != config.RAIDSuperblockClearAll {
+		return nil
+	}
+	return o.disk.ClearRAIDSuperblocks(ctx)
+}
+
+// clearWipedRAIDSuperblocks zeroes the RAID superblocks on the disks that
+// the provisioning wipe-disks step is about to wipe, for the default
+// RAID_SUPERBLOCK_CLEAR=wiped. No disks means every disk (WIPE_ALL_DISKS).
+// Deprovisioning zeroes them in stop-raid, and with "all" stop-raid did it.
+func (o *Orchestrator) clearWipedRAIDSuperblocks(ctx context.Context, disks ...string) error {
+	if config.IsDeprovisionMode(o.cfg.Mode) || o.cfg.Provision.Disk.RAIDSuperblockClear == config.RAIDSuperblockClearAll {
+		return nil
+	}
+	return o.disk.ClearRAIDSuperblocks(ctx, disks...)
+}
+
+// stopRAIDForDeprovision is stop-raid of hard deprovision. It zeroes the
+// RAID superblocks on the disks that the wipe covers, with both
+// RAID_SUPERBLOCK_CLEAR values: with a device override the selected disk and
+// its mirror companion, else every disk.
+func (o *Orchestrator) stopRAIDForDeprovision(ctx context.Context) error {
+	if err := o.disk.StopRAIDArrays(ctx); err != nil {
+		return err
+	}
+	var scope []string
+	for _, d := range []string{o.targetDisk, o.mirrorDisk} {
+		if d != "" {
+			scope = append(scope, d)
+		}
+	}
+	return o.disk.ClearRAIDSuperblocks(ctx, scope...)
 }
 
 func (o *Orchestrator) disableLVM(ctx context.Context) error {
@@ -959,6 +1016,9 @@ func (o *Orchestrator) validateProvisionInputs(ctx context.Context) error {
 	if err := o.validatePartitionLayoutRuntimeSupport(); err != nil {
 		return err
 	}
+	if err := o.validateMirroringMode(); err != nil {
+		return err
+	}
 	o.cfg.Provision.Image.Checksum = strings.TrimSpace(o.cfg.Provision.Image.Checksum)
 	checksumConfigured := o.cfg.Provision.Image.Checksum != ""
 	imageSources := make([]string, 0, len(o.cfg.Provision.Image.URLs))
@@ -1148,11 +1208,35 @@ func (o *Orchestrator) wipeOrSecureEraseDisks(ctx context.Context) error {
 		o.log.Info("wiping raid target device after array creation", "device", targetDisk)
 		return o.disk.WipeDisk(ctx, targetDisk)
 	}
-	if secureErase {
-		o.log.Info("secure erase enabled, performing hardware-level erase")
-		return o.disk.SecureEraseDisk(ctx, targetDisk)
+	disks := []string{targetDisk}
+	if mirror := strings.TrimSpace(o.mirrorDisk); mirror != "" {
+		disks = append(disks, mirror)
 	}
-	return o.disk.WipeDisk(ctx, targetDisk)
+	if err := o.clearWipedRAIDSuperblocks(ctx, disks...); err != nil {
+		return err
+	}
+	return o.wipeTargetDisks(ctx, disks, secureErase)
+}
+
+// wipeTargetDisks wipes the root disk and, for mirrored installs, the mirror disk.
+func (o *Orchestrator) wipeTargetDisks(ctx context.Context, devices []string, secureErase bool) error {
+	for _, device := range devices {
+		if device == "" {
+			continue
+		}
+		if err := o.wipeTargetDisk(ctx, device, secureErase); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (o *Orchestrator) wipeTargetDisk(ctx context.Context, device string, secureErase bool) error {
+	if secureErase {
+		o.log.Info("secure erase enabled, performing hardware-level erase", "device", device)
+		return o.disk.SecureEraseDisk(ctx, device)
+	}
+	return o.disk.WipeDisk(ctx, device)
 }
 
 // wipeWithoutTargetSelection handles the wipe policies that do not depend on
@@ -1170,6 +1254,9 @@ func (o *Orchestrator) wipeWithoutTargetSelection(ctx context.Context) (bool, er
 			if err := o.disk.CheckNotInUse(target); err != nil {
 				return true, err
 			}
+		}
+		if err := o.clearWipedRAIDSuperblocks(ctx); err != nil {
+			return true, err
 		}
 		return true, o.wipeAllDisks(ctx)
 	}
@@ -1369,18 +1456,8 @@ func (o *Orchestrator) detectDisk(ctx context.Context) error {
 		}
 	}
 
-	// If a specific disk device is configured, validate and use it directly.
-	if o.cfg.Provision.Disk.Device != "" {
-		info, err := os.Stat(o.cfg.Provision.Disk.Device)
-		if err != nil {
-			return fmt.Errorf("configured disk device %s: %w", o.cfg.Provision.Disk.Device, err)
-		}
-		if info.Mode()&os.ModeDevice == 0 || info.Mode()&os.ModeCharDevice != 0 {
-			return fmt.Errorf("configured disk device %s is not a block device", o.cfg.Provision.Disk.Device)
-		}
-		o.log.Info("using configured disk device", "device", o.cfg.Provision.Disk.Device)
-		o.targetDisk = o.cfg.Provision.Disk.Device
-		return nil
+	if handled, err := o.useConfiguredDisk(); handled || err != nil {
+		return err
 	}
 
 	serial := strings.TrimSpace(o.cfg.Provision.Disk.SerialNumber)
@@ -1395,12 +1472,36 @@ func (o *Orchestrator) detectDisk(ctx context.Context) error {
 		return nil
 	}
 
+	if mirrored, err := o.selectMirrorPair(ctx); err != nil || mirrored {
+		return err
+	}
+
 	d, err := o.disk.DetectDisk(ctx, o.cfg.Provision.Disk.MinSizeGB)
 	if err != nil {
 		return err
 	}
 	o.targetDisk = d
 	return nil
+}
+
+// useConfiguredDisk validates an explicit disk override. Keeping this branch
+// separate from automatic and serial selection also keeps the selection flow
+// easy to audit: an explicit device is never replaced by auto-detection.
+func (o *Orchestrator) useConfiguredDisk() (bool, error) {
+	device := strings.TrimSpace(o.cfg.Provision.Disk.Device)
+	if device == "" {
+		return false, nil
+	}
+	info, err := os.Stat(device)
+	if err != nil {
+		return true, fmt.Errorf("configured disk device %s: %w", device, err)
+	}
+	if info.Mode()&os.ModeDevice == 0 || info.Mode()&os.ModeCharDevice != 0 {
+		return true, fmt.Errorf("configured disk device %s is not a block device", device)
+	}
+	o.log.Info("using configured disk device", "device", device)
+	o.targetDisk = device
+	return true, nil
 }
 
 func (o *Orchestrator) applyPartitionLayout(ctx context.Context) error {
@@ -2051,6 +2152,7 @@ func (o *Orchestrator) parsePartitions(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	o.targetPartitions = parts
 
 	boot, err := o.disk.FindBootPartition(parts)
 	if err != nil {
@@ -2284,8 +2386,13 @@ func bootEFIMountPoint() string {
 }
 
 func (o *Orchestrator) mountBoot(ctx context.Context) error {
-	// A separate /boot must be mounted before the ESP at /boot/efi.
-	if err := o.mountSeparateBoot(ctx); err != nil {
+	// A separate /boot must be mounted before the ESP at /boot/efi: the
+	// mirror /boot array, or else the /boot entry of the image fstab.
+	mountSeparate := o.mountSeparateBoot
+	if slices.Contains(o.mirrorArrays, disk.MirrorBootArray) {
+		mountSeparate = o.mountMirrorBoot
+	}
+	if err := mountSeparate(ctx); err != nil {
 		return err
 	}
 	if strings.TrimSpace(o.bootPartition) == "" {
@@ -2787,6 +2894,10 @@ func (o *Orchestrator) growPartition(ctx context.Context) error {
 		o.log.Info("skipping grow-partition for declarative partition layout")
 		return nil
 	}
+	if o.mirrorDisk != "" {
+		o.log.Info("skipping grow-partition, mirror-root grew the root partition before creating the array")
+		return nil
+	}
 
 	target, err := o.growTarget(ctx)
 	if err != nil {
@@ -2849,6 +2960,12 @@ func (o *Orchestrator) resizeFilesystem(ctx context.Context) error {
 	if o.cfg.Provision.Disk.PartitionLayout != nil {
 		return o.disk.ResizeFilesystem(ctx, o.rootPartition, newroot)
 	}
+	// mirror-root grows the source partition before creating /dev/md2.  The
+	// legacy last-linux selector must never make us resize a raw RAID member;
+	// the mounted array is the only safe target after mirroring.
+	if o.mirrorDisk != "" {
+		return o.disk.ResizeFilesystem(ctx, disk.MirrorRootArray, newroot)
+	}
 	target, err := o.growTarget(ctx)
 	if err != nil {
 		return err
@@ -2886,23 +3003,46 @@ func (o *Orchestrator) configureGRUB(ctx context.Context) error {
 	return o.config.ConfigureGRUB(ctx, o.cfg)
 }
 
+//nolint:nestif // bootloader policy branches are deliberately kept adjacent to the install step.
 func (o *Orchestrator) installEFIFallbackLoader(ctx context.Context) error {
-	if !o.isABImageMode() {
-		return nil
-	}
-	if o.cfg.Provision.AB.PreserveExisting {
+	if o.isABImageMode() && !o.cfg.Provision.AB.PreserveExisting {
+		if strings.TrimSpace(o.bootPartition) == "" {
+			o.log.Info("skipping EFI fallback loader installation; no boot partition detected")
+		} else {
+			mountpoint := bootEFIMountPoint()
+			if !isMountPoint(mountpoint) {
+				return fmt.Errorf("cannot install EFI fallback loader: boot partition %s is not mounted at %s", o.bootPartition, mountpoint)
+			}
+			if err := o.config.InstallEFIFallbackLoader(ctx, o.targetDisk, o.rootPartition); err != nil {
+				return err
+			}
+		}
+	} else if o.isABImageMode() {
 		o.log.Info("A/B preserveExisting enabled, preserving existing EFI fallback loader")
+	}
+	return nil
+}
+
+// installESPSync installs the booty-esp-sync service into a mirrored target
+// with an ESP. The service copies changes of the mounted ESP to the ESP on
+// the other mirror disk after boot, so bootloader updates reach both disks.
+func (o *Orchestrator) installESPSync(ctx context.Context) error {
+	if o.mirrorDisk == "" || strings.TrimSpace(o.bootPartition) == "" {
 		return nil
 	}
-	if strings.TrimSpace(o.bootPartition) == "" {
-		o.log.Info("skipping EFI fallback loader installation; no boot partition detected")
-		return nil
+	sourceUUID, err := o.disk.Run(ctx, "blkid", "-s", "PARTUUID", "-o", "value", o.bootPartition)
+	if err != nil {
+		return fmt.Errorf("read source ESP PARTUUID: %w", err)
 	}
-	mountpoint := bootEFIMountPoint()
-	if !isMountPoint(mountpoint) {
-		return fmt.Errorf("cannot install EFI fallback loader: boot partition %s is not mounted at %s", o.bootPartition, mountpoint)
+	mirrorESP, err := o.mirrorESP()
+	if err != nil {
+		return err
 	}
-	return o.config.InstallEFIFallbackLoader(ctx, o.targetDisk, o.rootPartition)
+	destinationUUID, err := o.disk.Run(ctx, "blkid", "-s", "PARTUUID", "-o", "value", mirrorESP)
+	if err != nil {
+		return fmt.Errorf("read mirror ESP PARTUUID: %w", err)
+	}
+	return o.config.InstallESPSync(string(sourceUUID), string(destinationUUID))
 }
 
 func (o *Orchestrator) injectCloudInit(_ context.Context) error {
@@ -3032,7 +3172,7 @@ func (o *Orchestrator) teardownChroot(_ context.Context) error {
 		return nil
 	}
 	bindErr := o.disk.TeardownChrootBindMounts(newroot)
-	bootErr := errors.Join(o.unmountBoot(), o.unmountSeparateBoot())
+	bootErr := errors.Join(o.unmountBoot(), o.unmountMirrorBoot(), o.unmountSeparateBoot())
 	sharedErr := o.unmountSharedData()
 	unmountErr := o.disk.Unmount(newroot)
 	return errors.Join(bindErr, bootErr, sharedErr, unmountErr)
