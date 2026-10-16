@@ -2,9 +2,11 @@ package frrconf
 
 import "slices"
 
-// The tables below list, per CLI node, the first words of the FRR 8.2.2
-// commands (lib/command.c node fallback, bgpd/bgp_vty.c, bfdd/bfdd_cli.c,
-// lib/routemap_cli.c). They decide in which node FRR would apply a
+// The tables below list, per CLI node, the first words of the commands of
+// the current FRR (checked against FRR 10.3.1: lib/command.c node fallback,
+// bgpd/bgp_vty.c and bgpd/bgp_evpn_vty.c install_element, bfdd/bfdd_cli.c,
+// lib/routemap_cli.c), which the legacy ramdisk runs. Where FRR 8.2.2
+// installed a command in another node, the current FRR wins. They decide in which node FRR would apply a
 // statement that BOOTy does not implement, so a skipped statement moves the
 // parser to the same node as FRR.
 
@@ -21,7 +23,7 @@ var bgpWords = []string{
 	"bgp", "neighbor", "address-family", "network", "aggregate-address",
 	"redistribute", "maximum-paths", "distance", "timers", "coalesce-time",
 	"read-quanta", "write-quanta", "update-delay", "table-map", "vnc", "bmp",
-	"segment-routing", "exit",
+	"segment-routing", "sid", "exit",
 }
 
 // afWords are the commands of the unicast address-families.
@@ -38,14 +40,16 @@ var evpnWords = []string{
 	"advertise-svi-ip", "advertise-pip", "autort",
 	"default-originate", "dup-addr-detection", "exit-address-family",
 	"flooding", "disable-ead-evi-rx", "disable-ead-evi-tx", "use-es-l3nhg",
-	"neighbor", "network", "rd", "route-target", "vni", "exit",
+	"neighbor", "network", "rd", "route-target", "vni", "mac-vrf",
+	"enable-resolve-overlay-index", "ead-es-route-target", "ead-es-frag",
+	"test", "exit",
 }
 
 // evpnNeighborWords are the neighbor attributes of BGP_EVPN_NODE.
 var evpnNeighborWords = []string{
 	"activate", "allowas-in", "attribute-unchanged", "next-hop-self",
 	"route-map", "route-reflector-client", "route-server-client",
-	"soft-reconfiguration",
+	"soft-reconfiguration", "maximum-prefix", "soo",
 }
 
 // afNeighborWords are the neighbor attributes of an address-family. FRR
@@ -57,14 +61,14 @@ var afNeighborWords = []string{
 	"next-hop-self", "prefix-list", "remove-private-AS", "route-map",
 	"route-reflector-client", "route-server-client", "send-community",
 	"soft-reconfiguration", "unsuppress-map", "weight", "advertise-map",
-	"disable-addpath-rx", "nexthop-local",
+	"disable-addpath-rx", "nexthop-local", "soo", "dampening", "addpath-rx-paths-limit",
 }
 
-var l2vniWords = []string{"rd", "route-target", "advertise-svi-ip", "advertise-subnet", "exit-vni", "exit"}
+var l2vniWords = []string{"rd", "route-target", "advertise-default-gw", "advertise-svi-ip", "advertise-subnet", "exit-vni", "exit"}
 
 var routeMapWords = []string{"match", "set", "call", "on-match", "continue", "description", "exit"}
 
-var bfdWords = []string{"profile", "peer", "exit"}
+var bfdWords = []string{"profile", "peer", "sbfd", "exit"}
 
 var bfdProfileWords = []string{
 	"transmit-interval", "receive-interval", "detect-multiplier", "echo-mode",

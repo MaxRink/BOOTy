@@ -77,6 +77,34 @@ network:
     keepalive: 0
     hold: 0
 
+    # sessions/peerGroups: GoBGP sessions in the native form of the frr.conf
+    # neighbors. A session inherits unset fields from its peer-group. A
+    # non-empty sessions list replaces the frr.conf sessions; with sessions,
+    # peerMode, interfaces, neighbors, remoteASN, keepalive and hold do not apply.
+    # defaults: timer profile, traditional (60/180/30) | datacenter (3/9/10, default)
+    defaults: traditional
+    peerGroups:
+      - name: leaf
+        vrf: Vrf_underlay
+        remoteAS: "65500"     # number | internal | external
+        localAS: 65501        # local-as N no-prepend replace-as
+        localASMode: no-prepend-replace-as
+        keepalive: 30
+        hold: 90
+        families: [ipv4-unicast]   # ipv4-unicast | ipv6-unicast | l2vpn-evpn
+    sessions:
+      - name: ens1f0np0
+        interface: true
+        vrf: Vrf_underlay
+        peerGroup: leaf
+      - name: 198.51.100.1
+        vrf: Vrf_underlay
+        remoteAS: internal
+        connectRetry: 5
+        bfd: true
+        bfdProfile: fabric
+        families: [l2vpn-evpn]
+
     # bfdTransmitMS/bfdReceiveMS: FRR-only BFD intervals in milliseconds (0 = disabled).
     # GoBGP does not support BFD; use keepalive/hold timers for faster failure detection.
     bfdTransmitMS: 0

@@ -1625,3 +1625,32 @@ func TestInputStrictness(t *testing.T) {
 		t.Fatalf("NETPLAN_STRICT=false: netplan %v frr %v", np, frr)
 	}
 }
+
+// network.bgp.sessions replaces the frr.conf sessions as a whole, with the
+// merged ASN, and the scalar peer vars are reported as ignored.
+func TestApplyNativeSessions(t *testing.T) {
+	netCfg := &network.Config{ASN: 65000, BGPSessions: []network.BGPSession{{Name: "192.0.2.9"}, {Name: "192.0.2.10"}}}
+	bgp := &config.BGPConfig{Sessions: []config.BGPSessionConfig{{Name: "192.0.2.1", RemoteAS: "internal", Families: []string{"l2vpn-evpn"}}}}
+	if err := applyNativeSessions(bgp, netCfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(netCfg.BGPSessions) != 1 || netCfg.BGPSessions[0].Name != "192.0.2.1" || netCfg.BGPSessions[0].RemoteASN != 65000 || !netCfg.BGPSessions[0].Internal {
+		t.Fatalf("sessions = %+v, want only the native iBGP session with AS 65000", netCfg.BGPSessions)
+	}
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	vars := &network.Config{BGPNeighbors: "192.0.2.1", BGPKeepalive: 3}
+	keys := setPeerVars(vars)
+	warnIgnoredPeerVars(netCfg, keys)
+	for _, k := range []string{"key=BGP_NEIGHBORS", "key=BGP_KEEPALIVE"} {
+		if !strings.Contains(buf.String(), k) {
+			t.Errorf("no warning for %s in %q", k, buf.String())
+		}
+	}
+	if strings.Contains(buf.String(), "BGP_HOLD") {
+		t.Errorf("warning for an unset key: %q", buf.String())
+	}
+}

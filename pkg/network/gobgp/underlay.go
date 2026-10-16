@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"syscall"
@@ -111,26 +112,15 @@ func (u *UnderlayTier) Setup(ctx context.Context) error {
 	// Numbered mode uses explicit IP addresses so NIC detection and link-up
 	// are not required — but MTU must be set on physical NICs in all modes
 	// to avoid VXLAN fragmentation (50-byte overhead).
-	if u.cfg.PeerMode != network.PeerModeNumbered {
-		nics, err := u.waitForNICs(ctx)
-		if err != nil {
-			return fmt.Errorf("detect NICs: %w", err)
-		}
-		if len(nics) == 0 {
-			return fmt.Errorf("no physical NICs detected")
-		}
-		u.nics = nics
-		u.log.Info("Detected physical NICs", "nics", nics)
-
-		if err := u.configureNICs(); err != nil {
-			return fmt.Errorf("configure NICs: %w", err)
-		}
-	} else {
-		u.setNICMTU()
+	if err := u.setupNICs(ctx); err != nil {
+		return err
 	}
 
 	if err := enableForwarding(u.log); err != nil {
 		return fmt.Errorf("enable forwarding: %w", err)
+	}
+	if err := u.acceptVRFConnections(); err != nil {
+		return err
 	}
 
 	if err := u.startBgpServer(ctx); err != nil {
@@ -147,10 +137,31 @@ func (u *UnderlayTier) Setup(ctx context.Context) error {
 
 	// Start periodic Router Advertisements so FRR's zebra continuously
 	// knows our link-local addresses for BGP unnumbered peering.
-	if u.cfg.PeerMode != network.PeerModeNumbered && len(u.nics) > 0 {
+	if u.needsNICs() && len(u.nics) > 0 {
 		u.startPeriodicRA()
 	}
 
+	return nil
+}
+
+func (u *UnderlayTier) setupNICs(ctx context.Context) error {
+	if !u.needsNICs() {
+		u.setNICMTU()
+		return nil
+	}
+	nics, err := u.waitForNICs(ctx)
+	if err != nil {
+		return fmt.Errorf("detect NICs: %w", err)
+	}
+	if len(nics) == 0 {
+		return fmt.Errorf("no physical NICs detected")
+	}
+	u.nics = nics
+	u.log.Info("Detected physical NICs", "nics", nics)
+
+	if err := u.configureNICs(); err != nil {
+		return fmt.Errorf("configure NICs: %w", err)
+	}
 	return nil
 }
 
@@ -243,6 +254,14 @@ func (u *UnderlayTier) createUnderlayDummy() error {
 		return fmt.Errorf("add addr to %s: %w", dummyName, err)
 	}
 
+	// The VXLAN device can bind to the dummy (netplan tunnel "link"); its
+	// MTU must fit under the dummy MTU, like the template's "mtu: 9100".
+	if u.cfg.MTU > 0 {
+		if err := netlink.LinkSetMTU(link, u.cfg.MTU); err != nil {
+			return fmt.Errorf("set %s MTU: %w", dummyName, err)
+		}
+	}
+
 	if err := netlink.LinkSetUp(link); err != nil {
 		return fmt.Errorf("bring up %s: %w", dummyName, err)
 	}
@@ -273,8 +292,11 @@ func (u *UnderlayTier) underlayDummyName() string {
 // found. In containerlab environments, veth links are created after the
 // container starts, so data-plane NICs may not be immediately visible.
 func (u *UnderlayTier) waitForNICs(ctx context.Context) ([]string, error) {
+	if names := sessionInterfaces(u.cfg.Sessions); len(names) > 0 {
+		return u.waitForNamedNICs(ctx, names)
+	}
 	if len(u.cfg.Interfaces) > 0 {
-		return u.waitForConfiguredNICs(ctx)
+		return u.waitForNamedNICs(ctx, u.cfg.Interfaces)
 	}
 
 	for range nicRetryCount {
@@ -296,20 +318,20 @@ func (u *UnderlayTier) waitForNICs(ctx context.Context) ([]string, error) {
 	return network.DetectPhysicalNICsContext(ctx)
 }
 
-func (u *UnderlayTier) waitForConfiguredNICs(ctx context.Context) ([]string, error) {
+func (u *UnderlayTier) waitForNamedNICs(ctx context.Context, names []string) ([]string, error) {
 	var missing []string
 	for range nicRetryCount {
 		if err := ctx.Err(); err != nil {
 			return nil, fmt.Errorf("wait for configured BGP interfaces: %w", err)
 		}
 		missing = missing[:0]
-		for _, name := range u.cfg.Interfaces {
+		for _, name := range names {
 			if _, err := netlink.LinkByName(name); err != nil {
 				missing = append(missing, name)
 			}
 		}
 		if len(missing) == 0 {
-			return append([]string(nil), u.cfg.Interfaces...), nil
+			return append([]string(nil), names...), nil
 		}
 		if err := sleepNICRetry(ctx); err != nil {
 			return nil, err
@@ -433,6 +455,9 @@ func (u *UnderlayTier) startBgpServer(ctx context.Context) error {
 }
 
 func (u *UnderlayTier) addPeers(ctx context.Context) error {
+	if len(u.cfg.Sessions) > 0 {
+		return u.addSessionPeers(ctx)
+	}
 	var added int
 	var lastErr error
 
@@ -452,6 +477,83 @@ func (u *UnderlayTier) addPeers(ctx context.Context) error {
 		return fmt.Errorf("unsupported peer mode: %q", u.cfg.PeerMode)
 	}
 
+	if added == 0 && lastErr != nil {
+		return fmt.Errorf("no BGP peers added: %w", lastErr)
+	}
+	return nil
+}
+
+// needsNICs reports whether the underlay peers over physical NICs.
+func (u *UnderlayTier) needsNICs() bool {
+	if len(u.cfg.Sessions) > 0 {
+		return len(sessionInterfaces(u.cfg.Sessions)) > 0
+	}
+	return u.cfg.PeerMode != network.PeerModeNumbered
+}
+
+// acceptVRFConnections lets peers in a VRF open sessions. The GoBGP
+// listener is not bound to a VRF; with tcp_l3mdev_accept the kernel hands
+// connections that arrive in a VRF to it (FRR bgpd listens per VRF).
+func (u *UnderlayTier) acceptVRFConnections() error {
+	if !u.hasVRFSession() {
+		return nil
+	}
+	if err := os.WriteFile("/proc/sys/net/ipv4/tcp_l3mdev_accept", []byte("1"), 0o644); err != nil { //nolint:gosec // sysctl path
+		return fmt.Errorf("set tcp_l3mdev_accept: %w", err)
+	}
+	return nil
+}
+
+func (u *UnderlayTier) hasVRFSession() bool {
+	for i := range u.cfg.Sessions {
+		if sessionVRF(&u.cfg.Sessions[i]) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func sessionInterfaces(sessions []network.BGPSession) []string {
+	var names []string
+	for i := range sessions {
+		if sessions[i].Interface {
+			names = append(names, sessions[i].Name)
+		}
+	}
+	return names
+}
+
+// addSessionPeers adds every FRR session. Like FRR, a peer that can not
+// be added yet does not stop the others; the run fails only when none
+// was added.
+func (u *UnderlayTier) addSessionPeers(ctx context.Context) error {
+	var added int
+	var lastErr error
+	for i := range u.cfg.Sessions {
+		s := &u.cfg.Sessions[i]
+		if s.BFD {
+			u.log.Warn("BFD is not implemented yet; the session runs without it", "neighbor", s.Name, "profile", s.BFDProfile)
+		}
+		addr := s.Name
+		if s.Interface {
+			var err error
+			if addr, err = discoverLinkLocalPeer(ctx, s.Name); err != nil {
+				u.log.Warn("Failed to find unnumbered peer", "interface", s.Name, "error", err)
+				lastErr = err
+				continue
+			}
+		}
+		peer := buildSessionPeer(u.cfg, s, addr)
+		if err := u.bgp.AddPeer(ctx, &apipb.AddPeerRequest{Peer: peer}); err != nil {
+			u.log.Warn("Failed to add BGP peer", "neighbor", s.Name, "error", err)
+			lastErr = err
+			continue
+		}
+		added++
+		u.log.Info("added BGP peer", "neighbor", s.Name, "address", addr, "vrf", s.VRF,
+			"internal", s.Internal, "remoteASN", peer.Conf.PeerAsn, "localASN", s.LocalASN,
+			"keepalive", s.KeepaliveTime, "hold", s.HoldTime, "families", len(peer.AfiSafis))
+	}
 	if added == 0 && lastErr != nil {
 		return fmt.Errorf("no BGP peers added: %w", lastErr)
 	}

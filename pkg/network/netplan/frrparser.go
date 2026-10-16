@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/frrconf"
 )
 
@@ -19,17 +20,15 @@ type FRRParams struct {
 	UnnumberedPeers []string // Interface names from "neighbor X interface" lines.
 	NumberedPeers   []string // IPv4 addresses from "neighbor X remote-as" lines.
 	NumberedPeersV6 []string // IPv6 addresses from "neighbor X remote-as" lines.
-	// RemoteASN is the remote-as of the IPv4 numbered peers when it is not
-	// the router ASN. All of them must use the same remote-as, because the
-	// network config has one remote ASN for numbered peers.
-	RemoteASN       uint32
-	EVPN            bool // True if "address-family l2vpn evpn" found.
-	AdvertiseAllVNI bool // True if "advertise-all-vni" found.
+	EVPN            bool     // True if "address-family l2vpn evpn" found.
+	AdvertiseAllVNI bool     // True if "advertise-all-vni" found.
 	// L3VNIs lists VNIs mapped to a VRF ("vni N" at top level for the default
 	// VRF or inside a "vrf" block). FRR advertises only Type-5 routes for them;
 	// advertise-all-vni produces Type-2/Type-3 routes for L2VNIs only.
-	L3VNIs       []uint32
-	numberedSeen bool
+	L3VNIs []uint32
+	// Sessions are the resolved BGP peers. Each keeps its own remote-as,
+	// local-as, timers and address families.
+	Sessions []network.BGPSession
 	// Model is the full parsed configuration.
 	Model *frrconf.Config
 }
@@ -69,9 +68,7 @@ func ParseFRRConfigBytesWith(data []byte, name string, strict bool) (*FRRParams,
 		if params.RouterID == "" {
 			params.RouterID = r.RouterID
 		}
-		if err := addPeers(params, r); err != nil {
-			return nil, err
-		}
+		addPeers(params, r)
 		for j := range r.AddressFamilies {
 			af := &r.AddressFamilies[j]
 			if af.SAFI == "evpn" {
@@ -80,6 +77,12 @@ func ParseFRRConfigBytesWith(data []byte, name string, strict bool) (*FRRParams,
 			}
 		}
 	}
+	sessions, err := model.Sessions()
+	if err != nil {
+		return nil, fmt.Errorf("frr config: %w", err)
+	}
+	params.Sessions = BGPSessions(sessions)
+	warnUnapplied(model)
 	for _, v := range model.VRFVNIs {
 		if !slices.Contains(params.L3VNIs, v.VNI) {
 			params.L3VNIs = append(params.L3VNIs, v.VNI)
@@ -90,7 +93,7 @@ func ParseFRRConfigBytesWith(data []byte, name string, strict bool) (*FRRParams,
 
 // addPeers collects interface peers, numbered peers with their own
 // remote-as, and the first local-as, in config order.
-func addPeers(params *FRRParams, r *frrconf.Router) error {
+func addPeers(params *FRRParams, r *frrconf.Router) {
 	for i := range r.Neighbors {
 		n := &r.Neighbors[i]
 		if params.LocalASN == 0 && n.LocalAS != nil {
@@ -103,44 +106,15 @@ func addPeers(params *FRRParams, r *frrconf.Router) error {
 				params.UnnumberedPeers = append(params.UnnumberedPeers, n.Name)
 			}
 		case n.RemoteAS != nil:
-			if addNumberedPeer(params, n.Name) {
-				if err := setRemoteASN(params, n, r.ASN); err != nil {
-					return err
-				}
-			}
+			addNumberedPeer(params, n.Name)
 		}
 	}
-	return nil
 }
 
-// setRemoteASN records the remote-as of an IPv4 numbered peer. The network
-// config has a single remote ASN for numbered peers, so peers with
-// different remote-as values or with "remote-as external" are an error
-// instead of sessions with a wrong ASN. iBGP peers leave it at 0.
-func setRemoteASN(params *FRRParams, n *frrconf.Neighbor, routerASN uint32) error {
-	asn := routerASN
-	switch n.RemoteAS.Kind {
-	case frrconf.RemoteASExternal:
-		return fmt.Errorf("neighbor %s remote-as external: only a number or internal is supported", n.Name)
-	case frrconf.RemoteASNumber:
-		asn = n.RemoteAS.Number
-	}
-	if asn == routerASN {
-		asn = 0
-	}
-	if params.numberedSeen && asn != params.RemoteASN {
-		return fmt.Errorf("numbered neighbors use different remote-as values")
-	}
-	params.numberedSeen, params.RemoteASN = true, asn
-	return nil
-}
-
-// addNumberedPeer records a numbered peer and reports whether it is an
-// IPv4 peer that BOOTy dials.
-func addNumberedPeer(params *FRRParams, name string) bool {
+func addNumberedPeer(params *FRRParams, name string) {
 	addr, err := netip.ParseAddr(name)
 	if err != nil {
-		return false
+		return
 	}
 	list, skip := &params.NumberedPeers, []string{"169.254.", "127."}
 	if !addr.Is4() {
@@ -148,11 +122,76 @@ func addNumberedPeer(params *FRRParams, name string) bool {
 	}
 	for _, p := range skip {
 		if strings.HasPrefix(name, p) {
-			return false
+			return
 		}
 	}
 	if !slices.Contains(*list, name) {
 		*list = append(*list, name)
 	}
-	return addr.Is4()
+}
+
+// BGPSessions converts resolved FRR sessions (from frr.conf or from the
+// native network.bgp.sessions) into the network stack sessions.
+func BGPSessions(sessions []frrconf.Session) []network.BGPSession {
+	out := make([]network.BGPSession, 0, len(sessions))
+	for i := range sessions {
+		out = append(out, toBGPSession(&sessions[i]))
+	}
+	return out
+}
+
+func toBGPSession(s *frrconf.Session) network.BGPSession {
+	out := network.BGPSession{
+		Name:          s.Name,
+		Interface:     s.Interface,
+		VRF:           s.VRF,
+		Internal:      s.Internal,
+		RemoteASN:     s.RemoteASN,
+		KeepaliveTime: s.KeepaliveTime,
+		HoldTime:      s.HoldTime,
+		ConnectRetry:  s.ConnectRetry,
+		IPv4Unicast:   slices.Contains(s.Families, frrconf.FamilyIPv4Unicast),
+		IPv6Unicast:   slices.Contains(s.Families, frrconf.FamilyIPv6Unicast),
+		L2VPNEVPN:     slices.Contains(s.Families, frrconf.FamilyL2VPNEVPN),
+		BFD:           s.BFD,
+		BFDProfile:    s.BFDProfile,
+	}
+	if s.LocalAS != nil {
+		out.LocalASN = s.LocalAS.ASN
+	}
+	return out
+}
+
+// warnUnapplied logs each parsed statement that GoBGP mode does not apply
+// yet, so it is not dropped silently.
+func warnUnapplied(model *frrconf.Config) {
+	warn := func(line int, stmt string, args ...any) {
+		slog.Warn("frr.conf statement parsed but not applied yet", append([]any{"line", line, "statement", stmt}, args...)...)
+	}
+	for i := range model.Routers {
+		r := &model.Routers[i]
+		if r.EBGPRequiresPolicy != nil {
+			warn(r.Line, "[no] bgp ebgp-requires-policy", "router", r.ASN)
+		}
+		if r.SuppressDuplicates != nil {
+			warn(r.Line, "[no] bgp suppress-duplicates", "router", r.ASN)
+		}
+		if r.MultipathRelax {
+			warn(r.Line, "bgp bestpath as-path multipath-relax", "router", r.ASN)
+		}
+		for j := range r.AddressFamilies {
+			af := &r.AddressFamilies[j]
+			for _, n := range af.Neighbors {
+				if n.AllowASIn > 0 {
+					warn(af.Line, "allowas-in", "neighbor", n.Name, "family", af.AFI+" "+af.SAFI)
+				}
+				if n.RouteMapIn != "" || n.RouteMapOut != "" {
+					warn(af.Line, "route-map", "neighbor", n.Name, "family", af.AFI+" "+af.SAFI, "in", n.RouteMapIn, "out", n.RouteMapOut)
+				}
+				if n.SoftReconfigInbound {
+					warn(af.Line, "soft-reconfiguration inbound", "neighbor", n.Name, "family", af.AFI+" "+af.SAFI)
+				}
+			}
+		}
+	}
 }

@@ -149,7 +149,9 @@ type L2VNI struct {
 	RD                string
 	RouteTargetImport []string
 	RouteTargetExport []string
-	Line              int
+	// AdvertiseDefaultGW is "advertise-default-gw" in the vni block.
+	AdvertiseDefaultGW bool
+	Line               int
 }
 
 // AFNeighbor holds the per address family settings of a neighbor or

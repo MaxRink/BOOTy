@@ -42,7 +42,7 @@ GOLANGCI_LINT ?= bin/golangci-lint-$(GOLANGCI_LINT_VERSION)-$(LINT_GOTOOLCHAIN)-
 
 CLAB_TEST_IMAGE ?= test/e2e/clab/images/test.img.gz
 
-.PHONY: all build build-all clean install uninstall fmt fmt-check lint test docker dockerx86 iso slim micro gobgp gobgp-iso dockerx86slim dockerx86micro dockerx86gobgp arm64 arm64-slim arm64-gobgp test-iso getramdisk getramdisk-arm64 test-kvm test-e2e clab-test-image clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-test-image booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab booty-gobgp-test-image clab-gobgp-up clab-gobgp-down test-e2e-gobgp clab-gobgp-vrnetlab-up clab-gobgp-vrnetlab-down test-e2e-gobgp-vrnetlab clab-type5-up clab-type5-down test-e2e-type5 clab-production-up clab-production-down test-e2e-production test-e2e-production-full booty-dhcpd-test-image clab-dhcp-up clab-dhcp-down test-e2e-dhcp clab-bond-up clab-bond-down test-e2e-bond clab-lacp-up clab-lacp-down test-e2e-lacp clab-static-up clab-static-down test-e2e-static clab-multi-nic-up clab-multi-nic-down test-e2e-multi-nic check check-build-vars check-docker-vars check-oci-vars oci-push oci-push-initramfs oci-push-binary
+.PHONY: all build build-all clean install uninstall fmt fmt-check lint test docker dockerx86 iso slim micro gobgp gobgp-iso dockerx86slim dockerx86micro dockerx86gobgp arm64 arm64-slim arm64-gobgp test-iso getramdisk getramdisk-arm64 test-kvm test-e2e clab-test-image clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-test-image booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab booty-gobgp-test-image clab-gobgp-up clab-gobgp-down test-e2e-gobgp clab-gobgp-vrnetlab-up clab-gobgp-vrnetlab-down test-e2e-gobgp-vrnetlab clab-type5-up clab-type5-down test-e2e-type5 clab-prodtpl-up clab-prodtpl-down test-e2e-prodtpl clab-production-up clab-production-down test-e2e-production test-e2e-production-full booty-dhcpd-test-image clab-dhcp-up clab-dhcp-down test-e2e-dhcp clab-bond-up clab-bond-down test-e2e-bond clab-lacp-up clab-lacp-down test-e2e-lacp clab-static-up clab-static-down test-e2e-static clab-multi-nic-up clab-multi-nic-down test-e2e-multi-nic check check-build-vars check-docker-vars check-oci-vars oci-push oci-push-initramfs oci-push-binary
 
 export TARGET VERSION BUILD TARGETOS TARGETARCH DOCKERTAG REPOSITORY
 
@@ -331,6 +331,20 @@ clab-type5-down:
 test-e2e-type5:
 	@printf '%s\n' 'Running pure Type-5 E2E tests (requires clab-type5-up)'
 	@go test -tags e2e_gobgp_type5 -race -v -timeout 300s ./test/e2e/integration/...
+
+# ── Production template e2e targets (#630 slice b) ─────────────────────────
+
+clab-prodtpl-up: booty-gobgp-test-image
+	@printf '%s\n' 'Deploying the production template topology (BOOTy and shadow FRR)'
+	@cd test/e2e/clab && sudo clab deploy --topo topology-production-templates.clab.yml
+
+clab-prodtpl-down:
+	@echo Destroying the production template topology
+	@cd test/e2e/clab && sudo clab destroy --topo topology-production-templates.clab.yml --cleanup
+
+test-e2e-prodtpl:
+	@printf '%s\n' 'Running production template E2E tests (requires clab-prodtpl-up)'
+	@go test -tags e2e_prodtpl -race -v -count=1 -timeout 15m ./test/e2e/integration/...
 
 # ── Production-realistic e2e targets ───────────────────────────────────────
 

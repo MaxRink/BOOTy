@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/netip"
 	"net/url"
 	"path"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	ociname "github.com/google/go-containerregistry/pkg/name"
 	imageutil "github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/network"
+	"github.com/telekom/BOOTy/pkg/network/frrconf"
 	"github.com/telekom/BOOTy/pkg/serialconsole"
 )
 
@@ -205,7 +207,7 @@ func (c *Config) validateBGP() []string {
 	bfdTransmit := c.Network.BGP.BFDTransmitMS
 	bfdReceive := c.Network.BGP.BFDReceiveMS
 
-	var errs []string
+	errs := c.validateSessions()
 	if n := c.Network.WaitMaxAttempts; strings.EqualFold(strings.TrimSpace(c.Network.WaitMode), NetworkWaitRounds) && n != nil && (*n < 0 || *n > MaxNetworkWaitAttempts) {
 		errs = append(errs, fmt.Sprintf("network.waitMaxAttempts (NETWORK_WAIT_MAX_ATTEMPTS) must be 0-%d", MaxNetworkWaitAttempts))
 	}
@@ -1138,6 +1140,48 @@ func validateTokenRenewal(t *TransportConfig) []string {
 	}
 	if t.TokenRenewRetries > MaxTokenRenewRetries {
 		errs = append(errs, fmt.Sprintf("transport.tokenRenewRetries (TOKEN_RENEW_RETRIES) must be at most %d", MaxTokenRenewRetries))
+	}
+	return errs
+}
+
+// validateSessions checks network.bgp.sessions with the frr.conf rules.
+// validateSessionInputs checks defaults always, and peerGroups and
+// defaults without sessions.
+func validateSessionInputs(b *BGPConfig) []string {
+	var errs []string
+	if d := b.Defaults; d != "" && d != string(frrconf.ProfileTraditional) && d != string(frrconf.ProfileDatacenter) {
+		errs = append(errs, fmt.Sprintf("network.bgp.defaults %q must be traditional or datacenter", d))
+	}
+	if !b.HasSessions() && (len(b.PeerGroups) > 0 || b.Defaults != "") {
+		errs = append(errs, "network.bgp.peerGroups and network.bgp.defaults (BGP_PEER_GROUPS, BGP_DEFAULTS) apply only with network.bgp.sessions (BGP_SESSIONS)")
+	}
+	return errs
+}
+
+func (c *Config) validateSessions() []string {
+	b := &c.Network.BGP
+	if errs := validateSessionInputs(b); len(errs) > 0 || !b.HasSessions() {
+		return errs
+	}
+	var errs []string
+	sessions, err := b.ResolveSessions()
+	if err != nil {
+		return []string{err.Error()}
+	}
+	for i := range sessions {
+		s := &sessions[i]
+		if _, err := netip.ParseAddr(s.Name); !s.Interface && err != nil {
+			errs = append(errs, fmt.Sprintf("network.bgp.sessions %s: not an IP address; set interface: true for an unnumbered session", s.Name))
+			continue
+		}
+		switch {
+		case s.KeepaliveTime == 0 || s.HoldTime == 0:
+			errs = append(errs, fmt.Sprintf("network.bgp.sessions %s: timers %d %d: 0 is not supported", s.Name, s.KeepaliveTime, s.HoldTime))
+		case s.HoldTime < 3:
+			errs = append(errs, fmt.Sprintf("network.bgp.sessions %s: hold time %d must be at least 3", s.Name, s.HoldTime))
+		case len(s.Families) == 0:
+			errs = append(errs, fmt.Sprintf("network.bgp.sessions %s: no address family", s.Name))
+		}
 	}
 	return errs
 }

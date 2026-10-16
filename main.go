@@ -961,9 +961,14 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 	if err != nil {
 		return nil, err
 	}
+	ignored := setPeerVars(netCfg)
 	if npCfg != nil {
 		mergeNetplanConfig(netCfg, npCfg)
 	}
+	if err := applyNativeSessions(&cfg.Network.BGP, netCfg); err != nil {
+		return nil, err
+	}
+	warnIgnoredPeerVars(netCfg, ignored)
 	keepProvisionerResolvConf(cfg, netCfg)
 
 	// Parse VLAN configuration.
@@ -1002,6 +1007,9 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 	}
 
 	if netCfg.IsFRRMode() {
+		if cfg.Network.BGP.HasSessions() {
+			slog.Warn("network.bgp.sessions (BGP_SESSIONS) applies to GoBGP mode only; the FRR stack ignores it")
+		}
 		detectIPMI(netCfg)
 		slog.Info("using FRR/EVPN network mode", "asn", cfg.Network.BGP.ASN)
 		mgr := frr.NewManager(nil)
@@ -1345,6 +1353,9 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	if len(src.Interfaces) > 0 {
 		dst.Interfaces = src.Interfaces
 	}
+	if len(src.BGPSessions) > 0 {
+		dst.BGPSessions = src.BGPSessions
+	}
 }
 
 // mergeInferredEVPNL2 applies the EVPN mode inferred from the FRR config.
@@ -1616,4 +1627,56 @@ func requiresABKexec(cfg *config.MachineConfig) bool {
 func inputStrictness(cfg *config.MachineConfig) (netplanStrict, frrStrict bool) {
 	strict := func(v *bool) bool { return v == nil || *v }
 	return strict(cfg.Network.NetplanStrict), strict(cfg.Network.FRRStrict)
+}
+
+// applyNativeSessions resolves network.bgp.sessions with the merged ASN.
+// The native list replaces the frr.conf sessions as a whole.
+func applyNativeSessions(bgp *config.BGPConfig, netCfg *network.Config) error {
+	if !bgp.HasSessions() {
+		return nil
+	}
+	native := *bgp
+	native.ASN = netCfg.ASN
+	sessions, err := native.ResolveSessions()
+	if err != nil {
+		return fmt.Errorf("native BGP sessions: %w", err)
+	}
+	if len(netCfg.BGPSessions) > 0 {
+		slog.Info("network.bgp.sessions replaces the frr.conf sessions", "native", len(sessions), "frr.conf", len(netCfg.BGPSessions))
+	}
+	netCfg.BGPSessions = netplan.BGPSessions(sessions)
+	return nil
+}
+
+// setPeerVars returns the vars keys of the scalar peer setup that are set,
+// before the netplan merge changes them.
+func setPeerVars(netCfg *network.Config) []string {
+	var set []string
+	for _, v := range []struct {
+		key string
+		on  bool
+	}{
+		{"BGP_PEER_MODE", netCfg.BGPPeerMode != network.PeerModeUnnumbered},
+		{"BGP_INTERFACES", netCfg.BGPInterfaces != ""},
+		{"BGP_NEIGHBORS", netCfg.BGPNeighbors != ""},
+		{"BGP_REMOTE_ASN", netCfg.BGPRemoteASN != 0},
+		{"BGP_KEEPALIVE", netCfg.BGPKeepalive != 0},
+		{"BGP_HOLD", netCfg.BGPHold != 0},
+	} {
+		if v.on {
+			set = append(set, v.key)
+		}
+	}
+	return set
+}
+
+// warnIgnoredPeerVars logs each scalar peer vars key that the per-session
+// setup (frr.conf or network.bgp.sessions) makes ineffective.
+func warnIgnoredPeerVars(netCfg *network.Config, keys []string) {
+	if len(netCfg.BGPSessions) == 0 {
+		return
+	}
+	for _, k := range keys {
+		slog.Warn("vars key ignored: the BGP sessions come from frr.conf or network.bgp.sessions", "key", k)
+	}
 }

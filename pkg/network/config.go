@@ -95,6 +95,10 @@ type Config struct {
 	BGPOverlayType  string   // Overlay encapsulation: evpn-vxlan, l3vpn, none (default: evpn-vxlan)
 	BGPAuthPassword string   // Optional TCP-MD5 password for all BGP peers (empty = no auth)
 	BGPMinPeers     int      // Minimum established BGP peers for underlay readiness (default: 1)
+	// BGPSessions are the peers of the provisioner FRR config. When set,
+	// GoBGP uses them instead of BGPPeerMode, BGPInterfaces and
+	// BGPNeighbors.
+	BGPSessions []BGPSession
 
 	// Common fields.
 	BridgeName        string // Default: "br.provision"
@@ -117,6 +121,27 @@ type Config struct {
 
 	// VLAN configuration.
 	VLANs []VLANConfig // 802.1Q VLAN interfaces to create before network mode setup
+}
+
+// BGPSession is one BGP peer with every FRR attribute resolved (peer,
+// peer-group, profile default).
+type BGPSession struct {
+	Name      string // peer address, or the interface for an unnumbered peer
+	Interface bool
+	VRF       string // "" is the default VRF
+	Internal  bool   // iBGP
+	RemoteASN uint32 // 0 with Internal false: any external AS
+	LocalASN  uint32 // "local-as N no-prepend replace-as", 0 when unset
+	// Timers in seconds.
+	KeepaliveTime uint32
+	HoldTime      uint32
+	ConnectRetry  uint32
+	// Activated address families.
+	IPv4Unicast bool
+	IPv6Unicast bool
+	L2VPNEVPN   bool
+	BFD         bool
+	BFDProfile  string
 }
 
 // VLANConfig holds configuration for a single 802.1Q VLAN interface.

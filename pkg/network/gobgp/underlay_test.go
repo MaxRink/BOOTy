@@ -25,9 +25,9 @@ func TestWaitForConfiguredNICsContextCancelled(t *testing.T) {
 	cancel()
 
 	u := NewUnderlayTier(&Config{Interfaces: []string{"eth-test0"}})
-	_, err := u.waitForConfiguredNICs(ctx)
+	_, err := u.waitForNamedNICs(ctx, u.cfg.Interfaces)
 	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("waitForConfiguredNICs error = %v, want context.Canceled", err)
+		t.Fatalf("waitForNamedNICs error = %v, want context.Canceled", err)
 	}
 }
 

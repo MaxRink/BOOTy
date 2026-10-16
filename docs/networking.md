@@ -104,13 +104,70 @@ BOOTy takes these values from `frr.conf`:
 
 - `router bgp N` gives the ASN. `bgp router-id` gives the underlay IP when
   netplan does not.
-- `neighbor X interface` lines give unnumbered peers. `neighbor A.B.C.D
-  remote-as` lines give numbered peers (BOOTy ignores `169.254.*` and
-  `127.*`). Both together select `dual`, only interface peers select
-  `unnumbered`, and only numbered peers select `numbered`.
-- `neighbor X local-as N` gives the local ASN.
+- Every neighbor of every `router bgp` block becomes one GoBGP session (see
+  [BGP sessions](#bgp-sessions)), also numbered peers in `169.254.0.0/16`
+  and `127.0.0.0/8`, like FRR.
 - `advertise-all-vni` and the L3VNIs select the EVPN route mode (see
   [EVPN route modes](#evpn-route-modes-gobgp)).
+
+### BGP sessions
+
+GoBGP mode opens one session per `frr.conf` neighbor, or per entry of the
+native `network.bgp.sessions` (`BGP_SESSIONS`). Both inputs go through the
+same resolution:
+
+- An attribute comes from the neighbor, else from its peer-group, else from
+  the `frr defaults` profile (`BGP_DEFAULTS`). This follows FRR's
+  `tests/bgpd/test_peer_attr.c`.
+- `remote-as` is a number, `internal` (iBGP, the router AS) or `external`
+  (any other AS, learned from the peer's OPEN).
+- `local-as N no-prepend replace-as` is the only local-as mode; GoBGP sends
+  only N and does not add it to received paths. Like FRR 10.3, the session
+  is iBGP when the remote AS is the effective local AS (the local-as, else
+  the router AS): `remote-as 65501` with `local-as 65501` is iBGP in AS 65501.
+- `timers K H` and `timers connect N` are per session. Without them the
+  profile applies (current FRR): traditional 60/180/30 s, datacenter 3/9/10 s.
+- The activated address families are those of the neighbor and its
+  peer-group. In `frr.conf`, IPv4 unicast is active unless `no bgp default
+  ipv4-unicast`. Native sessions have no default family: list
+  `ipv4-unicast` in `families` when the session needs it.
+- The VRF of the `router bgp` block binds the session to that VRF.
+- An interface neighbor is unnumbered: BOOTy finds the peer's IPv6
+  link-local address on the interface.
+
+With these sessions, the vars `BGP_PEER_MODE`, `BGP_INTERFACES`,
+`BGP_NEIGHBORS`, `BGP_REMOTE_ASN`, `BGP_KEEPALIVE` and `BGP_HOLD` no longer
+apply. BOOTy logs a warning for each of them that is set. `local_asn` does
+not apply either, because each session has its own `local-as`.
+
+These errors stop the setup in both inputs and are not relaxed by
+`FRR_CONFIG_STRICT=false`:
+
+- a neighbor without remote-as;
+- a local-as mode other than `no-prepend replace-as`;
+- local-as equal to the router AS, or a local-as with `remote-as internal`
+  (use the number);
+- a member remote-as that differs from its peer-group's;
+- `timers` with 0, or a hold time below 3 (FRR `timers 0 0` disables
+  keepalives; GoBGP would replace 0 with 30/90);
+- a session without an address family;
+- native only: a session name that is not an IP address without
+  `interface: true`, the same session name twice in one VRF, `interface` or
+  `peerGroup` on a peer-group, a peer-group `vrf` that differs from its
+  member's, and `peerGroups` or `defaults` without `sessions`.
+
+The FRR stack (`NETWORK_MODE=frr`) does not use `BGP_SESSIONS`; BOOTy logs
+a warning when it is set there.
+
+These statements are parsed but not applied yet, and BOOTy logs one
+warning per statement: `allowas-in`, `route-map ... in|out`,
+`soft-reconfiguration inbound`, `[no] bgp ebgp-requires-policy`,
+`[no] bgp suppress-duplicates` and `bgp bestpath as-path multipath-relax`.
+`neighbor X bfd` is logged as not implemented yet.
+
+Native config and parsed files merge like this: a native list
+(`network.bgp.sessions`) replaces the parsed list as a whole, with one info
+log line; there is no element-wise merge.
 
 A value from netplan overrides the same value from the vars. An empty
 netplan value keeps the vars value. `VLANS` is the exception: BOOTy parses it
@@ -119,6 +176,12 @@ ASN and a VNI, BOOTy sets the stack to GoBGP. This overrides
 `NETWORK_MODE`.
 
 ### Strict input and the accepted grammar
+
+The behaviour reference is the current FRR (the legacy ramdisk runs the
+latest FRR release; the differential lab uses FRR 10.3.1). BOOTy accepts
+the configuration syntax of the templates, which is still FRR 8.x style
+(`frr version 8.2.2`, `frr defaults traditional`). Where FRR 8.2.2 and the
+current FRR behave differently, the current FRR wins.
 
 BOOTy reads `frr.conf` with a block parser that follows FRR's reading rules
 (`lib/command.c`, `command_config_read_one_line`): indentation does not
@@ -141,7 +204,7 @@ both modes:
 - an invalid value, such as `remote-as 65oo1`, a router-id that is not an
   IPv4 address or a network with prefix length 33;
 - an unsupported statement that opens a block: skipping it would apply its
-  body to the enclosing node. The FRR 8.2.2 node keywords are `router`,
+  body to the enclosing node. The FRR node keywords are `router`,
   `vrf`, `interface`, `address-family`, `vni`, `route-map`, `bfd`, `profile`
   and `peer` (BFD), `line`, `key`, `segment-routing`, `srv6`, `locators`,
   `locator`, `mpls`, `l2vpn`, `pseudowire`, `pbr-map`, `nexthop-group`,
@@ -161,7 +224,7 @@ not become the main-table gateway.
 
 FRR applies a statement in the deepest node of the stack that has it and
 stays in that node. For a skipped statement, BOOTy looks the first word up
-in a table of the FRR 8.2.2 commands per node and moves to the same node
+in a table of the FRR commands per node and moves to the same node
 as FRR, so the next statements land where FRR puts them. Example: `neighbor
 leaf capability extended-nexthop` inside `address-family l2vpn evpn` is a
 router-node command, so FRR leaves the address-family; a following
@@ -170,7 +233,7 @@ l2vpn evpn. If no node of the stack has the statement, FRR stays where it
 is, and so does BOOTy. Each later statement of the same block is applied
 with a warning ("FRR may apply it in another node"), until a statement of a
 parent node ends the block. The table (`pkg/network/frrconf/known.go`) has
-the first words of the FRR 8.2.2 commands of the nodes that BOOTy parses:
+the first words of the current FRR commands (checked against FRR 10.3.1) of the nodes that BOOTy parses:
 top level, `router bgp`, the unicast address-families, `address-family
 l2vpn evpn` (its own, shorter list, with its own neighbor attributes), the
 L2VNI block, `route-map`, `bfd` and its profile, `vrf` and `line vty`. It
@@ -185,10 +248,12 @@ risk: a skipped statement that changes routing in FRR (for example
 `maximum-paths`) has no effect in BOOTy, and only the warning shows it.
 
 Accepted `frr.conf` statements, per node. "Accepted" means parsed and
-validated. Of these, this release applies: `router bgp` (ASN), `bgp
-router-id`, interface and numbered neighbors with their `remote-as`, the
-first `local-as`, `address-family l2vpn evpn` with `advertise-all-vni`, and
-the L3VNIs from `vni N`. BOOTy reads the other statements into its model;
+validated. Of these, this release applies: `router bgp` (ASN and VRF),
+`bgp router-id`, the neighbors with peer-groups, `remote-as`, `local-as`,
+`timers`, `timers connect` and the activated address families (see
+[BGP sessions](#bgp-sessions)), `[no] bgp default ipv4-unicast`, `frr
+defaults`, `address-family l2vpn evpn` with `advertise-all-vni`, and the
+L3VNIs from `vni N`. BOOTy reads the other statements into its model;
 later releases apply them, and this list grows with them.
 
 | Node | Statements |
@@ -235,18 +300,18 @@ on purpose although they are not in the templates:
 |---|---|---|
 | Implementation | FRR daemons (`zebra`, `bgpd`, `bfdd`), config rendered to `/etc/frr/frr.conf` | In-process GoBGP library, no daemons, no gRPC API |
 | Image flavors | Default and `iso` flavors only (`make iso`, `make docker`, `make dockerx86`). `slim`, `micro`, `gobgp` and `gobgp-iso` ship no FRR binaries | All flavors. The BOOTy binary is the same in every flavor |
-| Peer modes | Unnumbered only, on all detected physical NICs. `BGP_PEER_MODE`, `BGP_INTERFACES` and `BGP_NEIGHBORS` are ignored | `unnumbered`, `dual`, `numbered` (see [GoBGP peer modes](#gobgp-peer-modes)) |
-| Remote AS | Peer group with `remote-as external` (eBGP only) | Unnumbered: learned from the peer OPEN. Numbered: `BGP_REMOTE_ASN`, `0` means iBGP |
-| BFD | Yes. `BFD_TRANSMIT_MS` and `BFD_RECEIVE_MS` together create the `datacenter` BFD profile on the fabric peers and the DCGWs | No. BFD values are rejected by config validation and by the GoBGP setup |
+| Peer modes | Unnumbered only, on all detected physical NICs. `BGP_PEER_MODE`, `BGP_INTERFACES` and `BGP_NEIGHBORS` are ignored | With `frr.conf` neighbors or `BGP_SESSIONS`: one session per neighbor (see [BGP sessions](#bgp-sessions)). Otherwise `unnumbered`, `dual`, `numbered` (see [GoBGP peer modes](#gobgp-peer-modes)) |
+| Remote AS | Peer group with `remote-as external` (eBGP only) | Per session: number, `internal` or `external`. Without sessions: unnumbered learns it from the peer OPEN, numbered uses `BGP_REMOTE_ASN` (`0` means iBGP) |
+| BFD | Yes. `BFD_TRANSMIT_MS` and `BFD_RECEIVE_MS` together create the `datacenter` BFD profile on the fabric peers and the DCGWs | Not yet. `BFD_TRANSMIT_MS`/`BFD_RECEIVE_MS` are rejected; `neighbor X bfd` in `frr.conf` is logged as not implemented |
 | Authentication | `BGP_AUTH_PASSWORD` as TCP-MD5 on the fabric peer group and the DCGWs. Whitespace and control characters are rejected | `BGP_AUTH_PASSWORD` as TCP-MD5 on all peers |
-| Timers | `BGP_KEEPALIVE` and `BGP_HOLD` apply only when both are set. Otherwise FRR uses its `datacenter` defaults | Defaults: keepalive 3 s, hold 9 s, connect retry 5 s. Hold must be 0 or at least 3. Keepalive must not exceed hold / 3 |
+| Timers | `BGP_KEEPALIVE` and `BGP_HOLD` apply only when both are set. Otherwise FRR uses its `datacenter` defaults | Per session from `frr.conf` or `BGP_SESSIONS`, else the `frr defaults` profile. Without sessions: keepalive 3 s, hold 9 s, connect retry 5 s; hold must be 0 or at least 3 and keepalive must not exceed hold / 3 |
 | Peer readiness | Not checked. The connectivity check only polls the target URL | `BGP_MIN_PEERS` established peers (default 1) before the target poll |
 | Underlay AF | IPv4. Adds IPv6 unicast when the overlay IP is IPv6 | IPv4 only (`BGP_UNDERLAY_AF=ipv4`) |
 | Overlay type | EVPN/VXLAN only. `BGP_OVERLAY_TYPE` is ignored | `evpn-vxlan` (default) or `none`. `l3vpn` passes config validation but the GoBGP setup rejects it |
 | EVPN routes | FRR rules: `advertise-all-vni`. With `dcgw_ips`, also `advertise ipv4 unicast` | Selected by BOOTy (see [EVPN route modes](#evpn-route-modes-gobgp)) |
 | `EVPN_L2_ENABLED`, `EVPN_TYPE5_ONLY`, `provision_gateway` | Ignored | Used |
 | DCGW (OneFabric) | `dcgw_ips` adds iBGP DCGW neighbors. `overlay_aggregate` and `vpn_rt` apply only with `dcgw_ips` | `dcgw_ips` and `overlay_aggregate` are ignored. `vpn_rt` sets the EVPN route target |
-| `local_asn` | `neighbor fabric local-as N no-prepend replace-as` | Ignored |
+| `local_asn` | `neighbor fabric local-as N no-prepend replace-as` | Ignored. Each session has its own `local-as` |
 | Kernel routes | Zebra installs the learned routes | BOOTy installs only the routes in [Kernel state per mode](#kernel-state-per-mode). GoBGP does not install learned routes |
 | Wait behaviour | Restarts FRR every 120 s while the target is not reachable. Dumps the FRR state on timeout | Waits for peers, then polls the target |
 

@@ -107,6 +107,7 @@ applies:
 | ContainerLab integration    | `e2e_integration`        | FRR EVPN fabric in containers (`make test-e2e-integration`), plus DHCP, static, bond and multi-NIC smoke topologies (`make test-e2e-dhcp`, `test-e2e-static`, `test-e2e-bond`, `test-e2e-multi-nic`). |
 | GoBGP E2E                   | `e2e_gobgp`              | Real GoBGP peering in all PeerModes and the EVPN route modes (`make test-e2e-gobgp`).          |
 | GoBGP Type-5                | `e2e_gobgp_type5`        | Type-5-only EVPN on a per-machine leaf fabric without static spine FDB entries (`make test-e2e-type5`). |
+| Production templates        | `e2e_prodtpl`            | BOOTy with the rendered bm4x-operator templates next to a shadow FRR node with the same template; compares the leaf and route reflector views of both (`make clab-prodtpl-up && make test-e2e-prodtpl`). |
 | Boot E2E                    | `linux && e2e_boot`      | Three BOOTy containers on the FRR EVPN fabric run provision, deprovision and standby (`make test-e2e-boot`). |
 | vrnetlab / QEMU             | `e2e_vrnetlab`           | BOOTy in QEMU VMs (direct kernel and initramfs boot) on an FRR EVPN fabric; provision, deprovision and standby over EVPN (`make test-e2e-vrnetlab`). Uses KVM when `/dev/kvm` exists. |
 | GoBGP vrnetlab              | `e2e_gobgp_vrnetlab`     | GoBGP QEMU VMs with FRR fabric only; no vendor NOS interoperability proof (`make test-e2e-gobgp-vrnetlab`). |

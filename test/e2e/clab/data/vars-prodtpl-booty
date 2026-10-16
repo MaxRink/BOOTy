@@ -1,0 +1,20 @@
+# Production template lab (#630 slice b). The network comes from the
+# rendered bm4x templates in fs-prodtpl-booty; these vars only drive the run.
+export IMAGE_ALLOW_INSECURE_HTTP="true"
+export IMAGE="http://172.31.250.10/images/test.img.gz"
+export HOSTNAME="booty-prodtpl-e2e"
+export TOKEN="e2e-prodtpl-token"
+export INSECURE_TRANSPORT="true"
+export MODE="standby"
+export MIN_DISK_SIZE_GB="1"
+export LOG_URL="http://172.31.250.10/log"
+export INIT_URL="http://172.31.250.10/status/init"
+export ERROR_URL="http://172.31.250.10/status/error"
+export SUCCESS_URL="http://172.31.250.10/status/success"
+export DEBUG_URL="http://172.31.250.10/debug"
+export HEARTBEAT_URL="http://172.31.250.10/status/heartbeat"
+export COMMANDS_URL="http://172.31.250.10/commands"
+export DISK_DEVICE="/dev/loop0"
+# The provision VNI 3000 is an L3VNI (top-level "vni 3000"): Type-5 only,
+# no provision gateway. BOOTy does not infer this from the templates yet.
+export EVPN_TYPE5_ONLY="true"

@@ -437,7 +437,7 @@ func TestParseLenientEVPNNode(t *testing.T) {
 	for _, stmt := range []string{
 		"bgp graceful-restart", "redistribute connected", "maximum-paths 8",
 		"aggregate-address 192.0.2.0/24", "neighbor leaf send-community",
-		"neighbor leaf prefix-list PL in", "neighbor leaf maximum-prefix 100",
+		"neighbor leaf prefix-list PL in",
 	} {
 		t.Run(stmt, func(t *testing.T) {
 			cfg, err := ParseWith([]byte("router bgp 65000\n neighbor leaf peer-group\n neighbor leaf remote-as external\n address-family l2vpn evpn\n  "+stmt+"\n  advertise-all-vni\n"), Options{Lenient: true, Warn: func(*ParseError) {}})
@@ -497,5 +497,89 @@ func TestParseLenientEVPNNodeKnown(t *testing.T) {
 		if !cfg.Routers[0].AddressFamilies[0].AdvertiseAllVNI {
 			t.Errorf("%q: advertise-all-vni not applied to l2vpn evpn", stmt)
 		}
+	}
+}
+
+// In the current FRR (10.3), maximum-prefix and soo are neighbor commands
+// of the l2vpn evpn address-family too (FRR 8.2.2 had them only in the
+// unicast families), so skipping them keeps the parser there.
+func TestParseLenientEVPNNodeCurrentFRR(t *testing.T) {
+	for _, stmt := range []string{"neighbor leaf maximum-prefix 100", "neighbor leaf soo 65000:1", "mac-vrf soo 65000:1"} {
+		var warns []string
+		cfg, err := ParseWith([]byte("router bgp 65000\n neighbor leaf peer-group\n neighbor leaf remote-as external\n address-family l2vpn evpn\n  "+stmt+"\n  advertise-all-vni\n"),
+			Options{Lenient: true, Warn: func(e *ParseError) { warns = append(warns, e.Error()) }})
+		if err != nil {
+			t.Fatalf("%q: ParseWith() = %v", stmt, err)
+		}
+		if !cfg.Routers[0].AddressFamilies[0].AdvertiseAllVNI {
+			t.Errorf("%q: advertise-all-vni not applied to l2vpn evpn", stmt)
+		}
+		// One warning for the skipped statement, none for the next one.
+		if len(warns) != 1 || !strings.Contains(warns[0], stmt) {
+			t.Errorf("%q: warnings %q, want exactly one for it", stmt, warns)
+		}
+	}
+}
+
+// The current FRR neighbor attributes of a unicast address-family are
+// skipped there; the next statement stays in the address-family.
+func TestParseLenientUnicastAFCurrentFRR(t *testing.T) {
+	for _, stmt := range []string{"neighbor leaf soo 65000:1", "neighbor leaf dampening", "neighbor leaf addpath-rx-paths-limit 4", "sid vpn export auto"} {
+		var warns []string
+		cfg, err := ParseWith([]byte("router bgp 65000\n neighbor leaf peer-group\n neighbor leaf remote-as external\n address-family ipv4 unicast\n  "+stmt+"\n  network 192.0.2.0/24\n"),
+			Options{Lenient: true, Warn: func(e *ParseError) { warns = append(warns, e.Error()) }})
+		if err != nil {
+			t.Fatalf("%q: ParseWith() = %v", stmt, err)
+		}
+		if af := cfg.Routers[0].AddressFamilies[0]; len(af.Networks) != 1 {
+			t.Errorf("%q: network not applied to ipv4 unicast: %+v", stmt, af)
+		}
+		if len(warns) != 1 || !strings.Contains(warns[0], "address-family ipv4 unicast") {
+			t.Errorf("%q: warnings %q, want exactly one in the address-family", stmt, warns)
+		}
+	}
+}
+
+// "sid" is not an l2vpn evpn command: FRR runs it in the router node and
+// stays there, so a following EVPN statement fails, like in FRR.
+func TestParseLenientSIDInEVPNMovesToRouter(t *testing.T) {
+	var warns []string
+	cfg, err := ParseWith([]byte("router bgp 65000\n address-family l2vpn evpn\n  sid vpn per-vrf export auto\n  advertise-all-vni\n"),
+		Options{Lenient: true, Warn: func(e *ParseError) { warns = append(warns, e.Error()) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Routers[0].AddressFamilies[0].AdvertiseAllVNI {
+		t.Error("advertise-all-vni applied to l2vpn evpn after sid moved to the router node")
+	}
+	if len(warns) != 2 || !strings.Contains(warns[0], "(in router bgp 65000)") || !strings.Contains(warns[1], "advertise-all-vni") {
+		t.Errorf("warnings %q, want sid in the router node, then advertise-all-vni", warns)
+	}
+}
+
+// advertise-default-gw in a vni block belongs to that VNI; exit-vni then
+// leaves the block.
+func TestParseVNIAdvertiseDefaultGW(t *testing.T) {
+	cfg, err := Parse([]byte("router bgp 65000\n address-family l2vpn evpn\n  vni 100\n   advertise-default-gw\n  exit-vni\n  advertise-all-vni\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	af := cfg.Routers[0].AddressFamilies[0]
+	if !af.L2VNIs[0].AdvertiseDefaultGW || af.AdvertiseDefaultGW || !af.AdvertiseAllVNI {
+		t.Errorf("af = %+v, want advertise-default-gw on VNI 100 only", af)
+	}
+}
+
+// "sbfd" (current FRR) is skipped in the bfd node; the profile after it
+// still belongs to bfd.
+func TestParseLenientSBFD(t *testing.T) {
+	var warns int
+	cfg, err := ParseWith([]byte("bfd\n sbfd reflector source-address 2001:db8::1 discriminator 1\n profile fabric\n  transmit-interval 150\n"),
+		Options{Lenient: true, Warn: func(*ParseError) { warns++ }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.BFDProfiles) != 1 || *cfg.BFDProfiles[0].TransmitInterval != 150 || warns != 1 {
+		t.Errorf("profiles %+v, %d warnings, want the profile and one warning", cfg.BFDProfiles, warns)
 	}
 }

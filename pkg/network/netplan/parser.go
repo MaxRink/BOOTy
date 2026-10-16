@@ -472,6 +472,7 @@ func applyFRRParams(frr *FRRParams, cfg *network.Config) {
 		cfg.UnderlayIP = frr.RouterID
 	}
 	cfg.EVPNL3VNIs = frr.L3VNIs
+	cfg.BGPSessions = frr.Sessions
 	if frr.AdvertiseAllVNI {
 		// advertise-all-vni only yields Type-2/Type-3 routes for L2VNIs. When
 		// the provisioning VNI is an L3VNI the fabric is pure Type-5, as with
@@ -491,13 +492,11 @@ func applyFRRParams(frr *FRRParams, cfg *network.Config) {
 	case hasUnnumbered && hasNumbered:
 		cfg.BGPPeerMode = network.PeerModeDual
 		cfg.BGPNeighbors = strings.Join(frr.NumberedPeers, ",")
-		cfg.BGPRemoteASN = frr.RemoteASN
 	case hasUnnumbered:
 		cfg.BGPPeerMode = network.PeerModeUnnumbered
 	case hasNumbered:
 		cfg.BGPPeerMode = network.PeerModeNumbered
 		cfg.BGPNeighbors = strings.Join(frr.NumberedPeers, ",")
-		cfg.BGPRemoteASN = frr.RemoteASN
 	}
 }
 

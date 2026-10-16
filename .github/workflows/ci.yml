@@ -1630,6 +1630,105 @@ jobs:
             sudo containerlab destroy --topo test/e2e/clab/topology-type5.clab.yml --cleanup || true
           fi
 
+  e2e-prodtpl:
+    name: E2E Production Templates
+    runs-on: ubuntu-latest
+    needs: [build]
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.6"
+
+      - name: Build GoBGP test image
+        run: test/e2e/clab/docker-build-retry.sh -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
+
+      - name: Install ContainerLab
+        run: test/e2e/clab/install-containerlab.sh "${CONTAINERLAB_VERSION}"
+
+      - name: Load VRF and VXLAN kernel modules
+        run: |
+          # The template puts the uplinks into Vrf_underlay; a container can
+          # not load modules itself ("Unknown device type").
+          if ! sudo modprobe vrf; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq "linux-modules-extra-$(uname -r)"
+            sudo modprobe vrf
+          fi
+          sudo modprobe vxlan
+
+      - name: Deploy production template topology
+        run: sudo containerlab deploy --topo test/e2e/clab/topology-production-templates.clab.yml
+
+      - name: Run production template E2E tests
+        env:
+          GOMAXPROCS: "2"
+        run: |
+          set -o pipefail
+          go test -tags e2e_prodtpl -v -race -count=1 -timeout 15m ./test/e2e/integration/... 2>&1 | tee e2e-prodtpl.log
+          for expected in \
+            TestProdTplLeafSessions \
+            TestProdTplLocalASReplaceASPath \
+            TestProdTplRRSessions \
+            TestProdTplRRSessionVRFOutbound \
+            TestProdTplRRSessionVRFInbound; do
+            if ! grep -q "^--- PASS: ${expected} " e2e-prodtpl.log; then
+              echo "::error::${expected} did not pass"
+              exit 1
+            fi
+          done
+          if grep -E '^[[:space:]]*--- SKIP:' e2e-prodtpl.log; then
+            echo "::error::production template e2e tests skipped in CI"
+            exit 1
+          fi
+
+      - name: Collect production template logs
+        if: always()
+        timeout-minutes: 5
+        run: |
+          mkdir -p prodtpl-logs
+          for node in leaf01 dcgw01 dcgw02 shadow booty caprf-mock; do
+            name="clab-booty-prodtpl-lab-${node}"
+            timeout 30 sudo docker logs "${name}" > "prodtpl-logs/${node}.log" 2>&1 || true
+            {
+              echo "=== ip -d addr ==="
+              timeout 5 sudo docker exec "${name}" ip -d addr show 2>&1 || true
+              echo "=== ip route show table all ==="
+              timeout 5 sudo docker exec "${name}" ip route show table all 2>&1 || true
+              echo "=== ss -tn ==="
+              timeout 5 sudo docker exec "${name}" ss -tn 2>&1 || true
+            } > "prodtpl-logs/${node}-network.txt" 2>&1
+          done
+          for node in leaf01 dcgw01 dcgw02 shadow; do
+            for cmd in "show bgp vrf all summary json" "show bgp vrf all neighbors json" "show bgp ipv4 unicast" "show bgp l2vpn evpn"; do
+              slug=$(echo "$cmd" | tr ' ' '-')
+              timeout 15 sudo docker exec "clab-booty-prodtpl-lab-${node}" vtysh -c "$cmd" > "prodtpl-logs/${node}-${slug}.txt" 2>&1 || true
+            done
+          done
+
+      - name: Upload production template logs
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: prodtpl-logs
+          path: |
+            e2e-prodtpl.log
+            prodtpl-logs/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Cleanup
+        if: always()
+        run: |
+          if command -v containerlab >/dev/null 2>&1; then
+            sudo containerlab destroy --topo test/e2e/clab/topology-production-templates.clab.yml --cleanup || true
+          fi
+
   e2e-vrnetlab:
     name: E2E EVPN Boot (vrnetlab)
     runs-on: ubuntu-latest

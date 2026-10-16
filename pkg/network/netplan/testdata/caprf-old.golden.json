@@ -1,0 +1,83 @@
+{
+  "Interfaces": [
+    "auto-detect"
+  ],
+  "LegacyFRRRecovery": false,
+  "UnderlaySubnet": "",
+  "UnderlayIP": "192.168.4.11",
+  "OverlaySubnet": "",
+  "IPMISubnet": "",
+  "IPMIMAC": "",
+  "IPMIIP": "",
+  "ASN": 65101,
+  "ProvisionVNI": 1000,
+  "ProvisionIP": "10.200.0.11/32",
+  "ProvisionGateway": "",
+  "DNSResolvers": "",
+  "DCGWIPs": "",
+  "LeafASN": 0,
+  "LocalASN": 0,
+  "OverlayAggregate": "",
+  "VPNRT": "",
+  "StaticIP": "10.254.0.2/31",
+  "StaticGateway": "",
+  "StaticIface": "hbn",
+  "StaticMatch": null,
+  "LinkRenames": [
+    {
+      "Name": "enp*s4",
+      "MAC": "",
+      "SetName": "hbn"
+    }
+  ],
+  "InterfaceNames": null,
+  "BondInterfaces": "",
+  "BondMode": "",
+  "VRFTableID": 10,
+  "OverlayVRFTableID": 0,
+  "BGPKeepalive": 0,
+  "BGPHold": 0,
+  "BFDTransmitMS": 0,
+  "BFDReceiveMS": 0,
+  "BGPPeerMode": "numbered",
+  "BGPInterfaces": "",
+  "BGPNeighbors": "10.254.0.3",
+  "BGPRemoteASN": 0,
+  "BGPUnderlayAF": "",
+  "BGPOverlayType": "",
+  "BGPAuthPassword": "",
+  "BGPMinPeers": 0,
+  "BGPSessions": [
+    {
+      "Name": "10.254.0.3",
+      "Interface": false,
+      "VRF": "Vrf_underlay",
+      "Internal": false,
+      "RemoteASN": 0,
+      "LocalASN": 0,
+      "KeepaliveTime": 3,
+      "HoldTime": 9,
+      "ConnectRetry": 10,
+      "IPv4Unicast": true,
+      "IPv6Unicast": false,
+      "L2VPNEVPN": true,
+      "BFD": false,
+      "BFDProfile": ""
+    }
+  ],
+  "BridgeName": "br.provision",
+  "BridgeMAC": "",
+  "VRFName": "Vrf_underlay",
+  "OverlayVRFName": "",
+  "OverlayVRFSet": true,
+  "UnderlayDummyName": "dum.underlay",
+  "VXLANLink": "dum.underlay",
+  "MTU": 9100,
+  "NetworkMode": "gobgp",
+  "EVPNL2Enabled": false,
+  "EVPNType5Only": false,
+  "EVPNL3VNIs": [
+    1000
+  ],
+  "VLANs": null
+}

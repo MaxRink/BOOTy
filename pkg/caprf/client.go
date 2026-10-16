@@ -1298,6 +1298,7 @@ func applyNetworkStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"BGP_INTERFACES":    &cfg.Network.BGP.Interfaces,
 		"BGP_NEIGHBORS":     &cfg.Network.BGP.Neighbors,
 		"BGP_AUTH_PASSWORD": &cfg.Network.BGP.AuthPassword,
+		"BGP_DEFAULTS":      &cfg.Network.BGP.Defaults,
 	}
 
 	if ptr, ok := strFields[key]; ok {
@@ -1629,6 +1630,13 @@ func applyIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 			return true, fmt.Errorf("invalid %s: %w", key, err)
 		}
 		*strict = &v
+		return true, nil
+	}
+	if list, ok := map[string]*[]config.BGPSessionConfig{"BGP_SESSIONS": &cfg.Network.BGP.Sessions, "BGP_PEER_GROUPS": &cfg.Network.BGP.PeerGroups}[key]; ok {
+		// A JSON list, like network.bgp.sessions in YAML.
+		if err := json.Unmarshal([]byte(value), list); err != nil {
+			return true, fmt.Errorf("invalid %s: %w", key, err)
+		}
 		return true, nil
 	}
 	return false, nil

@@ -85,6 +85,15 @@ type BGPConfig struct {
 	// Default: 0 (disables BGP)
 	ASN uint32 `yaml:"asn" json:"asn"`
 
+	// Sessions are the BGP sessions of GoBGP mode, the native form of the
+	// frr.conf neighbors; PeerGroups are their peer-groups. Defaults is the
+	// timer profile, "traditional" or "datacenter" (the default), like
+	// "frr defaults". A non-empty Sessions list replaces the frr.conf
+	// sessions as a whole.
+	Sessions   []BGPSessionConfig `yaml:"sessions,omitempty" json:"sessions,omitempty"`
+	PeerGroups []BGPSessionConfig `yaml:"peerGroups,omitempty" json:"peerGroups,omitempty"`
+	Defaults   string             `yaml:"defaults,omitempty" json:"defaults,omitempty"`
+
 	// PeerMode controls how BGP neighbor sessions are established.
 	// Valid values: "unnumbered" (default), "dual", "numbered"
 	//   - unnumbered: link-local interface peers for all address families

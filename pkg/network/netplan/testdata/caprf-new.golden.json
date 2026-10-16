@@ -49,6 +49,24 @@
   "BGPOverlayType": "",
   "BGPAuthPassword": "",
   "BGPMinPeers": 0,
+  "BGPSessions": [
+    {
+      "Name": "hbn",
+      "Interface": true,
+      "VRF": "Vrf_underlay",
+      "Internal": false,
+      "RemoteASN": 0,
+      "LocalASN": 0,
+      "KeepaliveTime": 3,
+      "HoldTime": 9,
+      "ConnectRetry": 10,
+      "IPv4Unicast": true,
+      "IPv6Unicast": false,
+      "L2VPNEVPN": true,
+      "BFD": false,
+      "BFDProfile": ""
+    }
+  ],
   "BridgeName": "br.provision",
   "BridgeMAC": "",
   "VRFName": "Vrf_underlay",

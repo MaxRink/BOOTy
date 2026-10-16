@@ -80,6 +80,9 @@ type Config struct {
 	// In dual-homed EVPN fabrics, set this to 2 to ensure full-fabric
 	// connectivity before provisioning proceeds.  Default: 1.
 	MinEstablishedPeers int
+	// Sessions are the peers of the provisioner FRR config. When set they
+	// replace PeerMode, Interfaces, NeighborAddrs, RemoteASN and the timers.
+	Sessions []network.BGPSession
 	// Policy configures BGP import/export communities and route attributes.
 	Policy *PolicyConfig
 	// GracefulRestart configures BGP graceful restart behavior.
@@ -136,6 +139,7 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		UnderlayAF:          netCfg.BGPUnderlayAF,
 		OverlayType:         netCfg.BGPOverlayType,
 		MinEstablishedPeers: netCfg.BGPMinPeers,
+		Sessions:            netCfg.BGPSessions,
 	}
 
 	cfg.ApplyDefaults()
@@ -311,6 +315,9 @@ func (c *Config) validateRouterID() error {
 }
 
 func (c *Config) validatePeerMode() error {
+	if len(c.Sessions) > 0 {
+		return validateSessions(c.Sessions)
+	}
 	switch c.PeerMode {
 	case network.PeerModeDual, network.PeerModeNumbered:
 		if len(c.NeighborAddrs) == 0 {
@@ -331,6 +338,38 @@ func (c *Config) validatePeerMode() error {
 		return fmt.Errorf("unknown peer mode %q", c.PeerMode)
 	}
 	return nil
+}
+
+// validateSessions checks the FRR peers. FRR accepts a hold time of 0 or
+// 3-65535 and any keepalive; the negotiated keepalive is at most hold/3.
+func validateSessions(sessions []network.BGPSession) error {
+	for i := range sessions {
+		s := &sessions[i]
+		if !s.Interface && net.ParseIP(s.Name) == nil {
+			return fmt.Errorf("BGP neighbor %q is not an address", s.Name)
+		}
+		if s.HoldTime == 0 || s.KeepaliveTime == 0 {
+			// FRR "timers 0 0" disables keepalives and the hold timer;
+			// GoBGP would replace 0 with 30/90 instead.
+			return fmt.Errorf("BGP neighbor %s: timers %d %d: 0 is not supported", s.Name, s.KeepaliveTime, s.HoldTime)
+		}
+		if s.HoldTime < 3 {
+			return fmt.Errorf("BGP neighbor %s: hold time %d must be at least 3", s.Name, s.HoldTime)
+		}
+		if !s.IPv4Unicast && !s.IPv6Unicast && !s.L2VPNEVPN {
+			return fmt.Errorf("BGP neighbor %s has no activated address family", s.Name)
+		}
+	}
+	return nil
+}
+
+// sessionVRF returns the VRF device a session is bound to, "" for the
+// default VRF.
+func sessionVRF(s *network.BGPSession) string {
+	if s.VRF == "default" {
+		return ""
+	}
+	return s.VRF
 }
 
 // validateTimers checks BGP timer constraints per RFC 4271 §4.2.

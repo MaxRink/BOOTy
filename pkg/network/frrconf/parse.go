@@ -41,7 +41,7 @@ func unsupported(reason string) error {
 // An unsupported one stays an error in lenient mode: skipping the opener
 // would apply its body to the enclosing node.
 //
-// The list covers the FRR 8.2.2 vtysh node table: router (bgp, ospf, ospf6,
+// The list covers the vtysh node table of the current FRR (10.3): router (bgp, ospf, ospf6,
 // rip, ripng, isis, openfabric, eigrp, babel, pim), vrf, interface,
 // address-family, vni, route-map, bfd with its profile and peer nodes, line,
 // key chain and key, segment-routing, srv6, locators and locator, mpls ldp,
@@ -753,6 +753,9 @@ func (p *parser) l2vniStatement(f []string) error {
 		v.RD = f[1]
 	case has(f, "route-target") && len(f) == 3:
 		return addRouteTarget(&v.RouteTargetImport, &v.RouteTargetExport, f[1], f[2])
+	case is(f, "advertise-default-gw"):
+		// FRR has it per VNI too (bgp_evpn_vty.c, bgp_evpn_advertise_default_gw_vni).
+		v.AdvertiseDefaultGW = true
 	case is(f, "exit-vni"), is(f, "exit"):
 		p.pop()
 	default:

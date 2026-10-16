@@ -1,0 +1,104 @@
+# Production template lab (#630 slice b).
+#
+# BOOTy gets the rendered bm4x-operator templates (data/fs-prodtpl-booty,
+# a copy of pkg/network/frrconf/testdata/bm4x/two-uplinks). A shadow FRR
+# node gets the same template rendered for 192.0.2.18
+# (prodtpl-shadow.frr.conf) and peers with the same leaf and route
+# reflectors. The tests compare the leaf and RR views of both nodes.
+#
+#   booty  ens1f0np0/ens1f1np1 ── leaf01 eth1/eth2   (eBGP unnumbered, local-as 65501)
+#   shadow ens1f0np0/ens1f1np1 ── leaf01 eth3/eth4
+#   dcgw01 eth1 ── leaf01 eth5, dcgw02 eth1 ── leaf01 eth6
+#   booty, shadow ── dcgw01, dcgw02 (iBGP l2vpn evpn in Vrf_underlay, via leaf01)
+#
+# BOOTy reaches the CAPRF mock over the management network.
+name: booty-prodtpl-lab
+
+mgmt:
+  network: booty-prodtpl-mgmt
+  ipv4-subnet: 172.31.250.0/24
+
+topology:
+  nodes:
+    leaf01:
+      kind: linux
+      image: quay.io/frrouting/frr:10.3.1
+      binds:
+        - prodtpl-leaf01.frr.conf:/etc/frr/frr.conf:ro
+        - daemons:/etc/frr/daemons:ro
+      exec:
+        - sh -c 'for i in 1 2 3 4 5 6; do ip link set dev eth$i mtu 9100 up; done'
+        # Fixed link-local next hop for the test route on BOOTy (see the
+        # tests: BOOTy has no FIB writer before slice c).
+        - ip -6 addr add fe80::1/64 dev eth1
+        - ip -6 addr add fe80::1/64 dev eth2
+
+    dcgw01:
+      kind: linux
+      image: quay.io/frrouting/frr:10.3.1
+      binds:
+        - prodtpl-dcgw01.frr.conf:/etc/frr/frr.conf:ro
+        - daemons:/etc/frr/daemons:ro
+      exec:
+        - ip link set dev eth1 mtu 9100 up
+
+    dcgw02:
+      kind: linux
+      image: quay.io/frrouting/frr:10.3.1
+      binds:
+        - prodtpl-dcgw02.frr.conf:/etc/frr/frr.conf:ro
+        - daemons:/etc/frr/daemons:ro
+      exec:
+        - ip link set dev eth1 mtu 9100 up
+
+    # FRR with the production template, netplan applied by hand.
+    shadow:
+      kind: linux
+      image: quay.io/frrouting/frr:10.3.1
+      binds:
+        - prodtpl-shadow.frr.conf:/etc/frr/frr.conf:ro
+        - daemons:/etc/frr/daemons:ro
+      exec:
+        - ip link add Vrf_underlay type vrf table 10
+        - ip link set Vrf_underlay up
+        - ip link set ens1f0np0 master Vrf_underlay mtu 9100 up
+        - ip link set ens1f1np1 master Vrf_underlay mtu 9100 up
+        - ip link add dum.underlay type dummy
+        - ip link set dum.underlay master Vrf_underlay mtu 9100 up
+        - ip addr add 192.0.2.18/32 dev dum.underlay
+        - ip -6 addr add 2001:db8:40a:5481::18/128 dev lo
+        - ip link add vx.3000 type vxlan id 3000 local 192.0.2.18 dstport 4789 nolearning dev dum.underlay
+        - ip link add br.provision address 02:54:c0:00:02:12 type bridge
+        - ip link set vx.3000 address 02:54:c0:00:02:12 master br.provision mtu 9000 up
+        - ip link set br.provision mtu 9000 up
+
+    booty:
+      kind: linux
+      image: booty-gobgp-test:latest
+      startup-delay: 20
+      binds:
+        - data/vars-prodtpl-booty:/deploy/vars:ro
+        - data/fs-prodtpl-booty:/deploy/file-system:ro
+      env:
+        BOOTY_NO_REBOOT: "1"
+      exec:
+        - dd if=/dev/zero of=/tmp/disk.img bs=1M count=0 seek=2048
+        - sh -c 'test -b /dev/loop0 || mknod -m 660 /dev/loop0 b 7 0'
+        - losetup /dev/loop0 /tmp/disk.img
+
+    caprf-mock:
+      kind: linux
+      image: nginx:alpine
+      mgmt-ipv4: 172.31.250.10
+      binds:
+        - caprf-mock.conf:/etc/nginx/nginx.conf:ro
+        - images:/srv/images:ro
+        - data:/srv/data:ro
+
+  links:
+    - endpoints: ["leaf01:eth1", "booty:ens1f0np0"]
+    - endpoints: ["leaf01:eth2", "booty:ens1f1np1"]
+    - endpoints: ["leaf01:eth3", "shadow:ens1f0np0"]
+    - endpoints: ["leaf01:eth4", "shadow:ens1f1np1"]
+    - endpoints: ["leaf01:eth5", "dcgw01:eth1"]
+    - endpoints: ["leaf01:eth6", "dcgw02:eth1"]
