@@ -117,6 +117,9 @@ func buildSessionPeer(cfg *Config, s *network.BGPSession, addr string) *apipb.Pe
 		AfiSafis:  sessionFamilies(s),
 		Transport: &apipb.Transport{MtuDiscovery: true},
 	}
+	// GoBGP checks the router AS on import, like FRR "allowas-in N" does
+	// for bgp->as (bgpd/bgp_route.c, aspath_loop_check). FRR allows 1-10.
+	peer.Conf.AllowOwnAsn = uint32(s.AllowASIn) //nolint:gosec // 0-10 from the parser
 	if s.Interface {
 		peer.Transport.LocalAddress = "::"
 		peer.Transport.BindInterface = s.Name

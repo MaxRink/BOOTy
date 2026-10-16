@@ -23,6 +23,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
 	"github.com/telekom/BOOTy/pkg/network"
+	"github.com/telekom/BOOTy/pkg/network/netplan"
 	"github.com/telekom/BOOTy/pkg/provision"
 	"github.com/telekom/BOOTy/pkg/realm"
 	"github.com/telekom/BOOTy/pkg/runmode"
@@ -1652,5 +1653,101 @@ func TestApplyNativeSessions(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "BGP_HOLD") {
 		t.Errorf("warning for an unset key: %q", buf.String())
+	}
+}
+
+// "bgp bestpath as-path multipath-relax" and network.bgp.multipathRelax
+// give the same flag; a native value overrides the parsed one. The
+// unsupported variant fails in both forms.
+func TestApplyNativeMultipathRelax(t *testing.T) {
+	parsed, err := netplan.ParseFRRConfigBytes([]byte("router bgp 65000\n bgp bestpath as-path multipath-relax\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	vars, err := caprf.ParseVars(strings.NewReader("BGP_MULTIPATH_RELAX=true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	native := &network.Config{}
+	if err := applyNativeSessions(&vars.Network.BGP, native); err != nil {
+		t.Fatal(err)
+	}
+	if !parsed.MultipathRelax || native.BGPMultipathRelax != parsed.MultipathRelax {
+		t.Fatalf("frr.conf %v, native %v, want both true", parsed.MultipathRelax, native.BGPMultipathRelax)
+	}
+
+	merged := &network.Config{BGPMultipathRelax: true}
+	if err := applyNativeSessions(&config.BGPConfig{MultipathRelax: new(false)}, merged); err != nil {
+		t.Fatal(err)
+	}
+	if merged.BGPMultipathRelax {
+		t.Error("native multipathRelax false did not override the frr.conf value")
+	}
+
+	if _, err := netplan.ParseFRRConfigBytes([]byte("router bgp 65000\n bgp bestpath as-path multipath-relax as-set\n")); err == nil {
+		t.Error("frr.conf: multipath-relax as-set parsed without error")
+	}
+	if _, err := caprf.ParseVars(strings.NewReader("BGP_MULTIPATH_RELAX=as-set\n")); err == nil {
+		t.Error("vars: BGP_MULTIPATH_RELAX=as-set parsed without error")
+	}
+}
+
+// The relax flag goes from frr.conf through the netplan merge (the
+// sessions branch) into the GoBGP config.
+func TestMultipathRelaxPlumbing(t *testing.T) {
+	parsed, err := netplan.ParseFRRConfigBytes([]byte("router bgp 65000\n bgp bestpath as-path multipath-relax\n neighbor 192.0.2.1 remote-as 65001\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := netplan.ToNetworkConfig(&netplan.Config{}, parsed)
+	dst := &network.Config{}
+	mergeNetplanConfig(dst, src)
+	if len(dst.BGPSessions) != 1 || !dst.BGPMultipathRelax {
+		t.Fatalf("merged sessions %d, relax %v; want the frr.conf session and relax", len(dst.BGPSessions), dst.BGPMultipathRelax)
+	}
+}
+
+// "[no] bgp fast-external-failover" and network.bgp.fastExternalFailover
+// give the same session flag; the native value overrides frr.conf. An
+// unsupported value fails in both forms.
+func TestFastExternalFailoverBothForms(t *testing.T) {
+	parsed, err := netplan.ParseFRRConfigBytes([]byte("router bgp 65000\n no bgp fast-external-failover\n neighbor eth0 interface remote-as external\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed.Sessions) != 1 || parsed.Sessions[0].FastExternalFailover {
+		t.Fatalf("frr.conf sessions = %+v, want fast-external-failover off", parsed.Sessions)
+	}
+	vars, err := caprf.ParseVars(strings.NewReader("BGP_FAST_EXTERNAL_FAILOVER=false\nBGP_SESSIONS=[{\"name\":\"eth0\",\"interface\":true,\"remoteAS\":\"external\",\"families\":[\"ipv4-unicast\"]}]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	native := &network.Config{ASN: 65000}
+	if err := applyNativeSessions(&vars.Network.BGP, native); err != nil {
+		t.Fatal(err)
+	}
+	if len(native.BGPSessions) != 1 || native.BGPSessions[0].FastExternalFailover != parsed.Sessions[0].FastExternalFailover {
+		t.Fatalf("native sessions = %+v, want the frr.conf flag", native.BGPSessions)
+	}
+	on := &network.Config{BGPSessions: []network.BGPSession{{Name: "eth0", FastExternalFailover: false}}}
+	if err := applyNativeSessions(&config.BGPConfig{FastExternalFailover: new(true)}, on); err != nil {
+		t.Fatal(err)
+	}
+	if !on.BGPSessions[0].FastExternalFailover {
+		t.Error("native fastExternalFailover true did not override frr.conf")
+	}
+	// Native sessions without their own setting keep a frr.conf "no".
+	replaced := &network.Config{ASN: 65000, BGPSessions: parsed.Sessions}
+	if err := applyNativeSessions(&config.BGPConfig{Sessions: []config.BGPSessionConfig{{Name: "eth0", Interface: true, RemoteAS: "external", Families: []string{"ipv4-unicast"}}}}, replaced); err != nil {
+		t.Fatal(err)
+	}
+	if replaced.BGPSessions[0].FastExternalFailover {
+		t.Error("native sessions lost the frr.conf no bgp fast-external-failover")
+	}
+	if _, err := netplan.ParseFRRConfigBytes([]byte("router bgp 65000\n bgp fast-external-failover now\n")); err == nil {
+		t.Error("frr.conf: bgp fast-external-failover now parsed")
+	}
+	if _, err := caprf.ParseVars(strings.NewReader("BGP_FAST_EXTERNAL_FAILOVER=sometimes\n")); err == nil {
+		t.Error("vars: BGP_FAST_EXTERNAL_FAILOVER=sometimes parsed")
 	}
 }

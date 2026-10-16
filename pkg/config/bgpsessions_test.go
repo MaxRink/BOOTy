@@ -17,6 +17,7 @@ import (
 const bm4xNativeSessions = `
 asn: 4210000017
 defaults: traditional
+multipathRelax: true
 peerGroups:
   - name: dcgw
     vrf: Vrf_underlay
@@ -27,6 +28,7 @@ peerGroups:
     hold: 90
     connectRetry: 5
     families: [l2vpn-evpn]
+    allowASIn: 3
   - name: leaf
     vrf: Vrf_underlay
     remoteAS: "65500"
@@ -37,6 +39,7 @@ peerGroups:
     keepalive: 30
     hold: 90
     families: [ipv4-unicast]
+    allowASIn: 3
 sessions:
   - {name: ens1f0np0, interface: true, vrf: Vrf_underlay, peerGroup: leaf}
   - {name: ens1f1np1, interface: true, vrf: Vrf_underlay, peerGroup: leaf}
@@ -77,7 +80,7 @@ func TestNativeSessionsEqualFRRConf(t *testing.T) {
 
 // Statements BOOTy does not support fail in both forms: a local-as mode
 // other than no-prepend replace-as, local-as equal to remote-as, a member
-// remote-as next to a peer-group remote-as.
+// remote-as next to a peer-group remote-as, an allowas-in count above 10.
 func TestNativeSessionsRejectLikeFRRConf(t *testing.T) {
 	for _, tt := range []struct {
 		name, frr, native, want string
@@ -99,6 +102,12 @@ func TestNativeSessionsRejectLikeFRRConf(t *testing.T) {
 			"router bgp 65000\n neighbor g peer-group\n neighbor g remote-as 65001\n neighbor 192.0.2.1 peer-group g\n neighbor 192.0.2.1 remote-as 65002\n",
 			"asn: 65000\npeerGroups:\n  - {name: g, remoteAS: \"65001\"}\nsessions:\n  - {name: 192.0.2.1, peerGroup: g, remoteAS: \"65002\", families: [ipv4-unicast]}\n",
 			"has its own remote-as",
+		},
+		{
+			"allowas-in count",
+			"router bgp 65000\n neighbor 192.0.2.1 remote-as 65001\n address-family ipv4 unicast\n  neighbor 192.0.2.1 allowas-in 11\n",
+			"asn: 65000\nsessions:\n  - {name: 192.0.2.1, remoteAS: \"65001\", allowASIn: 11, families: [ipv4-unicast]}\n",
+			"invalid allowas-in count",
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -147,6 +156,7 @@ func TestValidateNativeSessions(t *testing.T) {
 		{"sessions:\n  - {name: 192.0.2.1, remoteAS: external, families: [ipv4-unicast]}\n  - {name: 192.0.2.1, remoteAS: internal, families: [ipv4-unicast]}\n", "defined twice"},
 		{"sessions:\n  - {name: 192.0.2.1, remoteAS: external, families: [ipv4-unicast]}\n  - {name: 192.0.2.1, vrf: Vrf_b, remoteAS: external, families: [ipv4-unicast]}\n", ""},
 		{"sessions:\n  - {name: 192.0.2.1, remoteAS: 65001, families: [ipv4-unicast]}\n", ""},
+		{"sessions:\n  - {name: 192.0.2.1, remoteAS: auto, families: [ipv4-unicast]}\n", "must be a number, internal or external"},
 	} {
 		c := &Config{}
 		if err := yaml.Unmarshal([]byte(tt.yaml), &c.Network.BGP); err != nil {

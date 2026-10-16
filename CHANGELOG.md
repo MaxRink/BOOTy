@@ -191,6 +191,14 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 
 ### Features
 
+- GoBGP mode installs the learned unicast routes into the session VRF table like
+  zebra, and stops an uplink session when its NIC loses carrier (#645).
+  `allowas-in` and `bgp bestpath as-path multipath-relax` are applied, also
+  natively (`allowASIn` per session, `network.bgp.multipathRelax`,
+  `BGP_MULTIPATH_RELAX`). `[no] bgp fast-external-failover` is parsed and
+  native (`BGP_FAST_EXTERNAL_FAILOVER`, YAML `network.bgp.fastExternalFailover`).
+  Routes go to the table of each session's VRF with metric 20, recursive next
+  hops are resolved like zebra, and the multipath rule follows FRR 10.3.
 - GoBGP mode opens one BGP session per `frr.conf` neighbor with its own
   attributes (peer-groups, `remote-as internal`, `local-as`, timers, address
   families, VRF), also on FRR uplinks that netplan does not list. The same

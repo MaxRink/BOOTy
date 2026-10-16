@@ -28,10 +28,6 @@ topology:
         - daemons:/etc/frr/daemons:ro
       exec:
         - sh -c 'for i in 1 2 3 4 5 6; do ip link set dev eth$i mtu 9100 up; done'
-        # Fixed link-local next hop for the test route on BOOTy (see the
-        # tests: BOOTy has no FIB writer before slice c).
-        - ip -6 addr add fe80::1/64 dev eth1
-        - ip -6 addr add fe80::1/64 dev eth2
 
     dcgw01:
       kind: linux

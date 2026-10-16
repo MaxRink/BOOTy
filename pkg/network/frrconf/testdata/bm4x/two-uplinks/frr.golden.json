@@ -28,6 +28,7 @@
       "SuppressDuplicates": false,
       "DefaultIPv4Unicast": false,
       "MultipathRelax": true,
+      "FastExternalFailover": null,
       "Neighbors": [
         {
           "Name": "dcgw",
@@ -186,6 +187,7 @@
       "SuppressDuplicates": false,
       "DefaultIPv4Unicast": null,
       "MultipathRelax": false,
+      "FastExternalFailover": null,
       "Neighbors": null,
       "AddressFamilies": [
         {

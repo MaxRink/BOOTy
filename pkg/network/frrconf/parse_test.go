@@ -583,3 +583,35 @@ func TestParseLenientSBFD(t *testing.T) {
 		t.Errorf("profiles %+v, %d warnings, want the profile and one warning", cfg.BFDProfiles, warns)
 	}
 }
+
+// FRR 10 "remote-as auto" is not supported.
+func TestParseRemoteASAuto(t *testing.T) {
+	if _, err := Parse([]byte("router bgp 65000\n neighbor 192.0.2.1 remote-as auto\n")); err == nil || !strings.Contains(err.Error(), "remote-as auto is not supported") {
+		t.Fatalf("Parse() = %v, want the remote-as auto error", err)
+	}
+}
+
+// multipath-relax as-set and remote-as auto are errors also in lenient
+// mode: skipping them would change the routes silently.
+func TestParseLenientPlainErrors(t *testing.T) {
+	for _, conf := range []string{
+		"router bgp 65000\n bgp bestpath as-path multipath-relax as-set\n",
+		"router bgp 65000\n neighbor 192.0.2.1 remote-as auto\n",
+	} {
+		if _, err := ParseWith([]byte(conf), Options{Lenient: true, Warn: func(*ParseError) {}}); err == nil {
+			t.Errorf("%q: lenient parse accepted it", conf)
+		}
+	}
+}
+
+// "[no] bgp fast-external-failover" sets the router flag; sessions follow it.
+func TestParseFastExternalFailover(t *testing.T) {
+	cfg, err := Parse([]byte("router bgp 65000\n no bgp fast-external-failover\n neighbor 192.0.2.1 remote-as 65001\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := cfg.Sessions()
+	if err != nil || cfg.Routers[0].FastExternalFailover == nil || *cfg.Routers[0].FastExternalFailover || s[0].FastExternalFailover {
+		t.Fatalf("router %v sessions %+v (%v), want off", cfg.Routers[0].FastExternalFailover, s, err)
+	}
+}

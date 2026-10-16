@@ -63,10 +63,14 @@
       "IPv4Unicast": true,
       "IPv6Unicast": false,
       "L2VPNEVPN": true,
+      "AllowASIn": 0,
+      "FastExternalFailover": true,
       "BFD": false,
       "BFDProfile": ""
     }
   ],
+  "BGPMultipathRelax": false,
+  "BGPFastExternalFailover": null,
   "BridgeName": "br.provision",
   "BridgeMAC": "",
   "VRFName": "Vrf_underlay",

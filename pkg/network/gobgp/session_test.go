@@ -27,6 +27,13 @@ func TestBuildSessionPeer(t *testing.T) {
 	if len(p.AfiSafis) != 1 || p.AfiSafis[0].Config.Family.Afi != apipb.Family_AFI_IP {
 		t.Errorf("leaf families = %v, want ipv4 unicast only", p.AfiSafis)
 	}
+	if p.Conf.AllowOwnAsn != 0 {
+		t.Errorf("leaf allow own AS = %d, want 0 without allowas-in", p.Conf.AllowOwnAsn)
+	}
+	leaf.AllowASIn = 3
+	if p = buildSessionPeer(cfg, leaf, "fe80::1%ens1f0np0"); p.Conf.AllowOwnAsn != 3 {
+		t.Errorf("leaf allow own AS = %d, want 3", p.Conf.AllowOwnAsn)
+	}
 
 	rr := &network.BGPSession{Name: "198.51.100.1", VRF: "Vrf_underlay", Internal: true, RemoteASN: 4210000017,
 		KeepaliveTime: 30, HoldTime: 90, ConnectRetry: 5, L2VPNEVPN: true}

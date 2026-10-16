@@ -83,6 +83,12 @@ type Config struct {
 	// Sessions are the peers of the provisioner FRR config. When set they
 	// replace PeerMode, Interfaces, NeighborAddrs, RemoteASN and the timers.
 	Sessions []network.BGPSession
+	// MultipathRelax is "bgp bestpath as-path multipath-relax": equal-cost
+	// paths may have different AS paths of the same length.
+	MultipathRelax bool
+	// FastExternalFailover allows the carrier watch of the unnumbered
+	// sessions ("bgp fast-external-failover"); default true like FRR.
+	FastExternalFailover bool
 	// Policy configures BGP import/export communities and route attributes.
 	Policy *PolicyConfig
 	// GracefulRestart configures BGP graceful restart behavior.
@@ -109,37 +115,39 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 	}
 
 	cfg := &Config{
-		ASN:                 netCfg.ASN,
-		RouterID:            underlayIP,
-		ProvisionVNI:        int(netCfg.ProvisionVNI),
-		ProvisionIP:         netCfg.ProvisionIP,
-		ProvisionGateway:    netCfg.ProvisionGateway,
-		VPNRT:               netCfg.VPNRT,
-		DNSResolvers:        netCfg.DNSResolvers,
-		BridgeName:          netCfg.BridgeName,
-		VRFName:             netCfg.VRFName,
-		OverlayVRFName:      overlayVRFName,
-		VRFTableID:          netCfg.VRFTableID,
-		OverlayVRFTableID:   netCfg.OverlayVRFTableID,
-		UnderlayDummyName:   netCfg.UnderlayDummyName,
-		VXLANLink:           netCfg.VXLANLink,
-		MTU:                 netCfg.MTU,
-		KeepaliveInterval:   uint64(netCfg.BGPKeepalive),
-		HoldTime:            uint64(netCfg.BGPHold),
-		OverlayIP:           overlayIP,
-		BridgeMAC:           bridgeMAC,
-		IPMIMAC:             netCfg.IPMIMAC,
-		PeerMode:            netCfg.BGPPeerMode,
-		Interfaces:          parseCSV(netCfg.BGPInterfaces),
-		NeighborAddrs:       parseNeighborAddrs(netCfg.BGPNeighbors),
-		RemoteASN:           netCfg.BGPRemoteASN,
-		EnableL2:            netCfg.EVPNL2Enabled,
-		Type5Only:           netCfg.EVPNType5Only,
-		AuthPassword:        netCfg.BGPAuthPassword,
-		UnderlayAF:          netCfg.BGPUnderlayAF,
-		OverlayType:         netCfg.BGPOverlayType,
-		MinEstablishedPeers: netCfg.BGPMinPeers,
-		Sessions:            netCfg.BGPSessions,
+		ASN:                  netCfg.ASN,
+		RouterID:             underlayIP,
+		ProvisionVNI:         int(netCfg.ProvisionVNI),
+		ProvisionIP:          netCfg.ProvisionIP,
+		ProvisionGateway:     netCfg.ProvisionGateway,
+		VPNRT:                netCfg.VPNRT,
+		DNSResolvers:         netCfg.DNSResolvers,
+		BridgeName:           netCfg.BridgeName,
+		VRFName:              netCfg.VRFName,
+		OverlayVRFName:       overlayVRFName,
+		VRFTableID:           netCfg.VRFTableID,
+		OverlayVRFTableID:    netCfg.OverlayVRFTableID,
+		UnderlayDummyName:    netCfg.UnderlayDummyName,
+		VXLANLink:            netCfg.VXLANLink,
+		MTU:                  netCfg.MTU,
+		KeepaliveInterval:    uint64(netCfg.BGPKeepalive),
+		HoldTime:             uint64(netCfg.BGPHold),
+		OverlayIP:            overlayIP,
+		BridgeMAC:            bridgeMAC,
+		IPMIMAC:              netCfg.IPMIMAC,
+		PeerMode:             netCfg.BGPPeerMode,
+		Interfaces:           parseCSV(netCfg.BGPInterfaces),
+		NeighborAddrs:        parseNeighborAddrs(netCfg.BGPNeighbors),
+		RemoteASN:            netCfg.BGPRemoteASN,
+		EnableL2:             netCfg.EVPNL2Enabled,
+		Type5Only:            netCfg.EVPNType5Only,
+		AuthPassword:         netCfg.BGPAuthPassword,
+		UnderlayAF:           netCfg.BGPUnderlayAF,
+		OverlayType:          netCfg.BGPOverlayType,
+		MinEstablishedPeers:  netCfg.BGPMinPeers,
+		Sessions:             netCfg.BGPSessions,
+		MultipathRelax:       netCfg.BGPMultipathRelax,
+		FastExternalFailover: netCfg.BGPFastExternalFailover == nil || *netCfg.BGPFastExternalFailover,
 	}
 
 	cfg.ApplyDefaults()

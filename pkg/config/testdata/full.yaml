@@ -83,6 +83,9 @@ network:
     # peerMode, interfaces, neighbors, remoteASN, keepalive and hold do not apply.
     # defaults: timer profile, traditional (60/180/30) | datacenter (3/9/10, default)
     defaults: traditional
+    # multipathRelax (BGP_MULTIPATH_RELAX): "bgp bestpath as-path multipath-relax";
+    # set, it overrides the frr.conf value
+    multipathRelax: true
     peerGroups:
       - name: leaf
         vrf: Vrf_underlay
@@ -92,6 +95,7 @@ network:
         keepalive: 30
         hold: 90
         families: [ipv4-unicast]   # ipv4-unicast | ipv6-unicast | l2vpn-evpn
+        allowASIn: 3          # allowas-in N in each family (1-10)
     sessions:
       - name: ens1f0np0
         interface: true

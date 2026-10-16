@@ -1082,3 +1082,24 @@ func TestFirstReachableBGPPeer(t *testing.T) {
 		t.Fatal("listener did not observe BGP probe")
 	}
 }
+
+// The relax and fast-external-failover settings reach the GoBGP config;
+// fast-external-failover is on unless set off.
+func TestNewConfigMapsRelaxAndFailover(t *testing.T) {
+	base := func() *network.Config {
+		return &network.Config{ASN: 65000, UnderlayIP: "192.0.2.1", ProvisionVNI: 4000, ProvisionGateway: testProvisionGateway, BGPMultipathRelax: true,
+			BGPSessions: []network.BGPSession{{Name: "192.0.2.9", RemoteASN: 65001, KeepaliveTime: 3, HoldTime: 9, IPv4Unicast: true}}}
+	}
+	cfg, err := NewConfig(base())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.MultipathRelax || !cfg.FastExternalFailover {
+		t.Fatalf("MultipathRelax %v FastExternalFailover %v, want both on", cfg.MultipathRelax, cfg.FastExternalFailover)
+	}
+	off := base()
+	off.BGPFastExternalFailover = new(false)
+	if cfg, err = NewConfig(off); err != nil || cfg.FastExternalFailover {
+		t.Fatalf("FastExternalFailover = %v (%v), want off", cfg.FastExternalFailover, err)
+	}
+}

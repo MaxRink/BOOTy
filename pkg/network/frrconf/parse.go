@@ -423,6 +423,29 @@ func (p *parser) vrfStatement(f []string) error {
 
 func boolPtr(v bool) *bool { return &v }
 
+// routerFlag sets a "[no] bgp FLAG" router flag and reports whether f is
+// one.
+func routerFlag(r *Router, f []string) bool {
+	flags := map[string]**bool{
+		"ebgp-requires-policy":   &r.EBGPRequiresPolicy,
+		"suppress-duplicates":    &r.SuppressDuplicates,
+		"fast-external-failover": &r.FastExternalFailover,
+	}
+	words := f
+	if len(words) > 0 && words[0] == "no" {
+		words = words[1:]
+	}
+	switch {
+	case is(words, "bgp", "default", "ipv4-unicast"):
+		r.DefaultIPv4Unicast = boolPtr(f[0] != "no")
+		return true
+	case len(words) == 2 && words[0] == "bgp" && flags[words[1]] != nil:
+		*flags[words[1]] = boolPtr(f[0] != "no")
+		return true
+	}
+	return false
+}
+
 func (p *parser) bgpStatement(f []string) error {
 	r := p.currentRouter()
 	switch {
@@ -432,14 +455,13 @@ func (p *parser) bgpStatement(f []string) error {
 			return fmt.Errorf("invalid router-id %q", f[2])
 		}
 		r.RouterID = f[2]
-	case is(f, "bgp", "ebgp-requires-policy"), is(f, "no", "bgp", "ebgp-requires-policy"):
-		r.EBGPRequiresPolicy = boolPtr(f[0] != "no")
-	case is(f, "bgp", "suppress-duplicates"), is(f, "no", "bgp", "suppress-duplicates"):
-		r.SuppressDuplicates = boolPtr(f[0] != "no")
-	case is(f, "bgp", "default", "ipv4-unicast"), is(f, "no", "bgp", "default", "ipv4-unicast"):
-		r.DefaultIPv4Unicast = boolPtr(f[0] != "no")
+	case routerFlag(r, f):
 	case is(f, "bgp", "bestpath", "as-path", "multipath-relax"):
 		r.MultipathRelax = true
+	case has(f, "bgp", "bestpath", "as-path", "multipath-relax"):
+		// as-set and no-as-set change the aggregate path, which BOOTy does
+		// not build; an error in both modes, not a skippable statement.
+		return fmt.Errorf("bgp bestpath as-path multipath-relax %s is not supported", strings.Join(f[4:], " "))
 	case is(f, "bgp", "log-neighbor-changes"), is(f, "no", "bgp", "log-neighbor-changes"):
 		// Logging only.
 	case has(f, "neighbor") && len(f) >= 3:
@@ -600,6 +622,9 @@ func parseRemoteAS(v string) (RemoteAS, error) {
 		return RemoteAS{Kind: RemoteASInternal}, nil
 	case "external":
 		return RemoteAS{Kind: RemoteASExternal}, nil
+	case "auto":
+		// FRR 10 "remote-as auto" learns iBGP or eBGP from the peer.
+		return RemoteAS{}, errors.New("remote-as auto is not supported; use a number, internal or external")
 	}
 	asn, err := parseUint32(v, "remote-as")
 	if err != nil {

@@ -34,6 +34,12 @@ type Session struct {
 	ConnectRetry  uint32
 	// Families are the activated address families.
 	Families []string
+	// AllowASIn is the "allowas-in" count of the activated address
+	// families (the largest one), 0 when unset.
+	AllowASIn int
+	// FastExternalFailover is "bgp fast-external-failover" of the router:
+	// on unless "no bgp fast-external-failover" (the FRR default).
+	FastExternalFailover bool
 	// BFD and BFDProfile request a BFD session.
 	BFD        bool
 	BFDProfile string
@@ -112,6 +118,8 @@ func (c *Config) session(r *Router, n *Neighbor) (Session, error) {
 	}
 
 	s.Families = families(r, n)
+	s.AllowASIn = allowASIn(r, n)
+	s.FastExternalFailover = r.FastExternalFailover == nil || *r.FastExternalFailover
 	return s, nil
 }
 
@@ -141,9 +149,10 @@ func setRemoteAS(s *Session, n, g *Neighbor, ownASN uint32) error {
 	switch ras.Kind {
 	case RemoteASInternal:
 		if s.LocalAS != nil {
-			// "internal" is the router AS; with a local-as the number says
-			// which AS is meant.
-			return fmt.Errorf("local-as %d with remote-as internal: use remote-as %d", local, local)
+			// FRR 10.3 accepts this as an asymmetric iBGP session: its OPEN
+			// carries the local-as, but it expects the router AS from the
+			// peer. GoBGP has one AS per side and can not do that.
+			return fmt.Errorf("local-as %d with remote-as internal is not supported: FRR sends the local-as but expects the router AS from the peer, which GoBGP can not do; use remote-as %d for iBGP in AS %d", local, local, local)
 		}
 		s.Internal, s.RemoteASN = true, local
 	case RemoteASExternal:
@@ -204,6 +213,20 @@ func families(r *Router, n *Neighbor) []string {
 		}
 	}
 	return out
+}
+
+// allowASIn returns the largest "allowas-in" count set for the peer or
+// its group in an address family. GoBGP has one count per peer.
+func allowASIn(r *Router, n *Neighbor) int {
+	count := 0
+	for i := range r.AddressFamilies {
+		for _, an := range r.AddressFamilies[i].Neighbors {
+			if an.Name == n.Name || n.Group != "" && an.Name == n.Group {
+				count = max(count, an.AllowASIn)
+			}
+		}
+	}
+	return count
 }
 
 func familyName(af *AddressFamily) string {

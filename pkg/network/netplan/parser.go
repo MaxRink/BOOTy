@@ -473,6 +473,7 @@ func applyFRRParams(frr *FRRParams, cfg *network.Config) {
 	}
 	cfg.EVPNL3VNIs = frr.L3VNIs
 	cfg.BGPSessions = frr.Sessions
+	cfg.BGPMultipathRelax = frr.MultipathRelax
 	if frr.AdvertiseAllVNI {
 		// advertise-all-vni only yields Type-2/Type-3 routes for L2VNIs. When
 		// the provisioning VNI is an L3VNI the fabric is pure Type-5, as with

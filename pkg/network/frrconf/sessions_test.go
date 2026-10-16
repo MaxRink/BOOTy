@@ -52,12 +52,12 @@ exit-address-family
 		return Session{Name: name, Interface: true, VRF: "Vrf_underlay", RemoteASN: 65500,
 			LocalAS:       &LocalAS{ASN: 65501, NoPrepend: true, ReplaceAS: true},
 			KeepaliveTime: 30, HoldTime: 90, ConnectRetry: 30,
-			Families: []string{FamilyIPv4Unicast}, BFD: true, BFDProfile: "fabric", Line: line}
+			Families: []string{FamilyIPv4Unicast}, BFD: true, BFDProfile: "fabric", FastExternalFailover: true, Line: line}
 	}
 	dcgw := func(name string, keepalive, hold uint32, line int) Session {
 		return Session{Name: name, VRF: "Vrf_underlay", Internal: true, RemoteASN: 4210000017,
 			KeepaliveTime: keepalive, HoldTime: hold, ConnectRetry: 5,
-			Families: []string{FamilyL2VPNEVPN}, Line: line}
+			Families: []string{FamilyL2VPNEVPN}, FastExternalFailover: true, Line: line}
 	}
 	want := []Session{
 		leaf("ens1f0np0", 13), leaf("ens1f1np1", 14),
@@ -135,5 +135,23 @@ func TestSessionsNumberedOwnASIsInternal(t *testing.T) {
 	s := mustSessions(t, "router bgp 65101\n neighbor 192.0.2.1 remote-as 65101\n")[0]
 	if !s.Internal || s.RemoteASN != 65101 {
 		t.Fatalf("session = %+v, want iBGP with 65101", s)
+	}
+}
+
+// "allowas-in" on the group reaches the members; without a count FRR
+// uses 3 (FRR bgp_as_allow_in topotest).
+func TestSessionsAllowASIn(t *testing.T) {
+	got := mustSessions(t, `router bgp 65101
+ neighbor leaf peer-group
+ neighbor leaf remote-as 65500
+ neighbor eth1 interface peer-group leaf
+ neighbor 192.0.2.1 remote-as 65500
+ address-family ipv4 unicast
+  neighbor leaf allowas-in
+  neighbor 192.0.2.1 allowas-in 5
+ exit-address-family
+`)
+	if got[0].AllowASIn != 3 || got[1].AllowASIn != 5 {
+		t.Fatalf("AllowASIn = %d, %d, want 3 and 5", got[0].AllowASIn, got[1].AllowASIn)
 	}
 }

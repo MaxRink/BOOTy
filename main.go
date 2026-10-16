@@ -1355,6 +1355,7 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	}
 	if len(src.BGPSessions) > 0 {
 		dst.BGPSessions = src.BGPSessions
+		dst.BGPMultipathRelax = src.BGPMultipathRelax
 	}
 }
 
@@ -1632,6 +1633,15 @@ func inputStrictness(cfg *config.MachineConfig) (netplanStrict, frrStrict bool) 
 // applyNativeSessions resolves network.bgp.sessions with the merged ASN.
 // The native list replaces the frr.conf sessions as a whole.
 func applyNativeSessions(bgp *config.BGPConfig, netCfg *network.Config) error {
+	if bgp.MultipathRelax != nil {
+		netCfg.BGPMultipathRelax = *bgp.MultipathRelax
+	}
+	if v := bgp.FastExternalFailover; v != nil {
+		netCfg.BGPFastExternalFailover = v
+		for i := range netCfg.BGPSessions {
+			netCfg.BGPSessions[i].FastExternalFailover = *v
+		}
+	}
 	if !bgp.HasSessions() {
 		return nil
 	}
@@ -1644,8 +1654,30 @@ func applyNativeSessions(bgp *config.BGPConfig, netCfg *network.Config) error {
 	if len(netCfg.BGPSessions) > 0 {
 		slog.Info("network.bgp.sessions replaces the frr.conf sessions", "native", len(sessions), "frr.conf", len(netCfg.BGPSessions))
 	}
-	netCfg.BGPSessions = netplan.BGPSessions(sessions)
+	nativeSessions := netplan.BGPSessions(sessions)
+	if bgp.FastExternalFailover == nil {
+		keepFastExternalFailover(nativeSessions, netCfg.BGPSessions)
+	}
+	netCfg.BGPSessions = nativeSessions
 	return nil
+}
+
+// keepFastExternalFailover keeps a "no bgp fast-external-failover" of
+// frr.conf when native sessions replace the frr.conf sessions without
+// their own setting: it is a router flag, so it applies to the native
+// sessions of the same VRF.
+func keepFastExternalFailover(native, parsed []network.BGPSession) {
+	off := map[string]bool{}
+	for i := range parsed {
+		if !parsed[i].FastExternalFailover {
+			off[parsed[i].VRF] = true
+		}
+	}
+	for i := range native {
+		if off[native[i].VRF] {
+			native[i].FastExternalFailover = false
+		}
+	}
 }
 
 // setPeerVars returns the vars keys of the scalar peer setup that are set,

@@ -29,6 +29,9 @@ type FRRParams struct {
 	// Sessions are the resolved BGP peers. Each keeps its own remote-as,
 	// local-as, timers and address families.
 	Sessions []network.BGPSession
+	// MultipathRelax is set when a router has "bgp bestpath as-path
+	// multipath-relax".
+	MultipathRelax bool
 	// Model is the full parsed configuration.
 	Model *frrconf.Config
 }
@@ -69,6 +72,7 @@ func ParseFRRConfigBytesWith(data []byte, name string, strict bool) (*FRRParams,
 			params.RouterID = r.RouterID
 		}
 		addPeers(params, r)
+		params.MultipathRelax = params.MultipathRelax || r.MultipathRelax
 		for j := range r.AddressFamilies {
 			af := &r.AddressFamilies[j]
 			if af.SAFI == "evpn" {
@@ -142,19 +146,21 @@ func BGPSessions(sessions []frrconf.Session) []network.BGPSession {
 
 func toBGPSession(s *frrconf.Session) network.BGPSession {
 	out := network.BGPSession{
-		Name:          s.Name,
-		Interface:     s.Interface,
-		VRF:           s.VRF,
-		Internal:      s.Internal,
-		RemoteASN:     s.RemoteASN,
-		KeepaliveTime: s.KeepaliveTime,
-		HoldTime:      s.HoldTime,
-		ConnectRetry:  s.ConnectRetry,
-		IPv4Unicast:   slices.Contains(s.Families, frrconf.FamilyIPv4Unicast),
-		IPv6Unicast:   slices.Contains(s.Families, frrconf.FamilyIPv6Unicast),
-		L2VPNEVPN:     slices.Contains(s.Families, frrconf.FamilyL2VPNEVPN),
-		BFD:           s.BFD,
-		BFDProfile:    s.BFDProfile,
+		Name:                 s.Name,
+		Interface:            s.Interface,
+		VRF:                  s.VRF,
+		Internal:             s.Internal,
+		RemoteASN:            s.RemoteASN,
+		KeepaliveTime:        s.KeepaliveTime,
+		HoldTime:             s.HoldTime,
+		ConnectRetry:         s.ConnectRetry,
+		IPv4Unicast:          slices.Contains(s.Families, frrconf.FamilyIPv4Unicast),
+		IPv6Unicast:          slices.Contains(s.Families, frrconf.FamilyIPv6Unicast),
+		L2VPNEVPN:            slices.Contains(s.Families, frrconf.FamilyL2VPNEVPN),
+		AllowASIn:            s.AllowASIn,
+		FastExternalFailover: s.FastExternalFailover,
+		BFD:                  s.BFD,
+		BFDProfile:           s.BFDProfile,
 	}
 	if s.LocalAS != nil {
 		out.LocalASN = s.LocalAS.ASN
@@ -176,15 +182,9 @@ func warnUnapplied(model *frrconf.Config) {
 		if r.SuppressDuplicates != nil {
 			warn(r.Line, "[no] bgp suppress-duplicates", "router", r.ASN)
 		}
-		if r.MultipathRelax {
-			warn(r.Line, "bgp bestpath as-path multipath-relax", "router", r.ASN)
-		}
 		for j := range r.AddressFamilies {
 			af := &r.AddressFamilies[j]
 			for _, n := range af.Neighbors {
-				if n.AllowASIn > 0 {
-					warn(af.Line, "allowas-in", "neighbor", n.Name, "family", af.AFI+" "+af.SAFI)
-				}
 				if n.RouteMapIn != "" || n.RouteMapOut != "" {
 					warn(af.Line, "route-map", "neighbor", n.Name, "family", af.AFI+" "+af.SAFI, "in", n.RouteMapIn, "out", n.RouteMapOut)
 				}

@@ -1624,8 +1624,13 @@ func applyIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 		cfg.Network.WaitMaxAttempts = &n
 		return true, nil
 	}
-	if strict, ok := map[string]**bool{"FRR_CONFIG_STRICT": &cfg.Network.FRRStrict, "NETPLAN_STRICT": &cfg.Network.NetplanStrict}[key]; ok {
-		// A typo must not turn strictness off, so only booleans parse.
+	if strict, ok := map[string]**bool{
+		"FRR_CONFIG_STRICT":          &cfg.Network.FRRStrict,
+		"NETPLAN_STRICT":             &cfg.Network.NetplanStrict,
+		"BGP_MULTIPATH_RELAX":        &cfg.Network.BGP.MultipathRelax,
+		"BGP_FAST_EXTERNAL_FAILOVER": &cfg.Network.BGP.FastExternalFailover,
+	}[key]; ok {
+		// A typo must not silently pick a value, so only booleans parse.
 		v, err := strconv.ParseBool(value)
 		if err != nil {
 			return true, fmt.Errorf("invalid %s: %w", key, err)

@@ -74,12 +74,12 @@ stream.
 | C3 | `router bgp N vrf Vrf_underlay`, `router bgp N vrf default` | One BGP instance per VRF. | One global instance. VRF from netplan only. | Model: one instance per VRF. GoBGP: underlay instance sessions bound to `Vrf_underlay`. | a, b |
 | C4 | `neighbor dcgw peer-group`, `remote-as internal`, `neighbor <RR> peer-group dcgw` | Members inherit the group's `remote-as`, timers, BFD, AFs and policies. A member override wins (`tests/bgpd/test_peer_attr.c`). `internal` means peer AS = local AS. | RR peers lost. `BGPPeerMode=unnumbered`. | Numbered iBGP to every RR. Source and listener in `Vrf_underlay` (`Transport.BindInterface`, plus `net.ipv4.tcp_l3mdev_accept=1` or a VRF-bound listener). Only l2vpn evpn is active. | b |
 | C5 | `neighbor leaf remote-as 65500`, `neighbor <nic> interface peer-group leaf` (every non-SRIOV port) | Unnumbered eBGP over IPv6 link-local with extended next hop (RFC 5549). | First uplink only. Peers are auto-detected NICs. | All listed uplinks. Validate the NIC list against netplan ethernets. | b |
-| C6 | `neighbor leaf local-as 65501 no-prepend replace-as` | `no-prepend`: L is not added to received paths. `replace-as`: only L is sent outbound. `replace-as` requires `no-prepend`. eBGP only (`doc/user/bgp.rst:1568-1584`). | Parsed by the old regex only when indented. GoBGP ignores `LocalASN`. | GoBGP v3 local-as is no-prepend replace-as by design (`fsm.go:829`, `table/path.go:256`, `oc/util.go:133`): map it to `PeerConf.LocalAsn`. Plain `local-as X` or only one keyword is a hard error. Gap to close: GoBGP's inbound AS-loop check uses only the peer's local AS (`pkg/server/peer.go:607-610`, `hasOwnASLoop`), while FRR also rejects paths that contain the real ASN. BOOTy adds an import check for the real ASN (subject to `allowas-in`, C11) and a lab test for it. | b |
+| C6 | `neighbor leaf local-as 65501 no-prepend replace-as` | `no-prepend`: L is not added to received paths. `replace-as`: only L is sent outbound. `replace-as` requires `no-prepend`. eBGP only (`doc/user/bgp.rst:1568-1584`). | Parsed by the old regex only when indented. GoBGP ignores `LocalASN`. | GoBGP v3 local-as is no-prepend replace-as by design (`fsm.go:829`, `table/path.go:256`, `oc/util.go:133`): map it to `PeerConf.LocalAsn`. Plain `local-as X` or only one keyword is a hard error. Gap to close: GoBGP's inbound AS-loop check uses only the router AS (`pkg/server/peer.go:607-610`, `hasOwnASLoop` with `peerInfo.LocalAS`, which `internal/pkg/table/destination.go:127` sets to the global AS; found in the slice c lab), while FRR also rejects paths that contain the local-as (`bgpd/bgp_route.c`, `aspath_loop_check` on `change_local_as`). BOOTy adds an import check for the local-as (subject to `allowas-in`, C11) and a lab test for it. | b (check: e) |
 | C7 | `timers 30 90`, `timers connect 5` | Per-neighbor values override the profile. Negotiated hold = min of both sides; keepalive follows (`bgp.rst:1731-1739`). Profile defaults in current FRR: traditional 60/180/30, datacenter 3/9/10 (`bgpd/bgp_vty.c`, `bgpd/bgpd.h`; 8.2.2 had 120 for traditional). | Not parsed. GoBGP defaults. | `Timers.Config` keepalive, hold, connect-retry. Template defaults follow the `frr defaults` line. | b |
 | C8 | `no bgp default ipv4-unicast`, `address-family ... activate` | Without the default, only activated AFs are negotiated (`bgp_default_afi_safi` topotest). | One AF set per mode. | Per-peer AF list from the model. | b |
 | C9 | `no bgp ebgp-requires-policy` | Traditional profile: eBGP without policy sends and accepts nothing unless disabled (`bgp.rst:442-452`). | Not modelled. | Model the flag. Without it, under `traditional`, an eBGP peer without policy gets no routes, like FRR. | b |
 | C10 | `bgp bestpath as-path multipath-relax` | ECMP across eBGP peers with different AS (`bgp_ecmp_topo1`). | Not modelled. | GoBGP multipath on. Install ECMP in the FIB (C17). | b, c |
-| C11 | `allowas-in` | Default occurrence count 3 (`bgp_vty.c:8013`). | Not parsed. | GoBGP `AsPathOptions.AllowOwnAs = 3`. | e |
+| C11 | `allowas-in` | Default occurrence count 3 (`bgp_vty.c:8013`). | Not parsed. | GoBGP `PeerConf.AllowOwnAsn`, the largest count of the activated AFs. The bm4x RR loopbacks reach the server with the real ASN in the path, so the FIB writer needs it. | c |
 | C12 | `soft-reconfiguration inbound` | Keeps pre-policy Adj-RIB-In. | Not parsed. | Accept. GoBGP keeps Adj-RIB-In anyway. No behavior change. | a |
 | C13 | `route-map TAG-FABRIC-IN permit 10`: `set local-preference 90`, `set community 65169:200 additive`; applied `in` on leaf and dcgw | A matching permit entry applies its sets and stops. No match means implicit deny (`doc/user/routemap.rst:28-86`). `additive` appends (`bgp.rst:2263`). | Not parsed. | GoBGP import policy with the same statement order and an explicit final reject. | e |
 | C14 | `bgp community-list standard cm-received-fabric permit 65169:200`, `route-map DENY-TAG-FABRIC-OUT deny 10 match community`, `permit 20`; applied `out` | A matching deny entry denies. A standard community list without a match returns deny (`bgp.rst:2127-2135`). | Not parsed. | GoBGP community `DefinedSet` and export policy. Any other route-map verb is a hard error. | e |
@@ -160,7 +160,7 @@ stream.
 
 ### 3.5 Policy, RT, `network`, blackhole (slice e)
 
-- C11, C13, C14, C15, C16 as described in section 2.
+- C13, C14, C15, C16 as described in section 2, and the local-as loop check of C6.
 - Route-map verbs are limited to the ones the template uses:
   - `permit` and `deny` with sequence numbers
   - `match community <list>`
@@ -293,13 +293,14 @@ Kept current as slices land.
 | N2 set-name, MAC match | `TestLegacyCompatNetplanSetNameQEMU` | KVM `caprf-legacy-compat` | planned |
 | C2, N4 unknown statements and keys | unit and mutation tests only (a failing parse is fully observable without a lab) | `Test` | planned |
 | C1, C4, C5, C6, C7, C8 | `TestProdTplLeafSessions`, `TestProdTplLocalASReplaceASPath`, `TestProdTplRRSessions` (peer-group members, local-as, timers, per-peer AFs; each also against the shadow FRR node) | E2E Production Templates | all fail on slice a (sessions from first-match heuristics), see the slice b PR |
-| C6 own ASN loop check | lab `own_asn_loop_rejected` | same | planned (slice e, with `allowas-in`) |
+| C6 local-as loop check | lab `own_asn_loop_rejected` | same | planned (slice e) |
 | C3 VRF-bound RR sessions, both directions | `TestProdTplRRSessionVRFOutbound`, `TestProdTplRRSessionVRFInbound` | same | both fail on slice a, see the slice b PR |
 | C5 RFC 5549 routes | lab `unnumbered_rfc5549_routes` | same | planned |
 | C9 | lab `ebgp_requires_policy` | same | planned |
 | N1, N3 devices | differential lab kernel-state comparison (`ip -j link`, `ip -j addr`, `bridge -j link`) | same | planned |
-| C10, C17 | lab `ecmp_two_uplinks`, fault `drop_uplink` | same | planned |
-| C13, C14, C11 | lab `route_map_tag_in`, `route_map_deny_tag_out`, `allowas_in` | same | planned |
+| C10, C17, C11 | `TestProdTplFIBRoutes` (ECMP over both uplinks, also against the shadow node), `TestProdTplFIBWithdraw` (uplink session down and up), `TestProdTplRRSessions` (RRs reachable only over FIB routes with the router AS in the path); fault `drop_uplink` (link down) in slice f | same | fail on slice b, see the slice c PR |
+| C17 carrier loss (`bgp fast-external-failover`, on by default) | `TestProdTplUplinkCarrierLoss` (the next hop leaves the VRF table within 2 s, also on the shadow node; ECMP comes back with the carrier) | same | fails without the carrier watch (fd177071): BOOTy still had both next hops after 2.1 s, see the slice c PR |
+| C13, C14 | lab `route_map_tag_in`, `route_map_deny_tag_out` | same | planned |
 | C15 | lab `explicit_rt_import_export` | same | planned |
 | C16, C18 | lab `type5_ipv6_install`, `network_blackhole_import_check` | same | planned |
 | C19 | lab `bfd_profile_values`, `bfd_failover` | same | planned |
@@ -315,9 +316,9 @@ Kept current as slices land.
    do not change; unknown statements and keys fail (3.1).
 4. b: peer-groups, `remote-as internal`, local-as, timers, all uplinks, AFs,
    VRF-bound sessions.
-5. c: FIB writer.
+5. c: FIB writer, `allowas-in`.
 6. d: IPv6 Type-5 install.
-7. e: route-map subset, RT, `network`, blackhole, allowas-in.
+7. e: route-map subset, RT, `network`, blackhole, local-as loop check.
 8. f: production-template ContainerLab with the shadow FRR node.
 9. BFD (section 3.6), after slice b.
 10. g: CAPRF switch. The e2e `booty` fixtures go away; BOOTy gets the `old`

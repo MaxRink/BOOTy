@@ -72,6 +72,9 @@ type Router struct {
 	SuppressDuplicates *bool
 	DefaultIPv4Unicast *bool
 	MultipathRelax     bool
+	// FastExternalFailover is "[no] bgp fast-external-failover"; nil is
+	// the FRR default (on).
+	FastExternalFailover *bool
 
 	// Neighbors holds peer-groups and peers in config order.
 	Neighbors       []Neighbor

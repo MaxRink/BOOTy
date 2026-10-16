@@ -62,6 +62,8 @@
       "IPv4Unicast": true,
       "IPv6Unicast": false,
       "L2VPNEVPN": false,
+      "AllowASIn": 3,
+      "FastExternalFailover": true,
       "BFD": true,
       "BFDProfile": "fabric"
     },
@@ -78,6 +80,8 @@
       "IPv4Unicast": true,
       "IPv6Unicast": false,
       "L2VPNEVPN": false,
+      "AllowASIn": 3,
+      "FastExternalFailover": true,
       "BFD": true,
       "BFDProfile": "fabric"
     },
@@ -94,6 +98,8 @@
       "IPv4Unicast": false,
       "IPv6Unicast": false,
       "L2VPNEVPN": true,
+      "AllowASIn": 3,
+      "FastExternalFailover": true,
       "BFD": true,
       "BFDProfile": "fabric"
     },
@@ -110,10 +116,14 @@
       "IPv4Unicast": false,
       "IPv6Unicast": false,
       "L2VPNEVPN": true,
+      "AllowASIn": 3,
+      "FastExternalFailover": true,
       "BFD": true,
       "BFDProfile": "fabric"
     }
   ],
+  "BGPMultipathRelax": true,
+  "BGPFastExternalFailover": null,
   "BridgeName": "",
   "BridgeMAC": "02:54:c0:00:02:11",
   "VRFName": "Vrf_underlay",

@@ -2884,14 +2884,16 @@ func TestParseVarsEmptyIntegersKeepDefaults(t *testing.T) {
 func TestParseVarsNativeSessions(t *testing.T) {
 	cfg, err := ParseVars(strings.NewReader(`BGP_DEFAULTS=traditional
 BGP_PEER_GROUPS=[{"name":"leaf","remoteAS":"65500","localAS":65501,"families":["ipv4-unicast"]}]
-BGP_SESSIONS=[{"name":"ens1f0np0","interface":true,"peerGroup":"leaf"},{"name":"198.51.100.1","remoteAS":"internal","families":["l2vpn-evpn"]}]
+BGP_SESSIONS=[{"name":"ens1f0np0","interface":true,"peerGroup":"leaf","allowASIn":3},{"name":"198.51.100.1","remoteAS":"internal","families":["l2vpn-evpn"]}]
+BGP_MULTIPATH_RELAX=true
 `))
 	if err != nil {
 		t.Fatalf("ParseVars() error = %v", err)
 	}
 	b := cfg.Network.BGP
 	if b.Defaults != "traditional" || len(b.PeerGroups) != 1 || b.PeerGroups[0].LocalAS != 65501 ||
-		len(b.Sessions) != 2 || !b.Sessions[0].Interface || b.Sessions[1].RemoteAS != "internal" {
+		len(b.Sessions) != 2 || !b.Sessions[0].Interface || b.Sessions[0].AllowASIn != 3 || b.Sessions[1].RemoteAS != "internal" ||
+		b.MultipathRelax == nil || !*b.MultipathRelax {
 		t.Fatalf("native sessions = %+v", b)
 	}
 	if _, err := ParseVars(strings.NewReader("BGP_SESSIONS=[{\n")); err == nil {
