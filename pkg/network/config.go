@@ -113,6 +113,7 @@ type Config struct {
 	OverlayVRFSet     bool   // OverlayVRFName was explicitly derived from structured config
 	UnderlayDummyName string // Netplan underlay dummy name; empty uses "dummy.underlay"
 	VXLANLink         string // Netplan VXLAN underlay link; empty leaves kernel selection
+	VXLANName         string // Netplan VXLAN device name; empty uses "vx<VNI>"
 	MTU               int    // Default: 9000
 	NetworkMode       string // "gobgp" to use in-process GoBGP instead of FRR
 
@@ -120,9 +121,21 @@ type Config struct {
 	EVPNL2Enabled bool // Enable L2 overlay route handling
 	// EVPNType5Only selects direct Type-5 routing without an L2 gateway.
 	EVPNType5Only bool
+	// EVPNType5OnlySet is true when EVPN_TYPE5_ONLY was given explicitly.
+	EVPNType5OnlySet bool
 	// EVPNL3VNIs lists the VNIs that the provisioner FRR config maps to a VRF.
 	// Set from netplan input only; an L3VNI provision VNI keeps Type-5 only.
 	EVPNL3VNIs []uint32
+
+	// LoopbackAddrs are the netplan addresses of "lo", such as the IPv6
+	// /128 provisioning address of the bm4x templates.
+	LoopbackAddrs []string
+	// BlackholeRoutes are the FRR "ip route" and "ipv6 route" blackhole
+	// prefixes of the default VRF.
+	BlackholeRoutes []string
+	// Type5Networks are the FRR "network" prefixes of the provision L3VNI
+	// VRF that "advertise ipv4|ipv6 unicast" originates as EVPN Type-5.
+	Type5Networks []string
 
 	// VLAN configuration.
 	VLANs []VLANConfig // 802.1Q VLAN interfaces to create before network mode setup

@@ -1,0 +1,24 @@
+# Production template lab (#630 slice d), server "native": the templates in
+# fs-prodtpl-native have no lo address, no blackhole route and no "network"
+# lines. These vars set them instead (native config, no CAPRF_LEGACY_COMPAT).
+export IMAGE_ALLOW_INSECURE_HTTP="true"
+export IMAGE="http://172.31.250.10/images/test.img.gz"
+export HOSTNAME="native-prodtpl-e2e"
+export TOKEN="e2e-prodtpl-native-token"
+export INSECURE_TRANSPORT="true"
+export MODE="standby"
+export MIN_DISK_SIZE_GB="1"
+export LOG_URL="http://172.31.250.10/log"
+export INIT_URL="http://172.31.250.10/status/init"
+export ERROR_URL="http://172.31.250.10/status/error"
+export SUCCESS_URL="http://172.31.250.10/status/success"
+export DEBUG_URL="http://172.31.250.10/debug"
+export HEARTBEAT_URL="http://172.31.250.10/status/heartbeat"
+export COMMANDS_URL="http://172.31.250.10/commands"
+# The template sets "route-target import/export 65169:3000". BOOTy does not
+# read explicit route targets from the FRR config yet (#630 slice e).
+export vpn_rt="65169:3000"
+export LOOPBACK_ADDRESSES="2001:db8:40a:5481::19/128"
+export BLACKHOLE_ROUTES="2001:db8:40a:5481::/64"
+export EVPN_TYPE5_NETWORKS="2001:db8:40a:5481::19/128,2001:db8:40a:5481::/64"
+export EVPN_TYPE5_ONLY="true"

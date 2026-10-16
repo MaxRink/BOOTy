@@ -484,6 +484,11 @@ func TestGoBGPUnnumberedVXLANInterface(t *testing.T) {
 	})
 }
 
+// gobgpLabBridge is the provision bridge of the lab netplan files
+// (fs-gobgp-*/etc/netplan): BOOTy uses the netplan bridge name like
+// networkd.
+const gobgpLabBridge = "br100"
+
 // TestGoBGPUnnumberedBridgeProvisionIP verifies the provision IP is assigned
 // on the bridge interface inside the booty-unnumbered container.
 func TestGoBGPUnnumberedBridgeProvisionIP(t *testing.T) {
@@ -493,9 +498,9 @@ func TestGoBGPUnnumberedBridgeProvisionIP(t *testing.T) {
 	waitForBGPInterface(t, "eth3")
 
 	waitForGobgpCondition(t, bgpConvergeTimeout, "provision IP not on bridge", func(context.Context) (bool, string) {
-		out, _ := gobgpDockerExecRaw(t, gobgpLabUnnumbered, "ip", "addr", "show", "dev", "br.provision")
+		out, _ := gobgpDockerExecRaw(t, gobgpLabUnnumbered, "ip", "addr", "show", "dev", gobgpLabBridge)
 		if strings.Contains(out, "10.100.0.20") {
-			t.Log("Provision IP 10.100.0.20 assigned on br.provision")
+			t.Log("Provision IP 10.100.0.20 assigned on " + gobgpLabBridge)
 			return true, ""
 		}
 		return false, out
@@ -550,7 +555,7 @@ func TestGoBGPUnnumberedVXLANPingGateway(t *testing.T) {
 	// Give overlay stack time to fully initialize.
 	waitForGobgpCondition(t, bgpConvergeTimeout, "VXLAN ping to 10.100.0.1 failed", func(context.Context) (bool, string) {
 		out, err := gobgpDockerExecRaw(t, gobgpLabUnnumbered,
-			"ping", "-c", "1", "-W", "2", "-I", "br.provision", "10.100.0.1")
+			"ping", "-c", "1", "-W", "2", "-I", gobgpLabBridge, "10.100.0.1")
 		if err == nil && strings.Contains(out, "1 packets received") {
 			t.Log("VXLAN overlay ping to gateway 10.100.0.1 succeeded")
 			return true, ""
@@ -572,7 +577,7 @@ func TestGoBGPUnnumberedOverlayReachClient(t *testing.T) {
 
 	waitForGobgpCondition(t, bgpConvergeTimeout, "cannot reach client 10.100.0.100 from booty-unnumbered", func(context.Context) (bool, string) {
 		out, err := gobgpDockerExecRaw(t, gobgpLabUnnumbered,
-			"ping", "-c", "1", "-W", "2", "-I", "br.provision", "10.100.0.100")
+			"ping", "-c", "1", "-W", "2", "-I", gobgpLabBridge, "10.100.0.100")
 		if err == nil && strings.Contains(out, "1 packets received") {
 			t.Log("Overlay connectivity to client 10.100.0.100 verified")
 			return true, ""

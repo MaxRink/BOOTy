@@ -115,9 +115,7 @@ func (s *Stack) Setup(ctx context.Context, _ *network.Config) error {
 
 	// Share the BGP server with the overlay tier.
 	s.overlay.SetBgpServer(s.underlay.BgpServer())
-	if s.cfg.ProvisionGateway == "" {
-		s.overlay.ensureVTEPRoute = s.ensureVTEPRoute
-	}
+	s.wireVTEPRoutes()
 
 	if err := s.overlay.Setup(ctx); err != nil {
 		// Clean up the underlay that was already started.
@@ -389,6 +387,15 @@ func (s *Stack) teardownGatewayRoute() {
 		s.log.Debug("failed to delete gateway VTEP route", "gateway", s.cfg.ProvisionGateway, "error", err)
 	}
 	s.gateway = nil
+}
+
+// wireVTEPRoutes lets the overlay install a route to each Type-5 VTEP
+// when no provision gateway is set. With FRR config sessions the FIB
+// writer installs the VTEP routes learned from the fabric, like zebra.
+func (s *Stack) wireVTEPRoutes() {
+	if s.cfg.ProvisionGateway == "" && len(s.cfg.Sessions) == 0 {
+		s.overlay.ensureVTEPRoute = s.ensureVTEPRoute
+	}
 }
 
 func (s *Stack) ensureVTEPRoute(vtep net.IP) error {

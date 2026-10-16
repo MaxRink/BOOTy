@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -1044,47 +1043,37 @@ func firstReachableBGPPeer(ctx context.Context, addrs []string) string {
 }
 
 func firstReachableBGPPeerOnPort(ctx context.Context, addrs []string, port string) string {
-	if len(addrs) == 0 {
-		return ""
-	}
-
 	probeCtx, cancel := context.WithTimeout(ctx, bgpProbeTimeout)
 	defer cancel()
 
-	var wg sync.WaitGroup
-	result := make(chan string, 1)
-	done := make(chan struct{})
-
+	// Every probe sends one answer, so no answer can be lost to a race
+	// between "one probe succeeded" and "all probes finished".
+	results := make(chan string, len(addrs))
+	probe := bgpProbe // probes can outlive this call
 	for _, addr := range addrs {
-		addr := addr
-		wg.Add(1)
 		go func() {
-			defer wg.Done()
-			if !bgpPortReachable(probeCtx, addr, port) {
+			if probe(probeCtx, addr, port) {
+				results <- addr
 				return
 			}
-			select {
-			case result <- addr:
-			default:
-			}
+			results <- ""
 		}()
 	}
-
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
-
-	select {
-	case addr := <-result:
-		cancel()
-		return addr
-	case <-done:
-		return ""
-	case <-probeCtx.Done():
-		return ""
+	for range addrs {
+		select {
+		case addr := <-results:
+			if addr != "" {
+				return addr
+			}
+		case <-probeCtx.Done():
+			return ""
+		}
 	}
+	return ""
 }
+
+// bgpProbe is bgpPortReachable; tests replace it.
+var bgpProbe = bgpPortReachable
 
 func bgpPortReachable(ctx context.Context, addr, port string) bool {
 	var d net.Dialer

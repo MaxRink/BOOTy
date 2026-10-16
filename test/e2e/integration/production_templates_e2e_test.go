@@ -34,6 +34,7 @@ const (
 	prodtplDCGW2  = "clab-booty-prodtpl-lab-dcgw02"
 	prodtplBooty  = "clab-booty-prodtpl-lab-booty"
 	prodtplShadow = "clab-booty-prodtpl-lab-shadow"
+	prodtplNative = "clab-booty-prodtpl-lab-native"
 
 	prodtplASN     = 4210000017
 	prodtplLocalAS = 65501
@@ -51,7 +52,21 @@ type prodtplNode struct {
 var (
 	prodtplBootyNode  = prodtplNode{"booty", "192.0.2.17", []string{"eth1", "eth2"}}
 	prodtplShadowNode = prodtplNode{"shadow", "192.0.2.18", []string{"eth3", "eth4"}}
+	// prodtplNativeNode is BOOTy with the L3VNI values from vars keys.
+	prodtplNativeNode = prodtplNode{"native", "192.0.2.19", []string{"eth7", "eth8"}}
+	prodtplServers    = []prodtplNode{prodtplShadowNode, prodtplBootyNode, prodtplNativeNode}
 )
+
+// prodtplOthers returns the underlay addresses of the other servers.
+func prodtplOthers(node prodtplNode) []string {
+	var others []string
+	for _, n := range prodtplServers {
+		if n.name != node.name {
+			others = append(others, n.underlay)
+		}
+	}
+	return others
+}
 
 func prodtplExec(ctx context.Context, container string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "docker", append([]string{"exec", container}, args...)...)
@@ -231,15 +246,14 @@ func TestProdTplRRSessionVRFOutbound(t *testing.T) {
 }
 
 // prodtplRoutes returns the BGP routes of the underlay VRF as prefix ->
-// sorted next hop devices. The loopback of the other server is renamed to
+// sorted next hop devices. The loopbacks of the other servers are renamed to
 // "other-server", so BOOTy and the shadow node compare equal.
 func prodtplRoutes(ctx context.Context, node prodtplNode) (map[string][]string, error) {
-	container, args := prodtplBooty, []string{"ip", "-j", "route", "show", "table", "10", "proto", "bgp"}
-	other := prodtplShadowNode.underlay
+	container, args := prodtplContainer(node), []string{"ip", "-j", "route", "show", "table", "10", "proto", "bgp"}
 	if node.name == "shadow" {
-		container, args = prodtplShadow, []string{"ip", "-j", "route", "show", "vrf", "Vrf_underlay", "proto", "bgp"}
-		other = prodtplBootyNode.underlay
+		args = []string{"ip", "-j", "route", "show", "vrf", "Vrf_underlay", "proto", "bgp"}
 	}
+	others := prodtplOthers(node)
 	out, err := prodtplExec(ctx, container, args...)
 	if err != nil {
 		return nil, err
@@ -276,7 +290,7 @@ func prodtplRoutes(ctx context.Context, node prodtplNode) (map[string][]string, 
 	got := map[string][]string{}
 	for _, r := range routes {
 		dst := r.Dst
-		if dst == other {
+		if slices.Contains(others, dst) {
 			dst = "other-server"
 		}
 		hops := []string{}

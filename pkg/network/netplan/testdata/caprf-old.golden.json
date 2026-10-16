@@ -76,12 +76,17 @@
   "OverlayVRFSet": true,
   "UnderlayDummyName": "dum.underlay",
   "VXLANLink": "dum.underlay",
+  "VXLANName": "vx.1000",
   "MTU": 9100,
   "NetworkMode": "gobgp",
   "EVPNL2Enabled": false,
-  "EVPNType5Only": false,
+  "EVPNType5Only": true,
+  "EVPNType5OnlySet": false,
   "EVPNL3VNIs": [
     1000
   ],
+  "LoopbackAddrs": null,
+  "BlackholeRoutes": null,
+  "Type5Networks": null,
   "VLANs": null
 }

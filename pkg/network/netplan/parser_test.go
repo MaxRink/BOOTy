@@ -552,6 +552,8 @@ func TestToNetworkConfig_EVPNRouteMode(t *testing.T) {
 		vni    int
 		frr    string
 		wantL2 bool
+		// wantType5 is set when the provisioning VNI is an L3VNI.
+		wantType5 bool
 	}{
 		{
 			name:   "L2VNI with advertise-all-vni (Type-2/3 + Type-5)",
@@ -584,16 +586,18 @@ func TestToNetworkConfig_EVPNRouteMode(t *testing.T) {
 			wantL2: false,
 		},
 		{
-			name:   "CAPRF: provisioning VNI is the default VRF L3VNI",
-			vni:    1000,
-			frr:    "frr version 9.1\nfrr defaults datacenter\n!\nvni 1000\n!\n" + bgpHead + evpnAF + "  advertise-all-vni\n  advertise ipv4 unicast\n" + evpnEnd,
-			wantL2: false,
+			name:      "CAPRF: provisioning VNI is the default VRF L3VNI",
+			vni:       1000,
+			frr:       "frr version 9.1\nfrr defaults datacenter\n!\nvni 1000\n!\n" + bgpHead + evpnAF + "  advertise-all-vni\n  advertise ipv4 unicast\n" + evpnEnd,
+			wantL2:    false,
+			wantType5: true,
 		},
 		{
-			name:   "provisioning VNI is a VRF L3VNI",
-			vni:    4000,
-			frr:    "vrf provision\n vni 4000 prefix-routes-only\nexit-vrf\n!\n" + bgpHead + evpnAF + "  advertise-all-vni\n" + evpnEnd,
-			wantL2: false,
+			name:      "provisioning VNI is a VRF L3VNI",
+			vni:       4000,
+			frr:       "vrf provision\n vni 4000 prefix-routes-only\nexit-vrf\n!\n" + bgpHead + evpnAF + "  advertise-all-vni\n" + evpnEnd,
+			wantL2:    false,
+			wantType5: true,
 		},
 	}
 	for _, tt := range tests {
@@ -617,8 +621,8 @@ func TestToNetworkConfig_EVPNRouteMode(t *testing.T) {
 			if netCfg.EVPNL2Enabled != tt.wantL2 {
 				t.Fatalf("EVPNL2Enabled = %v, want %v", netCfg.EVPNL2Enabled, tt.wantL2)
 			}
-			if netCfg.EVPNType5Only {
-				t.Fatal("EVPNType5Only must only come from explicit configuration")
+			if netCfg.EVPNType5Only != tt.wantType5 {
+				t.Fatalf("EVPNType5Only = %v, want %v", netCfg.EVPNType5Only, tt.wantType5)
 			}
 		})
 	}

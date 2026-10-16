@@ -191,6 +191,12 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 
 ### Features
 
+- GoBGP mode installs and originates IPv6 EVPN Type-5 routes like zebra (via the
+  IPv4-mapped VTEP), applies netplan `lo` addresses and `frr.conf` blackhole
+  routes, and uses Type-5 only for an L3VNI provision VNI. `EVPN_TYPE5_ONLY` can
+  now be set to `false` explicitly. New keys `LOOPBACK_ADDRESSES`,
+  `BLACKHOLE_ROUTES`, `EVPN_TYPE5_NETWORKS`, `BRIDGE_NAME`, `VXLAN_NAME`; a set
+  value wins over netplan and `frr.conf`, a list replaces the parsed list (#651).
 - GoBGP mode installs the learned unicast routes into the session VRF table like
   zebra, and stops an uplink session when its NIC loses carrier (#645).
   `allowas-in` and `bgp bestpath as-path multipath-relax` are applied, also

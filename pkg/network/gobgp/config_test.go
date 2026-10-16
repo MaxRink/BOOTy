@@ -1044,6 +1044,19 @@ func TestUnderlayTierReady(t *testing.T) {
 	})
 }
 
+// When every probe finishes before the result is read, done and result are
+// ready together. The reachable peer must still win (CI flake on #647).
+func TestFirstReachableBGPPeerAllProbesFinished(t *testing.T) {
+	probe := bgpProbe
+	t.Cleanup(func() { bgpProbe = probe })
+	bgpProbe = func(_ context.Context, addr, _ string) bool { return addr == "::1" }
+	for range 200 {
+		if got := firstReachableBGPPeerOnPort(context.Background(), []string{"2001:db8::1", "::1"}, "179"); got != "::1" {
+			t.Fatalf("firstReachableBGPPeer() = %q, want ::1", got)
+		}
+	}
+}
+
 func TestFirstReachableBGPPeer(t *testing.T) {
 	var listenConfig net.ListenConfig
 	ln, err := listenConfig.Listen(context.Background(), "tcp6", "[::1]:0")

@@ -45,6 +45,14 @@ network:
   # names that the config uses (default: true)
   predictableNames: false
 
+  # loopbackAddresses: comma-separated CIDRs that GoBGP adds to lo, like
+  # netplan "lo: addresses".
+  loopbackAddresses: "2001:db8:40a:5481::17/128"
+
+  # blackholeRoutes: comma-separated prefixes installed as blackhole routes
+  # in the main table, like FRR "ipv6 route P blackhole".
+  blackholeRoutes: "2001:db8:40a:5481::/64"
+
   bgp:
     # asn is the local BGP Autonomous System Number. ASN > 0 activates BGP networking.
     asn: 65001
@@ -135,6 +143,19 @@ network:
 
     # l2Enabled: enable Type-2/Type-3 EVPN route processing (default: false)
     l2Enabled: false
+
+    # type5Only: Type-5 routing without an L2 gateway. Unset: true when the
+    # provisioner frr.conf maps provisionVNI to a VRF (L3VNI).
+    type5Only: false
+
+    # type5Networks: comma-separated prefixes originated as EVPN Type-5
+    # routes (FRR "network" with "advertise ipv4|ipv6 unicast").
+    type5Networks: "2001:db8:40a:5481::17/128,2001:db8:40a:5481::/64"
+
+    # bridgeName/vxlanName: provision bridge and VXLAN device names
+    # (default: "br.provision" and "vx<VNI>").
+    bridgeName: "br.provision"
+    vxlanName: "vx.100"
 
     # dcgwIPs: comma-separated Data Center Gateway IPs (OneFabric topologies)
     dcgwIPs: ""

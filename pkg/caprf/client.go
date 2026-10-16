@@ -1276,30 +1276,35 @@ func applySecureBootDigestVar(cfg *config.MachineConfig, key, value string) bool
 
 func applyNetworkStringVar(cfg *config.MachineConfig, key, value string) bool {
 	strFields := map[string]*string{
-		"underlay_subnet":   &cfg.Network.EVPN.UnderlaySubnet,
-		"underlay_ip":       &cfg.Network.EVPN.UnderlayIP,
-		"overlay_subnet":    &cfg.Network.EVPN.OverlaySubnet,
-		"ipmi_subnet":       &cfg.Network.IPMI.Subnet,
-		"provision_ip":      &cfg.Network.EVPN.ProvisionIP,
-		"provision_gateway": &cfg.Network.EVPN.ProvisionGateway,
-		"dns_resolver":      &cfg.Network.DNSResolvers,
-		"dcgw_ips":          &cfg.Network.EVPN.DCGWIPs,
-		"overlay_aggregate": &cfg.Network.EVPN.OverlayAggregate,
-		"vpn_rt":            &cfg.Network.EVPN.VPNRT,
-		"STATIC_IP":         &cfg.Network.Static.IP,
-		"STATIC_GATEWAY":    &cfg.Network.Static.Gateway,
-		"STATIC_IFACE":      &cfg.Network.Static.Iface,
-		"BOND_INTERFACES":   &cfg.Network.Bond.Interfaces,
-		"BOND_MODE":         &cfg.Network.Bond.Mode,
-		"VLANS":             &cfg.Network.VLAN.Config,
-		"NETWORK_MODE":      &cfg.Network.Mode,
-		"VRF_NAME":          &cfg.Network.VRF.Name,
-		"vrf_name":          &cfg.Network.VRF.Name,
-		"BGP_PEER_MODE":     &cfg.Network.BGP.PeerMode,
-		"BGP_INTERFACES":    &cfg.Network.BGP.Interfaces,
-		"BGP_NEIGHBORS":     &cfg.Network.BGP.Neighbors,
-		"BGP_AUTH_PASSWORD": &cfg.Network.BGP.AuthPassword,
-		"BGP_DEFAULTS":      &cfg.Network.BGP.Defaults,
+		"underlay_subnet":     &cfg.Network.EVPN.UnderlaySubnet,
+		"underlay_ip":         &cfg.Network.EVPN.UnderlayIP,
+		"overlay_subnet":      &cfg.Network.EVPN.OverlaySubnet,
+		"ipmi_subnet":         &cfg.Network.IPMI.Subnet,
+		"provision_ip":        &cfg.Network.EVPN.ProvisionIP,
+		"provision_gateway":   &cfg.Network.EVPN.ProvisionGateway,
+		"dns_resolver":        &cfg.Network.DNSResolvers,
+		"dcgw_ips":            &cfg.Network.EVPN.DCGWIPs,
+		"overlay_aggregate":   &cfg.Network.EVPN.OverlayAggregate,
+		"vpn_rt":              &cfg.Network.EVPN.VPNRT,
+		"STATIC_IP":           &cfg.Network.Static.IP,
+		"STATIC_GATEWAY":      &cfg.Network.Static.Gateway,
+		"STATIC_IFACE":        &cfg.Network.Static.Iface,
+		"BOND_INTERFACES":     &cfg.Network.Bond.Interfaces,
+		"BOND_MODE":           &cfg.Network.Bond.Mode,
+		"VLANS":               &cfg.Network.VLAN.Config,
+		"NETWORK_MODE":        &cfg.Network.Mode,
+		"VRF_NAME":            &cfg.Network.VRF.Name,
+		"vrf_name":            &cfg.Network.VRF.Name,
+		"BGP_PEER_MODE":       &cfg.Network.BGP.PeerMode,
+		"BGP_INTERFACES":      &cfg.Network.BGP.Interfaces,
+		"BGP_NEIGHBORS":       &cfg.Network.BGP.Neighbors,
+		"BGP_AUTH_PASSWORD":   &cfg.Network.BGP.AuthPassword,
+		"BGP_DEFAULTS":        &cfg.Network.BGP.Defaults,
+		"LOOPBACK_ADDRESSES":  &cfg.Network.LoopbackAddresses,
+		"BLACKHOLE_ROUTES":    &cfg.Network.BlackholeRoutes,
+		"EVPN_TYPE5_NETWORKS": &cfg.Network.EVPN.Type5Networks,
+		"BRIDGE_NAME":         &cfg.Network.EVPN.BridgeName,
+		"VXLAN_NAME":          &cfg.Network.EVPN.VXLANName,
 	}
 
 	if ptr, ok := strFields[key]; ok {
@@ -1668,7 +1673,8 @@ func applyFeatureToggle(cfg *config.MachineConfig, key, value string) (bool, err
 	case "EVPN_L2_ENABLED":
 		cfg.Network.EVPN.L2Enabled = parseBoolVar(value)
 	case "EVPN_TYPE5_ONLY":
-		cfg.Network.EVPN.Type5Only = parseBoolVar(value)
+		v := parseBoolVar(value)
+		cfg.Network.EVPN.Type5Only = &v
 	case "BGP_UNDERLAY_AF":
 		cfg.Network.BGP.UnderlayAF = value
 	case "BGP_OVERLAY_TYPE":

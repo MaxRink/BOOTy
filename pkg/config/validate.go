@@ -40,6 +40,8 @@ import (
 //   - Network.BGP.OverlayType: "evpn-vxlan", "l3vpn", "none"
 //   - Rescue.Mode: "reboot", "retry", "shell", "wait"
 //   - Transport.TokenAlgorithm: "RS256", "ES256"
+//   - Network.LoopbackAddresses, Network.BlackholeRoutes, Network.EVPN.Type5Networks:
+//     comma-separated CIDRs
 //   - Cross-field: Network.BGP.Neighbors required when PeerMode is "dual" or "numbered"
 //
 // Validate also calls normalize(), which lowercases/uppercases case-insensitive
@@ -231,6 +233,20 @@ func (c *Config) validateBGP() []string {
 	errs := c.validateSessions()
 	if n := c.Network.WaitMaxAttempts; strings.EqualFold(strings.TrimSpace(c.Network.WaitMode), NetworkWaitRounds) && n != nil && (*n < 0 || *n > MaxNetworkWaitAttempts) {
 		errs = append(errs, fmt.Sprintf("network.waitMaxAttempts (NETWORK_WAIT_MAX_ATTEMPTS) must be 0-%d", MaxNetworkWaitAttempts))
+	}
+	for _, list := range []struct{ name, value string }{
+		{"network.loopbackAddresses", c.Network.LoopbackAddresses},
+		{"network.blackholeRoutes", c.Network.BlackholeRoutes},
+		{"network.evpn.type5Networks", c.Network.EVPN.Type5Networks},
+	} {
+		for _, p := range strings.Split(list.value, ",") {
+			if p = strings.TrimSpace(p); p == "" {
+				continue
+			}
+			if _, err := netip.ParsePrefix(p); err != nil {
+				errs = append(errs, fmt.Sprintf("%s: %q is not a CIDR", list.name, p))
+			}
+		}
 	}
 	if (bfdTransmit == 0) != (bfdReceive == 0) {
 		errs = append(errs, "network.bgp.bfdTransmitMS and network.bgp.bfdReceiveMS must be set together")

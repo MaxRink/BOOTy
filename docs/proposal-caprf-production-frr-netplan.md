@@ -84,9 +84,9 @@ stream.
 | C13 | `route-map TAG-FABRIC-IN permit 10`: `set local-preference 90`, `set community 65169:200 additive`; applied `in` on leaf and dcgw | A matching permit entry applies its sets and stops. No match means implicit deny (`doc/user/routemap.rst:28-86`). `additive` appends (`bgp.rst:2263`). | Not parsed. | GoBGP import policy with the same statement order and an explicit final reject. | e |
 | C14 | `bgp community-list standard cm-received-fabric permit 65169:200`, `route-map DENY-TAG-FABRIC-OUT deny 10 match community`, `permit 20`; applied `out` | A matching deny entry denies. A standard community list without a match returns deny (`bgp.rst:2127-2135`). | Not parsed. | GoBGP community `DefinedSet` and export policy. Any other route-map verb is a hard error. | e |
 | C15 | `route-target import/export <RT>` in `router bgp N vrf default` l2vpn evpn | Explicit RTs replace auto RTs. Auto RT is `(AS & 0xFFFF):VNI` (`bgpd/bgp_evpn.c:509-518`). Export RTs apply only to locally originated routes. | Not parsed. BOOTy derives `ASN:VNI`. | Use the explicit RTs. When none are set, derive them exactly like `form_auto_rt` (also for 4-byte ASNs). | e |
-| C16 | IPv6 `/128` provisioning address on `lo`; `network <addr>/128`, `network <prefix>`; `advertise ipv6 unicast`; `ipv6 route <prefix> blackhole` | `network` is advertised only when the prefix is in the RIB (import-check, `bgp.rst:1057-1065`); the blackhole route puts the prefix there. `advertise ipv6 unicast` creates Type-5 only (`bgp.rst:2885-2895`). | `lo` becomes the static interface (`StaticIP=<addr>/128`, `StaticIface=lo`). No Type-5 IPv6. | Address on `lo` (not a static interface). Blackhole route in the kernel. Type-5 IPv6 originated for both `network` lines. | d, e |
+| C16 | IPv6 `/128` provisioning address on `lo`; `network <addr>/128`, `network <prefix>`; `advertise ipv6 unicast`; `ipv6 route <prefix> blackhole` | `network` is advertised only when the prefix is in the RIB (import-check, `bgp.rst:1057-1065`); the blackhole route puts the prefix there. `advertise ipv6 unicast` creates Type-5 only (`bgp.rst:2885-2895`). | `lo` becomes the static interface (`StaticIP=<addr>/128`, `StaticIface=lo`). No Type-5 IPv6. | Address on `lo` (not a static interface). Blackhole route in the kernel. Type-5 IPv6 originated for both `network` lines, with the import check. | d |
 | C17 | Routes learned from the fabric (RR reachability over the unnumbered sessions, default route) | zebra installs the best paths into the VRF table, with IPv6 link-local next hops on the interface and ECMP. | GoBGP installs nothing into the kernel (`pkg/network/gobgp/underlay.go` has no RouteReplace). | FIB writer ("mini zebra"): IPv4 and IPv6 unicast RIB to kernel routes in the VRF table, link-local next hops with device, multipath, withdraw. | c |
-| C18 | IPv6 Type-5 install over the IPv4 VTEP | zebra installs next hop `::ffff:<VTEP>` on the L3VNI bridge, with a permanent neighbor entry for that address with the RMAC, and an FDB entry RMAC to VTEP (`bgp_evpn_rt5` topotest, 10.x `test_router_check_ip`). | `overlay.go:846-870` falls back to the IPv4 VTEP as gateway. `buildType5KernelRoute` (1125-1141) puts an IPv4 gateway on an IPv6 destination. `buildType5GatewayNeighbor` (1143-1158) returns nil for IPv6. | Install like zebra. | d |
+| C18 | IPv6 Type-5 install over the IPv4 VTEP | zebra installs next hop `::ffff:<VTEP>` on the L3VNI bridge (protocol `bgp`, metric 20), with a neighbor entry for that address with the RMAC (`extern_learn NOARP`), and an FDB entry RMAC to VTEP (`bgp_evpn_rt5` topotest, 10.x `test_router_check_ip`). | `overlay.go:846-870` falls back to the IPv4 VTEP as gateway. `buildType5KernelRoute` (1125-1141) puts an IPv4 gateway on an IPv6 destination. `buildType5GatewayNeighbor` (1143-1158) returns nil for IPv6. | Install like zebra. | d |
 | C19 | BFD: `neighbor X bfd`, `bfd profile fabric`, `transmit-interval 150`, `receive-interval 150` | Defaults: detect multiplier 3, 300/300 ms. An unknown profile falls back to the defaults (`doc/user/bfd.rst:115-120` for the fallback, `147-171` for the defaults, `bfd_profiles_topo1`). BFD down tears the session down (`bfd_topo1`). | Not parsed. GoBGP has no BFD. | Own minimal BFD (section 3.6). | BFD (after b) |
 | C20 | `vni N` at top level, `advertise-all-vni` | `advertise-all-vni` creates Type-2/3 for L2VNIs only. A top-level `vni` maps the default VRF to an L3VNI. | Done (#582 and existing README table). | Keep. Covered by the Type-5-only and Type-2/3+Type-5 labs. | f |
 | C21 | `no bgp suppress-duplicates`, `no ip forwarding`, `service integrated-vtysh-config`, `hostname`, `log ...`, `frr version`, `frr defaults` | Daemon and logging options. | Ignored. | Accept and record in the model. `frr defaults` selects the timer defaults (C7). `no ip forwarding` is a no-op in the ramdisk. | a |
@@ -154,13 +154,19 @@ stream.
 
 ### 3.4 EVPN Type-5 IPv6 (slice d)
 
-- Install like zebra, as in C18.
-- Originate Type-5 for both `network` lines. Add the blackhole route and
-  the `lo` address.
+- Install like zebra, as in C18. A received route for the prefix of a
+  local blackhole route is not installed: zebra prefers the static route.
+- Originate Type-5 for both `network` lines, with the import check. Add
+  the blackhole route and the `lo` address.
+- A provision VNI that is an L3VNI selects Type-5 only (C20). The VXLAN
+  device takes its netplan name (`vx.3000`).
+- With FRR config sessions, the FIB writer reaches the remote VTEPs. The
+  scope-link VTEP routes of the Type-5-only mode would replace its routes,
+  so BOOTy does not install them then.
 
-### 3.5 Policy, RT, `network`, blackhole (slice e)
+### 3.5 Policy, RT (slice e)
 
-- C13, C14, C15, C16 as described in section 2, and the local-as loop check of C6.
+- C13, C14, C15 as described in section 2, and the local-as loop check of C6.
 - Route-map verbs are limited to the ones the template uses:
   - `permit` and `deny` with sequence numbers
   - `match community <list>`
@@ -302,7 +308,7 @@ Kept current as slices land.
 | C17 carrier loss (`bgp fast-external-failover`, on by default) | `TestProdTplUplinkCarrierLoss` (the next hop leaves the VRF table within 2 s, also on the shadow node; ECMP comes back with the carrier) | same | fails without the carrier watch (fd177071): BOOTy still had both next hops after 2.1 s, see the slice c PR |
 | C13, C14 | lab `route_map_tag_in`, `route_map_deny_tag_out` | same | planned |
 | C15 | lab `explicit_rt_import_export` | same | planned |
-| C16, C18 | lab `type5_ipv6_install`, `network_blackhole_import_check` | same | planned |
+| C16, C18, C20 L3VNI Type-5 only | `TestProdTplType5IPv6Install` (IPv6 Type-5 routes over `::ffff:<VTEP>`, neighbor and FDB entries, `lo` /128, blackhole /64; equal to the shadow node), `TestProdTplType5Origination` (dcgw01 installs the `network` routes of both servers alike), `TestProdTplType5CAPRFOverIPv6` (HTTP to the IPv6 CAPRF mock over the Type-5 default, from the `lo` /128) | same | on slice c the lab does not start (no Type-5-only inference: `provision gateway is required`); with `EVPN_TYPE5_ONLY` forced, all three fail and `TestProdTplFIBRoutes` fails too (the scope-link VTEP routes replace the FIB writer routes), see the slice d PR |
 | C19 | lab `bfd_profile_values`, `bfd_failover` | same | planned |
 | C20 | existing `E2E Pure Type-5 Fabric`, `E2E EVPN Boot (vrnetlab)` plus the new matrix | existing and new | existing |
 | VLAN, bond | existing `E2E ContainerLab` (LACP topology), VLAN unit and lab tests | existing | existing |
@@ -317,8 +323,8 @@ Kept current as slices land.
 4. b: peer-groups, `remote-as internal`, local-as, timers, all uplinks, AFs,
    VRF-bound sessions.
 5. c: FIB writer, `allowas-in`.
-6. d: IPv6 Type-5 install.
-7. e: route-map subset, RT, `network`, blackhole, local-as loop check.
+6. d: IPv6 Type-5 install, `network`, blackhole, `lo` address, Type-5 only for an L3VNI.
+7. e: route-map subset, RT, local-as loop check.
 8. f: production-template ContainerLab with the shadow FRR node.
 9. BFD (section 3.6), after slice b.
 10. g: CAPRF switch. The e2e `booty` fixtures go away; BOOTy gets the `old`

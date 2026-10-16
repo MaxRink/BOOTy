@@ -9,9 +9,16 @@
 #   booty  ens1f0np0/ens1f1np1 ── leaf01 eth1/eth2   (eBGP unnumbered, local-as 65501)
 #   shadow ens1f0np0/ens1f1np1 ── leaf01 eth3/eth4
 #   dcgw01 eth1 ── leaf01 eth5, dcgw02 eth1 ── leaf01 eth6
-#   booty, shadow ── dcgw01, dcgw02 (iBGP l2vpn evpn in Vrf_underlay, via leaf01)
+#   native ens1f0np0/ens1f1np1 ── leaf01 eth7/eth8   (BOOTy, L3VNI values from vars)
+#   booty, shadow, native ── dcgw01, dcgw02 (iBGP l2vpn evpn in Vrf_underlay, via leaf01)
 #
-# BOOTy reaches the CAPRF mock over the management network.
+# dcgw01 is also the gateway of the provision L3VNI 3000 (#630 slice d):
+#
+#   dcgw01 eth2 (VRF provision, 2001:db8:c0::1/64) ── caprf6 eth1 (2001:db8:c0::10)
+#
+# It sends the IPv6 Type-5 default and 2001:db8:c0::/64 to the servers.
+# The servers reach caprf6 over that default from their lo /128. BOOTy
+# reports to the CAPRF mock over the management network.
 name: booty-prodtpl-lab
 
 mgmt:
@@ -27,7 +34,7 @@ topology:
         - prodtpl-leaf01.frr.conf:/etc/frr/frr.conf:ro
         - daemons:/etc/frr/daemons:ro
       exec:
-        - sh -c 'for i in 1 2 3 4 5 6; do ip link set dev eth$i mtu 9100 up; done'
+        - sh -c 'for i in 1 2 3 4 5 6 7 8; do ip link set dev eth$i mtu 9100 up; done'
 
     dcgw01:
       kind: linux
@@ -37,6 +44,15 @@ topology:
         - daemons:/etc/frr/daemons:ro
       exec:
         - ip link set dev eth1 mtu 9100 up
+        - sysctl -w net.ipv6.conf.all.forwarding=1
+        - ip link add provision type vrf table 100
+        - ip link set provision up
+        - ip link add br3000 address 02:54:c6:33:64:01 type bridge
+        - ip link set br3000 master provision addrgenmode none up
+        - ip link add vx3000 type vxlan id 3000 local 198.51.100.1 dstport 4789 nolearning
+        - ip link set vx3000 master br3000 up
+        - ip link set eth2 master provision up
+        - ip -6 addr add 2001:db8:c0::1/64 dev eth2 nodad
 
     dcgw02:
       kind: linux
@@ -82,6 +98,28 @@ topology:
         - sh -c 'test -b /dev/loop0 || mknod -m 660 /dev/loop0 b 7 0'
         - losetup /dev/loop0 /tmp/disk.img
 
+    # IPv6 CAPRF mock behind the L3VNI gateway.
+    caprf6:
+      kind: linux
+      image: nginx:alpine
+      binds:
+        - caprf6.conf:/etc/nginx/nginx.conf:ro
+      exec:
+        - ip -6 addr add 2001:db8:c0::10/64 dev eth1
+        - ip -6 route replace default via 2001:db8:c0::1 dev eth1
+
+    # BOOTy whose lo address, blackhole route and Type-5 networks come
+    # from native vars keys instead of the templates (#630 slice d).
+    native:
+      kind: linux
+      image: booty-gobgp-test:latest
+      startup-delay: 20
+      binds:
+        - data/vars-prodtpl-native:/deploy/vars:ro
+        - data/fs-prodtpl-native:/deploy/file-system:ro
+      env:
+        BOOTY_NO_REBOOT: "1"
+
     caprf-mock:
       kind: linux
       image: nginx:alpine
@@ -98,3 +136,6 @@ topology:
     - endpoints: ["leaf01:eth4", "shadow:ens1f1np1"]
     - endpoints: ["leaf01:eth5", "dcgw01:eth1"]
     - endpoints: ["leaf01:eth6", "dcgw02:eth1"]
+    - endpoints: ["dcgw01:eth2", "caprf6:eth1"]
+    - endpoints: ["leaf01:eth7", "native:ens1f0np0"]
+    - endpoints: ["leaf01:eth8", "native:ens1f1np1"]

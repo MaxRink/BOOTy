@@ -20,15 +20,14 @@
   "LocalASN": 65501,
   "OverlayAggregate": "",
   "VPNRT": "",
-  "StaticIP": "2001:db8:40a:5481::17/128",
+  "StaticIP": "",
   "StaticGateway": "",
-  "StaticIface": "lo",
+  "StaticIface": "",
   "StaticMatch": null,
   "LinkRenames": null,
   "InterfaceNames": [
     "ens1f0np0",
     "ens1f1np1",
-    "lo",
     "ens1f0np0",
     "ens1f1np1"
   ],
@@ -124,19 +123,31 @@
   ],
   "BGPMultipathRelax": true,
   "BGPFastExternalFailover": null,
-  "BridgeName": "",
+  "BridgeName": "br.provision",
   "BridgeMAC": "02:54:c0:00:02:11",
   "VRFName": "Vrf_underlay",
   "OverlayVRFName": "",
-  "OverlayVRFSet": false,
+  "OverlayVRFSet": true,
   "UnderlayDummyName": "dum.underlay",
   "VXLANLink": "dum.underlay",
+  "VXLANName": "vx.3000",
   "MTU": 9100,
   "NetworkMode": "gobgp",
   "EVPNL2Enabled": false,
-  "EVPNType5Only": false,
+  "EVPNType5Only": true,
+  "EVPNType5OnlySet": false,
   "EVPNL3VNIs": [
     3000
+  ],
+  "LoopbackAddrs": [
+    "2001:db8:40a:5481::17/128"
+  ],
+  "BlackholeRoutes": [
+    "2001:db8:40a:5481::/64"
+  ],
+  "Type5Networks": [
+    "2001:db8:40a:5481::17/128",
+    "2001:db8:40a:5481::/64"
   ],
   "VLANs": null
 }

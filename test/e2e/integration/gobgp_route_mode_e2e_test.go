@@ -80,16 +80,13 @@ func TestGoBGPRouteModeType5Only(t *testing.T) {
 	t.Cleanup(func() { dumpDebugState(t) })
 
 	tests := []struct {
-		name, container, rd, log string
+		name, container, rd string
 	}{
-		{name: "L3VNI in FRR config", container: gobgpLabNumbered, rd: "65030:100", log: "provision VNI is an FRR L3VNI"},
+		{name: "L3VNI in FRR config", container: gobgpLabNumbered, rd: "65030:100"},
 		{name: "no FRR config", container: gobgpLabDual, rd: "65010:100"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.log != "" {
-				waitForBootyLog(t, tt.container, tt.log)
-			}
 			rd := rdLine(tt.rd)
 			waitForGobgpCondition(t, 2*bgpConvergeTimeout, tt.container+" Type-5 route not on spine", func(context.Context) (bool, string) {
 				out, err := spineEVPNRoutes(t, "prefix")

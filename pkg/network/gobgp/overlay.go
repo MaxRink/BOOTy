@@ -19,6 +19,7 @@ import (
 	apipb "github.com/osrg/gobgp/v3/api"
 	"github.com/osrg/gobgp/v3/pkg/server"
 	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 	"google.golang.org/protobuf/types/known/anypb"
 )
 
@@ -56,6 +57,9 @@ func (netlinkOverlayOps) LinkByName(name string) (netlink.Link, error) {
 }
 
 func (netlinkOverlayOps) NeighSet(n *netlink.Neigh) error {
+	if n.Family == syscall.AF_INET6 && isMappedGateway(n.IP) {
+		return mappedGatewayNeigh(n, false)
+	}
 	if err := netlink.NeighSet(n); err != nil {
 		return fmt.Errorf("neigh set: %w", err)
 	}
@@ -70,6 +74,9 @@ func (netlinkOverlayOps) NeighAppend(n *netlink.Neigh) error {
 }
 
 func (netlinkOverlayOps) NeighDel(n *netlink.Neigh) error {
+	if n.Family == syscall.AF_INET6 && isMappedGateway(n.IP) {
+		return mappedGatewayNeigh(n, true)
+	}
 	if err := netlink.NeighDel(n); err != nil {
 		return fmt.Errorf("neigh del: %w", err)
 	}
@@ -77,6 +84,9 @@ func (netlinkOverlayOps) NeighDel(n *netlink.Neigh) error {
 }
 
 func (netlinkOverlayOps) RouteReplace(route *netlink.Route) error {
+	if isMappedGatewayRoute(route) {
+		return mappedGatewayRoute(route, false)
+	}
 	if err := netlink.RouteReplace(route); err != nil {
 		return fmt.Errorf("route replace: %w", err)
 	}
@@ -84,10 +94,17 @@ func (netlinkOverlayOps) RouteReplace(route *netlink.Route) error {
 }
 
 func (netlinkOverlayOps) RouteDel(route *netlink.Route) error {
+	if isMappedGatewayRoute(route) {
+		return mappedGatewayRoute(route, true)
+	}
 	if err := netlink.RouteDel(route); err != nil {
 		return fmt.Errorf("route delete: %w", err)
 	}
 	return nil
+}
+
+func isMappedGatewayRoute(route *netlink.Route) bool {
+	return route.Dst != nil && route.Dst.IP.To4() == nil && isMappedGateway(route.Gw)
 }
 
 // OverlayTier manages EVPN Type-5 routes and VXLAN encapsulation.
@@ -107,7 +124,11 @@ type OverlayTier struct {
 	createdBridge   bool
 	createdVXLAN    bool
 	addedLoopbackIP *netlink.Addr
-	gatewayFDB      *netlink.Neigh
+	// addedLoopbackAddrs and blackholes are the netplan lo addresses and
+	// FRR blackhole routes this tier installed.
+	addedLoopbackAddrs []*netlink.Addr
+	blackholes         []*netlink.Route
+	gatewayFDB         *netlink.Neigh
 
 	// macVTEP tracks MAC → VTEP mappings learned from Type-2 routes
 	// so withdrawals (which lack next-hop) can still delete the right
@@ -204,8 +225,16 @@ func (o *OverlayTier) Setup(ctx context.Context) error {
 		return o.cleanupSetupFailure(ctx, "add overlay loopback", err)
 	}
 
+	if err := o.installBlackholes(); err != nil {
+		return o.cleanupSetupFailure(ctx, "install blackhole routes", err)
+	}
+
 	if err := o.advertiseType5(ctx); err != nil {
 		return o.cleanupSetupFailure(ctx, "advertise EVPN Type-5", err)
+	}
+
+	if err := o.advertiseType5Networks(ctx); err != nil {
+		return o.cleanupSetupFailure(ctx, "advertise EVPN Type-5 networks", err)
 	}
 
 	if o.cfg.EnableL2 {
@@ -291,6 +320,8 @@ func (o *OverlayTier) Teardown(_ context.Context) error {
 		}
 	}
 
+	o.removeLocalState()
+
 	vxlanName := o.vxlanName()
 
 	type owned struct {
@@ -369,6 +400,9 @@ func (o *OverlayTier) overlayRouteTable() int {
 
 // vxlanName returns the VXLAN interface name derived from the provision VNI.
 func (o *OverlayTier) vxlanName() string {
+	if o.cfg.VXLANName != "" {
+		return o.cfg.VXLANName
+	}
 	return fmt.Sprintf("vx%d", o.cfg.ProvisionVNI)
 }
 
@@ -585,6 +619,10 @@ func (o *OverlayTier) addGatewayFDB(vxLink netlink.Link) error {
 }
 
 func (o *OverlayTier) addOverlayLoopback() error {
+	if len(o.cfg.LoopbackAddrs) > 0 {
+		// The netplan files define the lo addresses.
+		return o.addLoopbackAddrs()
+	}
 	if o.cfg.OverlayIP == "" {
 		return nil
 	}
@@ -858,6 +896,10 @@ func (o *OverlayTier) handleType5RouteWithRouterMACState(
 		return
 	}
 	prefix, key := dst.String(), type5PathKey(route)
+	if o.isBlackhole(prefix) {
+		o.log.Debug("type-5 route for a static blackhole prefix, static route wins", "prefix", prefix)
+		return
+	}
 	if withdraw {
 		o.withdrawType5Path(prefix, key, route, vtep, routerMAC)
 		return
@@ -1051,11 +1093,16 @@ func (o *OverlayTier) type5RouteState(route *apipb.EVPNIPPrefixRoute, vtep strin
 		o.log.Debug("type-5 route with invalid prefix", "prefix", prefix, "len", prefixLen, "error", err)
 		return type5RouteState{}, false
 	}
+	// No gateway, 0.0.0.0 or "::" means the VTEP, like zebra. A gateway
+	// that does not parse stops the route.
 	gwStr := route.GetGwAddress()
-	if gwStr == "" || gwStr == "0.0.0.0" {
+	if gwStr == "" || net.ParseIP(gwStr).IsUnspecified() {
 		gwStr = vtep
 	}
 	gw := net.ParseIP(gwStr)
+	if gw != nil {
+		gw = type5Gateway(dst, gw)
+	}
 	if gw == nil {
 		o.log.Debug("type-5 route with no valid gateway", "prefix", dst, "gw", gwStr)
 		return type5RouteState{}, false
@@ -1249,7 +1296,7 @@ func (o *OverlayTier) deleteType5GatewayRefLocked(link netlink.Link, ref type5Ga
 		}
 		return true
 	}
-	gw := net.ParseIP(ref.gateway)
+	gw := parseGatewayKey(ref.gateway)
 	vtep := net.ParseIP(ref.vtep)
 	deleted := true
 	deleteGateway := !o.hasType5GatewayRef(ref.gateway)
@@ -1299,7 +1346,7 @@ func (o *OverlayTier) loadType5GatewayRef(prefix string) (type5GatewayRef, bool)
 func newType5GatewayRef(gw, vtep net.IP, routerMAC net.HardwareAddr) type5GatewayRef {
 	gateway := ""
 	if gw != nil {
-		gateway = gw.String()
+		gateway = gatewayKey(gw)
 	}
 	vtepStr := ""
 	if vtep != nil {
@@ -1354,12 +1401,30 @@ func buildType5KernelRoute(link netlink.Link, dst *net.IPNet, gw net.IP, tableID
 	if tableID != 0 {
 		route.Table = tableID
 	}
+	if isMappedGateway(gw) {
+		// IPv6 over an IPv4 VTEP is new in BOOTy, so it copies zebra
+		// completely: protocol bgp, metric 20.
+		route.Protocol = unix.RTPROT_BGP
+		route.Priority = zebraRouteMetric
+	}
 	return route
 }
 
 func buildType5GatewayNeighbor(link netlink.Link, gw net.IP, routerMAC net.HardwareAddr) *netlink.Neigh {
 	if len(routerMAC) != ethernetMACLength {
 		return nil
+	}
+	if isMappedGateway(gw) {
+		// IPv6 routes use the IPv4-mapped VTEP as gateway. zebra installs
+		// its neighbor entry as "extern_learn NOARP".
+		return &netlink.Neigh{
+			LinkIndex:    link.Attrs().Index,
+			Family:       syscall.AF_INET6,
+			State:        netlink.NUD_NOARP,
+			Flags:        netlink.NTF_EXT_LEARNED,
+			IP:           gw,
+			HardwareAddr: routerMAC,
+		}
 	}
 	ip := gw.To4()
 	if ip == nil {

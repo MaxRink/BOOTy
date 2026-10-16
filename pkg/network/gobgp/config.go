@@ -56,6 +56,7 @@ type Config struct {
 	OverlayVRFTableID uint32           // Routing table ID for the overlay bridge VRF (default: VRFTableID)
 	UnderlayDummyName string           // Underlay dummy device name (default: "dummy.underlay")
 	VXLANLink         string           // VXLAN underlay link from netplan (optional)
+	VXLANName         string           // VXLAN device name from netplan (default: "vx<VNI>")
 	MTU               int              // Physical interface MTU (default: 9000)
 	KeepaliveInterval uint64           // BGP keepalive seconds (default: 3)
 	HoldTime          uint64           // BGP hold timer seconds (default: 9)
@@ -89,6 +90,15 @@ type Config struct {
 	// FastExternalFailover allows the carrier watch of the unnumbered
 	// sessions ("bgp fast-external-failover"); default true like FRR.
 	FastExternalFailover bool
+	// LoopbackAddrs are added to lo instead of OverlayIP.
+	LoopbackAddrs []string
+	// BlackholeRoutes are installed in the main table, like FRR static
+	// blackhole routes. A received Type-5 route for one of them is not
+	// installed: the static route wins, as in zebra.
+	BlackholeRoutes []string
+	// Type5Networks are originated as EVPN Type-5 routes when a local
+	// address or blackhole route covers them (FRR "network" import check).
+	Type5Networks []string
 	// Policy configures BGP import/export communities and route attributes.
 	Policy *PolicyConfig
 	// GracefulRestart configures BGP graceful restart behavior.
@@ -129,6 +139,10 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		OverlayVRFTableID:    netCfg.OverlayVRFTableID,
 		UnderlayDummyName:    netCfg.UnderlayDummyName,
 		VXLANLink:            netCfg.VXLANLink,
+		VXLANName:            netCfg.VXLANName,
+		LoopbackAddrs:        netCfg.LoopbackAddrs,
+		BlackholeRoutes:      netCfg.BlackholeRoutes,
+		Type5Networks:        netCfg.Type5Networks,
 		MTU:                  netCfg.MTU,
 		KeepaliveInterval:    uint64(netCfg.BGPKeepalive),
 		HoldTime:             uint64(netCfg.BGPHold),

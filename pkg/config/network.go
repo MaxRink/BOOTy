@@ -67,6 +67,18 @@ type NetworkConfig struct {
 	// Default: nil (true)
 	PredictableNames *bool `yaml:"predictableNames,omitempty" json:"predictableNames,omitempty"`
 
+	// LoopbackAddresses is a comma-separated list of CIDR addresses that
+	// GoBGP adds to lo, like netplan "lo: addresses".
+	// Example: "2001:db8::17/128"
+	// Default: ""
+	LoopbackAddresses string `yaml:"loopbackAddresses" json:"loopbackAddresses"`
+
+	// BlackholeRoutes is a comma-separated list of prefixes that GoBGP
+	// installs as blackhole routes in the main table, like FRR
+	// "ipv6 route P blackhole".
+	// Default: ""
+	BlackholeRoutes string `yaml:"blackholeRoutes" json:"blackholeRoutes"`
+
 	// Sub-sections grouped by network concern.
 	BGP    BGPConfig    `yaml:"bgp"    json:"bgp"`
 	EVPN   EVPNConfig   `yaml:"evpn"   json:"evpn"`
@@ -207,8 +219,26 @@ type EVPNConfig struct {
 	// Type5Only enables direct EVPN Type-5 routing without an L2 gateway.
 	// In this mode provisionGateway is optional; remote VTEPs are reached
 	// through underlay BGP routes learned from the fabric.
-	// Default: false
-	Type5Only bool `yaml:"type5Only" json:"type5Only"`
+	// Unset (nil) means Type-5 only when the provisioner frr.conf maps the
+	// provision VNI to a VRF (L3VNI), like FRR; an explicit value wins.
+	// Default: unset (false without an L3VNI)
+	Type5Only *bool `yaml:"type5Only,omitempty" json:"type5Only,omitempty"`
+
+	// Type5Networks is a comma-separated list of prefixes that BOOTy
+	// originates as EVPN Type-5 routes, like FRR "network" lines with
+	// "advertise ipv4|ipv6 unicast". Only a prefix of a loopback address,
+	// of provisionIP or of a blackhole route is advertised (import check).
+	// Example: "2001:db8::17/128,2001:db8::/64"
+	// Default: ""
+	Type5Networks string `yaml:"type5Networks" json:"type5Networks"`
+
+	// BridgeName is the provision bridge device name.
+	// Default: "" ("br.provision")
+	BridgeName string `yaml:"bridgeName" json:"bridgeName"`
+
+	// VXLANName is the provision VXLAN device name.
+	// Default: "" ("vx<VNI>")
+	VXLANName string `yaml:"vxlanName" json:"vxlanName"`
 
 	// DCGWIPs is a comma-separated list of Data Center Gateway IPs.
 	// Used in OneFabric topologies for external routing.

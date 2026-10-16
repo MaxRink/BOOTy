@@ -32,6 +32,8 @@ type FRRParams struct {
 	// MultipathRelax is set when a router has "bgp bestpath as-path
 	// multipath-relax".
 	MultipathRelax bool
+	// BlackholeRoutes are the "ip route" and "ipv6 route" blackhole prefixes.
+	BlackholeRoutes []string
 	// Model is the full parsed configuration.
 	Model *frrconf.Config
 }
@@ -86,6 +88,9 @@ func ParseFRRConfigBytesWith(data []byte, name string, strict bool) (*FRRParams,
 		return nil, fmt.Errorf("frr config: %w", err)
 	}
 	params.Sessions = BGPSessions(sessions)
+	for _, r := range model.StaticRoutes {
+		params.BlackholeRoutes = append(params.BlackholeRoutes, r.Prefix)
+	}
 	warnUnapplied(model)
 	for _, v := range model.VRFVNIs {
 		if !slices.Contains(params.L3VNIs, v.VNI) {
@@ -194,4 +199,59 @@ func warnUnapplied(model *frrconf.Config) {
 			}
 		}
 	}
+}
+
+// type5Networks returns the "network" prefixes that FRR originates as EVPN
+// Type-5 routes for the L3VNI vni: the networks of the VRF that maps to vni,
+// for each address family that its "advertise ipv4|ipv6 unicast" selects
+// (doc/user/bgp.rst, "advertise <afi> unicast").
+func type5Networks(model *frrconf.Config, vni uint32) []string {
+	if model == nil {
+		return nil
+	}
+	i := slices.IndexFunc(model.VRFVNIs, func(v frrconf.VRFVNI) bool { return v.VNI == vni })
+	if i < 0 {
+		return nil
+	}
+	vrf := model.VRFVNIs[i].VRF
+	var out []string
+	for j := range model.Routers {
+		r := &model.Routers[j]
+		if routerVRF(r.VRF) != vrf {
+			continue
+		}
+		for _, afi := range advertisedAFIs(r) {
+			for k := range r.AddressFamilies {
+				if af := &r.AddressFamilies[k]; af.AFI == afi && af.SAFI == "unicast" {
+					out = append(out, af.Networks...)
+				}
+			}
+		}
+	}
+	return out
+}
+
+// routerVRF maps "router bgp N" and "router bgp N vrf default" to "".
+func routerVRF(vrf string) string {
+	if vrf == "default" {
+		return ""
+	}
+	return vrf
+}
+
+func advertisedAFIs(r *frrconf.Router) []string {
+	var afis []string
+	for i := range r.AddressFamilies {
+		af := &r.AddressFamilies[i]
+		if af.SAFI != "evpn" {
+			continue
+		}
+		if af.AdvertiseIPv4Unicast {
+			afis = append(afis, "ipv4")
+		}
+		if af.AdvertiseIPv6Unicast {
+			afis = append(afis, "ipv6")
+		}
+	}
+	return afis
 }

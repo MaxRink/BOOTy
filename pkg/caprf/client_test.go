@@ -933,7 +933,7 @@ func TestParseVarsEVPNType5Only(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseVars() error = %v", err)
 	}
-	if !cfg.Network.EVPN.Type5Only {
+	if cfg.Network.EVPN.Type5Only == nil || !*cfg.Network.EVPN.Type5Only {
 		t.Fatal("EVPN_TYPE5_ONLY was not parsed")
 	}
 }
