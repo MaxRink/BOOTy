@@ -257,6 +257,19 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   target OS with `WATCHDOG_HANDOFF=keep`. `WATCHDOG_TIMEOUT_SEC`,
   `WATCHDOG_DEVICE`, `WATCHDOG_STEP_BUDGETS`, YAML `watchdog.*`. See
   [hardware watchdog](docs/configuration.md#hardware-watchdog) (#721)
+- GoBGP mode sends the BGP OPEN capabilities of FRR 10 with the bm4x template:
+  graceful restart as helper (restart time 120 s), long-lived graceful restart
+  and add-path receive. New keys `BGP_GRACEFUL_RESTART`,
+  `BGP_GRACEFUL_RESTART_TIME`, `BGP_ADDPATH_RX`,
+  `BGP_SOFTWARE_VERSION` (YAML `network.bgp.*`). In `BGP_PEER_MODE=dual` the
+  numbered peers (route reflectors) get only L2VPN EVPN, like the template;
+  before they also offered IPv4 unicast. The FRR 10.3 defaults that depend
+  on `frr defaults` follow `BGP_DEFAULTS`, else the `frr.conf` profile,
+  else `datacenter`: `bgp ebgp-requires-policy` (off with datacenter), the
+  software version capability (every peer with datacenter) and zebra `ip
+  nht resolve-via-default` (off with datacenter). The FQDN capability
+  carries the system host name like FRR; the new key `BGP_HOSTNAME` (YAML
+  `network.bgp.hostname`) sets it.
 - GoBGP mode applies the netplan device settings of the provision VXLAN device,
   the bridge and the NICs like systemd-networkd (MTU, MAC, learning, ARP proxy,
   hairpin, link-local, `accept-ra`), and `frr.conf` `[no] ip[v6] forwarding`.
@@ -287,8 +300,9 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   lists reject unknown fields. `bgp ebgp-requires-policy` is applied like
   current FRR (on unless `no bgp ebgp-requires-policy`; new key
   `BGP_EBGP_REQUIRES_POLICY`, YAML `network.bgp.ebgpRequiresPolicy`).
-  Native eBGP sessions (`BGP_SESSIONS`) without route-maps now exchange no
-  routes: give them `routeMaps` or set `BGP_EBGP_REQUIRES_POLICY=false`. The
+  With `frr defaults traditional` (`BGP_DEFAULTS=traditional`), native eBGP
+  sessions (`BGP_SESSIONS`) without route-maps exchange no routes: give them
+  `routeMaps` or set `BGP_EBGP_REQUIRES_POLICY=false`. The
   rejected families are logged at WARN. The `frr.conf` route targets now win
   over `vpn_rt`, as in FRR (#659).
 - GoBGP mode runs BFD (RFC 5880, 5881, 5883) for `frr.conf` neighbors with

@@ -223,9 +223,13 @@ func (p *bgpPolicy) requirePolicy(peers []policyPeer) {
 }
 
 // localASChecks rejects paths that carry the local-as more often than
-// allowas-in permits. FRR checks the local-as of "local-as N no-prepend
-// replace-as" too (bgpd/bgp_route.c, aspath_loop_check on change_local_as);
-// GoBGP checks only the router AS.
+// allowas-in permits. FRR checks both the router AS and the local-as of
+// "local-as N no-prepend replace-as" (bgpd/bgp_route.c, aspath_loop_check
+// on bgp->as and on change_local_as). GoBGP 3.37, which BOOTy uses, checks
+// only the router AS: peer.go passes peerInfo.LocalAS, which NewPeerInfo
+// sets to the global AS. GoBGP master checks only the per-peer local AS
+// (conf.Config.LocalAs) instead; after an upgrade to it the router AS check
+// would be the one to add here.
 func (p *bgpPolicy) localASChecks(peers []policyPeer) {
 	type key struct {
 		as    uint32

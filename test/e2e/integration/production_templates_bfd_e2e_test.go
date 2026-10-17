@@ -112,6 +112,10 @@ func pick(got, want map[string]bfdView) map[string]bfdView {
 // session that went down again right after Up, fixed in #703).
 const maxRestore = 15 * time.Second
 
+// maxSession bounds the time from the carrier back to the leaf session
+// Established again.
+const maxSession = 5 * time.Second
+
 // waitRoutesWithin waits like waitRoutes, but at most maxWait, and returns
 // how long it took.
 func waitRoutesWithin(t *testing.T, node prodtplNode, want map[string][]string, maxWait time.Duration) time.Duration {
@@ -172,9 +176,12 @@ func TestProdTplBFDFailover(t *testing.T) {
 }
 
 // A switch port that fails for longer than the BFD detection time: carrier
-// loss, then the BFD timeout, then the link back. The session comes back
-// within maxRestore, as on the shadow node, not after the 30 s GoBGP idle
-// hold time.
+// loss, then the BFD timeout, then the link back. The leaf sees the session
+// Established again within maxSession, like the shadow node (2 to 3 s: the
+// leaf first waits for DAD of its link-local address), and the routes are
+// back within maxRestore. The shadow's kernel route shows ECMP again at
+// once because zebra keeps the nexthop group of the flapped link while its
+// BGP session is still down, so its route time is not compared.
 func TestProdTplCarrierLossPastBFD(t *testing.T) {
 	for _, node := range prodtplServers {
 		t.Run(node.name, func(t *testing.T) {
@@ -192,8 +199,24 @@ func TestProdTplCarrierLossPastBFD(t *testing.T) {
 			waitRoutesWithin(t, node, prodtplRoutesVia(prodtplUplinks[1:]...), 5*time.Second)
 			time.Sleep(3 * time.Second) // past the 900 ms BFD detection time
 			link("up")
+			start := time.Now()
+			for {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				n, err := prodtplNeighbor(ctx, prodtplLeaf, port)
+				cancel()
+				if err == nil && n["bgpState"] == "Established" {
+					break
+				}
+				if time.Since(start) > maxSession {
+					t.Fatalf("%s: leaf session on %s %v (%v) %s after the carrier came back, want Established within %s",
+						node.name, port, n["bgpState"], err, time.Since(start), maxSession)
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+			est := time.Since(start)
 			d := waitRoutesWithin(t, node, prodtplRoutesVia(prodtplUplinks...), maxRestore)
-			t.Logf("%s: ECMP back %s after the carrier came back", node.name, d.Round(10*time.Millisecond))
+			t.Logf("%s: session Established %s, ECMP back %s after the carrier came back", node.name,
+				est.Round(10*time.Millisecond), (est + d).Round(10*time.Millisecond))
 		})
 	}
 }

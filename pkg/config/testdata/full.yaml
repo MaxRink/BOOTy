@@ -188,8 +188,13 @@ network:
           - {seq: 10, deny: true, matchCommunity: cm-received-fabric}
           - {seq: 20}
     # ebgpRequiresPolicy (BGP_EBGP_REQUIRES_POLICY): FRR "bgp ebgp-requires-policy";
-    # unset: on for frr.conf and sessions, off for the peerMode peers
+    # unset: the "frr defaults" profile for frr.conf and sessions (on with
+    # traditional, off with datacenter), off for the peerMode peers
     ebgpRequiresPolicy: false
+    # routeMapIn / routeMapOut (BGP_ROUTE_MAP_IN/OUT): route-maps of every
+    # session and family; an unset direction keeps the frr.conf route-map
+    routeMapIn: TAG-FABRIC-IN
+    routeMapOut: DENY-TAG-FABRIC-OUT
     communityLists:
       - name: cm-received-fabric
         entries:
@@ -223,6 +228,22 @@ network:
     multipathRelax: true
     installRoutes: true
     fastExternalFailover: true
+    # interfaces (BGP_INTERFACES): NICs of the unnumbered peers; empty means
+    # all detected physical NICs
+    interfaces: "ens1f0np0,ens1f1np1"
+    # OPEN capabilities (GoBGP), unset means the FRR default:
+    # gracefulRestart (BGP_GRACEFUL_RESTART): helper, default true
+    # gracefulRestartTime (BGP_GRACEFUL_RESTART_TIME): 1 to 4095 s, default 120
+    # addPathReceive (BGP_ADDPATH_RX): add-path receive, default true
+    # softwareVersion (BGP_SOFTWARE_VERSION): also to eBGP peers; default
+    # true with "frr defaults datacenter", else iBGP only
+    gracefulRestart: true
+    gracefulRestartTime: 90
+    addPathReceive: false
+    softwareVersion: false
+    # hostname (BGP_HOSTNAME): the FQDN capability host name; set as the
+    # ramdisk host name before BGP starts. Empty keeps the system host name.
+    hostname: "m-001"
 
   evpn:
     # underlaySubnet: IPv4 subnet for loopback IP derivation (e.g. "192.168.4.0/24")

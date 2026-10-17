@@ -50,6 +50,8 @@ func TestValidateNetworkOptionRanges(t *testing.T) {
 				"eth0": {Routes: []netplan.RouteConfig{{To: "default", Via: "192.0.2.1"}}},
 			}}
 		}, ""},
+		{"gracefulRestartTime 4096", func(c *Config) { c.Network.BGP.GracefulRestartTime = 4096 }, "gracefulRestartTime 4096 must be 1 to 4095"},
+		{"gracefulRestartTime 4095", func(c *Config) { c.Network.BGP.GracefulRestartTime = 4095 }, ""},
 	} {
 		c := &Config{}
 		tt.set(c)

@@ -9,8 +9,9 @@ import (
 )
 
 // prodtplVariant is the template variant the lab runs (#630 section 4.3
-// matrix), set with PRODTPL_VARIANT next to PRODTPL_SUFFIX at deploy:
-// "two-uplinks" (default), "one-uplink" or "caprf-old" (one uplink).
+// matrix): PRODTPL_VARIANT from test/e2e/clab/prodtpl-variant.sh, which
+// also sets the PRODTPL_* files of the topology at deploy: "two-uplinks"
+// (default), "one-uplink", "native-model" or "caprf-old" (one uplink).
 var prodtplVariant = cmp.Or(os.Getenv("PRODTPL_VARIANT"), "two-uplinks")
 
 // prodtplUplinks are the server NICs that the template peers on.

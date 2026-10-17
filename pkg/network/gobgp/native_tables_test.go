@@ -5,6 +5,7 @@ package gobgp
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"testing"
 
 	apipb "github.com/osrg/gobgp/v3/api"
@@ -122,5 +123,70 @@ func TestNativeUnnumberedPeerSelector(t *testing.T) {
 	}
 	if got := sel.localAS("198.51.100.1"); got != 4210000017 {
 		t.Errorf("local AS of the default VRF session = %d, want the router AS", got)
+	}
+}
+
+// addPeers gives the BGP_PEER_MODE peers the families of peerModeFamilies:
+// in dual mode the unnumbered peer IPv4 unicast and the numbered peer (a
+// route reflector) only L2VPN EVPN.
+func TestAddPeersFamilies(t *testing.T) {
+	for _, tt := range []struct {
+		mode               network.PeerMode
+		iface, numbered    string
+		wantIface, wantNum []string
+	}{
+		{network.PeerModeDual, "eth9", "198.51.100.1", []string{"AFI_IP/SAFI_UNICAST"}, []string{"AFI_L2VPN/SAFI_EVPN"}},
+		{network.PeerModeUnnumbered, "eth9", "", []string{"AFI_IP/SAFI_UNICAST", "AFI_L2VPN/SAFI_EVPN"}, nil},
+		{network.PeerModeNumbered, "", "198.51.100.1", nil, []string{"AFI_IP/SAFI_UNICAST", "AFI_L2VPN/SAFI_EVPN"}},
+	} {
+		t.Run(string(tt.mode), func(t *testing.T) {
+			ctx := context.Background()
+			bgp := server.NewBgpServer()
+			go bgp.Serve()
+			t.Cleanup(bgp.Stop)
+			if err := bgp.StartBgp(ctx, &apipb.StartBgpRequest{Global: &apipb.Global{Asn: 4210000017, RouterId: "192.0.2.19", ListenPort: -1}}); err != nil {
+				t.Fatal(err)
+			}
+			cfg := &Config{ASN: 4210000017, PeerMode: tt.mode}
+			if tt.numbered != "" {
+				cfg.NeighborAddrs = []string{tt.numbered}
+			}
+			u := &UnderlayTier{bgp: bgp, cfg: cfg, log: slog.Default(),
+				discoverPeer: func(context.Context, string) (string, error) { return "fe80::2%eth9", nil }}
+			if tt.iface != "" {
+				u.nics = []string{tt.iface}
+			}
+			if err := u.addPeers(ctx); err != nil {
+				t.Fatal(err)
+			}
+			got := map[string][]string{}
+			if err := bgp.ListPeer(ctx, &apipb.ListPeerRequest{}, func(p *apipb.Peer) {
+				for _, af := range p.GetAfiSafis() {
+					f := af.GetConfig().GetFamily()
+					got[p.GetConf().GetNeighborAddress()] = append(got[p.GetConf().GetNeighborAddress()], f.GetAfi().String()+"/"+f.GetSafi().String())
+				}
+			}); err != nil {
+				t.Fatal(err)
+			}
+			for addr, want := range map[string][]string{"fe80::2%eth9": tt.wantIface, tt.numbered: tt.wantNum} {
+				if addr == "" {
+					continue
+				}
+				slices.Sort(got[addr])
+				if !slices.Equal(got[addr], want) {
+					t.Errorf("%s families = %v, want %v", addr, got[addr], want)
+				}
+			}
+		})
+	}
+}
+
+// The FIB writer takes "ip nht resolve-via-default" from the profile.
+func TestBuildFIBWriterResolveViaDefault(t *testing.T) {
+	for _, want := range []bool{true, false} {
+		u := &UnderlayTier{cfg: &Config{ASN: 65000, ResolveViaDefault: want}}
+		if got := u.buildFIBWriter(testVRFTable).resolveViaDefault; got != want {
+			t.Errorf("resolveViaDefault = %v, want %v", got, want)
+		}
 	}
 }

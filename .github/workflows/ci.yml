@@ -1200,7 +1200,7 @@ jobs:
             sudo apt-get install -y -qq "linux-modules-extra-$(uname -r)"
             sudo modprobe vrf
           fi
-          sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestType5Netlink|^TestFIBWriterKernel|^TestL3VNINetlink|^TestConnectedInVRF' ./pkg/network/gobgp/ 2>&1 | tee -a linux-e2e-logs/go-test.log
+          sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestType5Netlink|^TestFIBWriterKernel|^TestFIBResolveViaDefault|^TestL3VNINetlink|^TestConnectedInVRF' ./pkg/network/gobgp/ 2>&1 | tee -a linux-e2e-logs/go-test.log
           sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestDHCPNetlink' ./pkg/network/ 2>&1 | tee -a linux-e2e-logs/go-test.log
           # SR-IOV discovery and runtime settings on netdevsim (devlink, eSwitch, VFs).
           if ! sudo modprobe netdevsim; then
@@ -1743,6 +1743,7 @@ jobs:
             TestProdTplKernelDevices \
             TestProdTplRRRestart \
             TestProdTplLLDP \
+            TestProdTplOpenCapabilities \
             TestProdTplRFC5549Routes \
             TestProdTplEBGPWithoutPolicy \
             TestProdTplLongOutageNewLinkLocal \
@@ -1840,7 +1841,7 @@ jobs:
       - name: Deploy production template topology
         run: |
           eval "$(sh test/e2e/clab/prodtpl-variant.sh one-uplink)"
-          sudo --preserve-env=PRODTPL_BOOTY_FS,PRODTPL_SHADOW_FRR,PRODTPL_SHADOW_SETUP,PRODTPL_LEAF_SETUP,PRODTPL_NATIVE_VARS containerlab deploy --topo test/e2e/clab/topology-production-templates.clab.yml
+          sudo --preserve-env=PRODTPL_BOOTY_FS,PRODTPL_SHADOW_FRR,PRODTPL_SHADOW_SETUP,PRODTPL_LEAF_SETUP,PRODTPL_NATIVE_VARS,PRODTPL_NATIVE_VRF_VARS containerlab deploy --topo test/e2e/clab/topology-production-templates.clab.yml
 
       - name: Run production template E2E tests
         env:
@@ -1870,6 +1871,7 @@ jobs:
             TestProdTplKernelDevices \
             TestProdTplRRRestart \
             TestProdTplLLDP \
+            TestProdTplOpenCapabilities \
             TestProdTplRFC5549Routes \
             TestProdTplEBGPWithoutPolicy \
             TestProdTplLongOutageNewLinkLocal \
@@ -1968,7 +1970,7 @@ jobs:
       - name: Deploy production template topology
         run: |
           eval "$(sh test/e2e/clab/prodtpl-variant.sh native-model)"
-          sudo --preserve-env=PRODTPL_BOOTY_FS,PRODTPL_SHADOW_FRR,PRODTPL_SHADOW_SETUP,PRODTPL_LEAF_SETUP,PRODTPL_NATIVE_VARS containerlab deploy --topo test/e2e/clab/topology-production-templates.clab.yml
+          sudo --preserve-env=PRODTPL_BOOTY_FS,PRODTPL_SHADOW_FRR,PRODTPL_SHADOW_SETUP,PRODTPL_LEAF_SETUP,PRODTPL_NATIVE_VARS,PRODTPL_NATIVE_VRF_VARS containerlab deploy --topo test/e2e/clab/topology-production-templates.clab.yml
 
       - name: Run production template E2E tests
         env:
@@ -1998,6 +2000,7 @@ jobs:
             TestProdTplKernelDevices \
             TestProdTplRRRestart \
             TestProdTplLLDP \
+            TestProdTplOpenCapabilities \
             TestProdTplRFC5549Routes \
             TestProdTplEBGPWithoutPolicy \
             TestProdTplLongOutageNewLinkLocal \

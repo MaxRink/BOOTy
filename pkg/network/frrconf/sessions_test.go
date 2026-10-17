@@ -211,12 +211,24 @@ exit
 
 // "bgp ebgp-requires-policy" is on unless the router says "no", like
 // current FRR.
+// "bgp ebgp-requires-policy" follows "frr defaults" (FRR 10.3
+// BGP_EBGP_REQUIRES_POLICY): on for traditional, off for datacenter and
+// without the line (the legacy daemons profile); an explicit line wins.
 func TestSessionsEBGPRequiresPolicy(t *testing.T) {
-	if s := mustSessions(t, "router bgp 65101\n neighbor 192.0.2.1 remote-as 65500\n")[0]; !s.EBGPRequiresPolicy {
-		t.Error("default: off, want on")
-	}
-	if s := mustSessions(t, "router bgp 65101\n no bgp ebgp-requires-policy\n neighbor 192.0.2.1 remote-as 65500\n")[0]; s.EBGPRequiresPolicy {
-		t.Error("no bgp ebgp-requires-policy: on, want off")
+	const peer = "router bgp 65101\n neighbor 192.0.2.1 remote-as 65500\n"
+	for _, tt := range []struct {
+		conf string
+		want bool
+	}{
+		{"frr defaults traditional\n" + peer, true},
+		{"frr defaults datacenter\n" + peer, false},
+		{peer, false},
+		{"frr defaults traditional\nrouter bgp 65101\n no bgp ebgp-requires-policy\n neighbor 192.0.2.1 remote-as 65500\n", false},
+		{"frr defaults datacenter\nrouter bgp 65101\n bgp ebgp-requires-policy\n neighbor 192.0.2.1 remote-as 65500\n", true},
+	} {
+		if s := mustSessions(t, tt.conf)[0]; s.EBGPRequiresPolicy != tt.want {
+			t.Errorf("%q: ebgp-requires-policy %v, want %v", tt.conf, s.EBGPRequiresPolicy, tt.want)
+		}
 	}
 }
 

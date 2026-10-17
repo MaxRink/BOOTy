@@ -3,6 +3,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -823,6 +824,20 @@ func setRamdiskHostname(cfg *config.MachineConfig, sethostname func([]byte) erro
 	slog.Info("ramdisk hostname set", "hostname", cfg.Hostname)
 }
 
+// setBGPHostname sets BGP_HOSTNAME as the ramdisk host name before the
+// peers start: GoBGP sends the system host name (os.Hostname) as the FQDN
+// capability. A failure is only logged, the FQDN is informational.
+func setBGPHostname(name string, sethostname func([]byte) error) {
+	if name == "" {
+		return
+	}
+	if err := sethostname([]byte(name)); err != nil {
+		slog.Warn("setting the BGP hostname failed", "hostname", name, "error", err)
+		return
+	}
+	slog.Info("BGP hostname set", "hostname", name)
+}
+
 // isTerminalSuccess reports a mode result that completed its task. Such a
 // result wins over a renewal failure that arrives at the same time.
 func isTerminalSuccess(modeErr error) bool {
@@ -1172,6 +1187,22 @@ func applyBGPOptions(o *config.BGPConfig, n *network.Config) {
 	n.BGPInstallRoutes = boolOr(o.InstallRoutes, withSessions)
 	if o.MultipathRelax != nil {
 		n.BGPMultipathRelax = *o.MultipathRelax
+	}
+	// The "frr defaults" profile: BGP_DEFAULTS wins over frr.conf; without
+	// both it is datacenter, the profile of the legacy daemons file.
+	if o.Defaults != "" {
+		n.BGPDefaults = o.Defaults
+	}
+	n.BGPDefaults = cmp.Or(n.BGPDefaults, "datacenter")
+	n.BGPHostname = o.Hostname
+	datacenter := n.BGPDefaults == "datacenter"
+	n.BGPCapabilities = network.BGPCapabilities{
+		GracefulRestart:     boolOr(o.GracefulRestart, true),
+		GracefulRestartTime: cmp.Or(o.GracefulRestartTime, 120),
+		AddPathReceive:      boolOr(o.AddPathReceive, true),
+		// FRR 10.3 BGP_SOFT_VERSION_CAPABILITY: on for every peer with
+		// datacenter, iBGP only otherwise.
+		SoftwareVersion: boolOr(o.SoftwareVersion, datacenter),
 	}
 	if o.AllowASIn != nil {
 		n.BGPAllowASIn = *o.AllowASIn
@@ -1532,6 +1563,9 @@ func mergeNetplanConfig(dst, src *network.Config) {
 		dst.BGPSessions = src.BGPSessions
 		dst.BGPMultipathRelax = src.BGPMultipathRelax
 	}
+	if src.BGPDefaults != "" {
+		dst.BGPDefaults = src.BGPDefaults
+	}
 	mergeBGPPolicy(dst, src)
 	mergeOverlayDevices(&dst.OverlayDevices, &src.OverlayDevices)
 	nativeList("network.noAcceptRA", &dst.NoAcceptRA, src.NoAcceptRA)
@@ -1684,6 +1718,7 @@ func parseCIDRBits(value string) (net.IP, *net.IPNet, cidrBits, error) {
 
 // setupGoBGPStack creates and sets up a GoBGP/EVPN network stack.
 func setupGoBGPStack(ctx context.Context, netCfg *network.Config) (*gobgp.Stack, error) {
+	setBGPHostname(netCfg.BGPHostname, syscall.Sethostname)
 	bgpCfg, err := gobgp.NewConfig(netCfg)
 	if err != nil {
 		return nil, fmt.Errorf("gobgp config: %w", err)

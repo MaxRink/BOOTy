@@ -2887,6 +2887,7 @@ func TestParseVarsEmptyIntegersKeepDefaults(t *testing.T) {
 
 func TestParseVarsNativeSessions(t *testing.T) {
 	cfg, err := ParseVars(strings.NewReader(`BGP_DEFAULTS=traditional
+BGP_HOSTNAME=m-001
 BGP_PEER_GROUPS=[{"name":"leaf","remoteAS":"65500","localAS":65501,"families":["ipv4-unicast"]}]
 BGP_SESSIONS=[{"name":"ens1f0np0","interface":true,"peerGroup":"leaf","allowASIn":3},{"name":"198.51.100.1","remoteAS":"internal","families":["l2vpn-evpn"]}]
 BGP_MULTIPATH_RELAX=true
@@ -2899,7 +2900,7 @@ BFD_PROFILES=[{"name":"fabric","transmitInterval":150,"receiveInterval":150,"det
 	if len(b.BFDProfiles) != 1 || b.BFDProfiles[0].Name != "fabric" || *b.BFDProfiles[0].TransmitInterval != 150 || *b.BFDProfiles[0].DetectMultiplier != 3 {
 		t.Fatalf("BFD profiles = %+v", b.BFDProfiles)
 	}
-	if b.Defaults != "traditional" || len(b.PeerGroups) != 1 || b.PeerGroups[0].LocalAS != 65501 ||
+	if b.Defaults != "traditional" || b.Hostname != "m-001" || len(b.PeerGroups) != 1 || b.PeerGroups[0].LocalAS != 65501 ||
 		len(b.Sessions) != 2 || !b.Sessions[0].Interface || b.Sessions[0].AllowASIn != 3 || b.Sessions[1].RemoteAS != "internal" ||
 		b.MultipathRelax == nil || !*b.MultipathRelax {
 		t.Fatalf("native sessions = %+v", b)
@@ -2932,6 +2933,10 @@ BGP_MULTIPATH_RELAX=true
 BGP_INSTALL_ROUTES=false
 BGP_FAST_EXTERNAL_FAILOVER=true
 BFD_DETECT_MULTIPLIER=4
+BGP_GRACEFUL_RESTART=false
+BGP_GRACEFUL_RESTART_TIME=60
+BGP_ADDPATH_RX=false
+BGP_SOFTWARE_VERSION=true
 BGP_EBGP_REQUIRES_POLICY=false
 BRIDGE_MAC=02:54:c0:00:02:13
 VXLAN_LINK=dum.underlay
@@ -2949,6 +2954,10 @@ OVERLAY_VRF_TABLE_ID=20
 	}
 	if b.BFDDetectMultiplier != 4 {
 		t.Errorf("BFD_DETECT_MULTIPLIER = %d, want 4", b.BFDDetectMultiplier)
+	}
+	if b.GracefulRestart == nil || *b.GracefulRestart || b.GracefulRestartTime != 60 ||
+		b.AddPathReceive == nil || *b.AddPathReceive || b.SoftwareVersion == nil || !*b.SoftwareVersion {
+		t.Errorf("capabilities = %v %d %v %v", b.GracefulRestart, b.GracefulRestartTime, b.AddPathReceive, b.SoftwareVersion)
 	}
 	// An explicit 0 and an explicit false are set, not unset.
 	if b.AllowASIn == nil || *b.AllowASIn != 0 || b.InstallRoutes == nil || *b.InstallRoutes ||

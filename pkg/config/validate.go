@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"net/url"
 	"path"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -268,6 +269,9 @@ func (c *Config) validateNetworkOptions() []string {
 	}
 	if n := c.Network.BGP.AllowASIn; n != nil && *n > 10 {
 		errs = append(errs, fmt.Sprintf("network.bgp.allowASIn %d must be 0 to 10", *n))
+	}
+	if n := c.Network.BGP.GracefulRestartTime; n > 4095 {
+		errs = append(errs, fmt.Sprintf("network.bgp.gracefulRestartTime %d must be 1 to 4095", n))
 	}
 	if mtu := c.Network.MTU; mtu != 0 && (mtu < 626 || mtu > 65535) {
 		errs = append(errs, fmt.Sprintf("network.mtu %d must be 626 to 65535 (576 IP + 50 VXLAN)", mtu))
@@ -1266,9 +1270,12 @@ func validateTokenRenewal(t *TransportConfig) []string {
 	return errs
 }
 
+// hostnameRe is a Linux host name (HOST_NAME_MAX 64) of DNS labels.
+var hostnameRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.-]{0,62}[A-Za-z0-9])?$`)
+
 // validateSessions checks network.bgp.sessions with the frr.conf rules.
-// validateSessionInputs checks defaults always, and peerGroups and
-// defaults without sessions.
+// validateSessionInputs checks defaults and hostname always, and
+// peerGroups and defaults without sessions.
 func validateSessionInputs(b *BGPConfig) []string {
 	var errs []string
 	if d := b.Defaults; d != "" && d != string(frrconf.ProfileTraditional) && d != string(frrconf.ProfileDatacenter) {
@@ -1276,6 +1283,9 @@ func validateSessionInputs(b *BGPConfig) []string {
 	}
 	if _, err := b.BFDModel(); err != nil {
 		errs = append(errs, err.Error())
+	}
+	if h := b.Hostname; h != "" && !hostnameRe.MatchString(h) {
+		errs = append(errs, fmt.Sprintf("network.bgp.hostname (BGP_HOSTNAME) %q must be a host name of at most 64 letters, digits, '-' and '.'", h))
 	}
 	if !b.HasSessions() && (len(b.PeerGroups) > 0 || b.Defaults != "") {
 		errs = append(errs, "network.bgp.peerGroups and network.bgp.defaults (BGP_PEER_GROUPS, BGP_DEFAULTS) apply only with network.bgp.sessions (BGP_SESSIONS)")

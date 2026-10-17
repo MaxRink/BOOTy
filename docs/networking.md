@@ -170,10 +170,12 @@ same resolution:
 - `neighbor X allowas-in [N]` (native `allowASIn`, FRR's default N is 3)
   accepts paths with the own AS up to N times. GoBGP has one count per
   session, so a session uses the highest count of its families.
-- `bgp ebgp-requires-policy` is on unless the router has `no bgp
-  ebgp-requires-policy`, like current FRR (`bgpd/bgp_route.c`,
-  `bgp_inbound_policy_exists`). An eBGP session without a route-map in a
-  family and direction then exchanges no routes there; BOOTy logs each
+- `bgp ebgp-requires-policy` follows `frr defaults` like FRR 10.3
+  (`bgpd/bgp_vty.c` `BGP_EBGP_REQUIRES_POLICY`, `bgpd/bgp_route.c`
+  `bgp_inbound_policy_exists`): on with `traditional`, off with
+  `datacenter` and without the line (the legacy daemons profile); `[no]
+  bgp ebgp-requires-policy` wins. With it on, an eBGP session without a
+  route-map in a family and direction exchanges no routes there; BOOTy logs each
   such session, family and direction at warning level, like FRR's
   `zlog_warn`. Native sessions follow
   the same default; `network.bgp.ebgpRequiresPolicy`
@@ -205,12 +207,20 @@ same resolution:
   BOOTy resets the BGP session and connects again after 1 s, like the FRR
   start timer. Known deviation: the peer gets Cease/Administrative Reset
   (subcode 4), not Cease/BFD Down (subcode 10, RFC 9384), because the
-  GoBGP API sends no other subcode. Only the peer log shows it. A
-  second deviation: when the peer ends the session (for example `clear
-  bgp` on the leaf), GoBGP waits a fixed 5 s in Idle, where FRR waits 1 s,
-  and refuses connections in that time. BOOTy then connects by itself 1
-  to 2 s later; a peer that must open the session itself retries after
-  its connect timer.
+  GoBGP API sends no other subcode. Only the peer log shows it. Two
+  timing deviations of GoBGP 3.37 remain, filed upstream:
+  - when the peer ends the session (for example `clear bgp` on the
+    leaf), GoBGP waits a fixed 5 s in Idle (`holdtimeIdle`), where FRR
+    waits 1 s, and refuses connections in that time
+    ([osrg/gobgp#3735](https://github.com/osrg/gobgp/issues/3735)). In
+    the lab a leaf-initiated session to BOOTy took 36 s against 2.3 s for
+    FRR (the leaf then retries after its connect timer); a GoBGP build
+    with the idle hold time after reset also used there took 5.3 s;
+  - GoBGP waits a random 1 to 2 s before the first connect after Idle
+    ([osrg/gobgp#3736](https://github.com/osrg/gobgp/issues/3736)), where
+    FRR connects at once. After a BFD reset BOOTy restored ECMP in 4.0 to
+    4.4 s against 2.3 to 2.9 s for FRR; without the delay 2.7 s.
+  BOOTy uses the released GoBGP without a fork.
 - `bgp bestpath as-path multipath-relax` (native `network.bgp.multipathRelax`,
   `BGP_MULTIPATH_RELAX`) installs equal-cost paths with different AS paths
   of the same length as one multipath route.
@@ -301,7 +311,7 @@ rule of every key:
 |-----|---------------|--------|------|
 | `NETWORK_MODE`, `asn_server`, `provision_vni`, `underlay_ip`, `provision_ip`, `dns_resolver`, `STATIC_*`, `BOND_*`, `VRF_NAME`, `VRF_TABLE_ID`, `BGP_PEER_MODE`, `BGP_NEIGHBORS`, `BGP_REMOTE_ASN`, `EVPN_L2_ENABLED` | netplan, `frr.conf` | vars keys of earlier releases | netplan or `frr.conf` wins |
 | `BGP_SESSIONS`, `BGP_PEER_GROUPS` | `frr.conf` neighbors | `network.bgp.sessions`, `network.bgp.peerGroups` | list replaces |
-| `BGP_DEFAULTS` | `frr defaults` | `network.bgp.defaults` | timer profile of the native sessions |
+| `BGP_DEFAULTS` | `frr defaults` | `network.bgp.defaults` | native wins; the profile of the timers and of the other profile defaults (datacenter without both) |
 | `allowASIn` (session field) | `neighbor X allowas-in [N]` | `network.bgp.sessions[].allowASIn` | part of the session list |
 | `BGP_MULTIPATH_RELAX` | `bgp bestpath as-path multipath-relax` | `network.bgp.multipathRelax` | native wins |
 | `BGP_FAST_EXTERNAL_FAILOVER` | `[no] bgp fast-external-failover` | `network.bgp.fastExternalFailover` | native wins, for every session and the `BGP_PEER_MODE` peers (off for them when unset) |
@@ -335,6 +345,8 @@ rule of every key:
 | `BRIDGE_MTU`, `BRIDGE_IPV6_LINK_LOCAL`, `BRIDGE_ACCEPT_RA` | netplan bridge `mtu`, `link-local`, `accept-ra` | `network.overlay.*` | native wins |
 | `BRIDGE_STP` | netplan bridge `parameters` (`stp`, on when the block has no `stp`) | `network.overlay.bridgeSTP` | native wins |
 | `ACCEPT_RA_OFF`, `LLDP_EMIT` | netplan ethernet `accept-ra: false`, `emit-lldp: true` | `network.noAcceptRA`, `network.emitLLDP` | list replaces |
+| `BGP_GRACEFUL_RESTART`, `BGP_GRACEFUL_RESTART_TIME`, `BGP_ADDPATH_RX`, `BGP_SOFTWARE_VERSION` | none: `frr.conf` graceful restart and capability statements are rejected | `network.bgp.gracefulRestart`, `gracefulRestartTime`, `addPathReceive`, `softwareVersion` | native only; unset is the FRR default (for `BGP_SOFTWARE_VERSION`, of the `frr defaults` profile) |
+| `BGP_HOSTNAME` | none: FRR ignores the `frr.conf` `hostname` line and sends the system host name | `network.bgp.hostname` | native only; unset keeps the system host name |
 | `IP_FORWARDING`, `IPV6_FORWARDING` | `frr.conf` `[no] ip[v6] forwarding` | `network.ipForwarding`, `network.ipv6Forwarding` | native wins |
 
 ### Strict input and the accepted grammar
@@ -503,12 +515,90 @@ Both stacks:
   default routing table. `VRF_TABLE_ID` defaults to 1000. GoBGP replaces
   table 1 with 1000 and logs a warning.
 
+### BGP capabilities
+
+The OPEN message of GoBGP has the capabilities that FRR 10 sends with the
+bm4x template (`TestProdTplOpenCapabilities` compares the leaf and route
+reflector views of BOOTy and the shadow FRR node):
+
+- route refresh, 4-octet AS, extended next hop;
+- the hostname (FQDN capability, no domain): the system host name, as
+  GoBGP takes it from `os.Hostname()`. It is `HOSTNAME` for provisioning
+  with `RAMDISK_HOSTNAME=true`, else the host name of the ramdisk.
+  `BGP_HOSTNAME` (YAML `network.bgp.hostname`) wins: BOOTy sets it as the
+  ramdisk host name before BGP starts. FRR 10.3.1 sends the system host
+  name too: a `hostname` line in an integrated `frr.conf` does not reach
+  the daemons (measured: with `hostname frr-from-conf`, bgpd, zebra and
+  vtysh all show the uname, and the leaf receives it), so BOOTy does not
+  take the `frr.conf` `hostname` either;
+- the software version (`BGP_SOFTWARE_VERSION`): like FRR 10.3
+  (`BGP_SOFT_VERSION_CAPABILITY`), to every peer with `frr defaults
+  datacenter` (the CAPRF configs and the default without the line), to
+  iBGP peers only with `traditional` (the bm4x templates). A set value
+  wins;
+- graceful restart as helper with restart time 120 s
+  (`BGP_GRACEFUL_RESTART`, `BGP_GRACEFUL_RESTART_TIME`);
+- long-lived graceful restart (without family tuples in GoBGP helper mode,
+  so there is no stale time to set);
+- add-path receive in every address family (`BGP_ADDPATH_RX`).
+
+The minimum route advertisement interval is 0 in both: FRR shows
+`minBtwnAdvertisementRunsTimerMsecs` 0 for these peers, and GoBGP sends
+updates without a timer.
+
+GoBGP 3.37 cannot send the following, so they are known deviations:
+
+| FRR 10 sends | GoBGP | Fabric impact |
+|---|---|---|
+| Enhanced route refresh (RFC 7313) | Not sent | A peer that refreshes its routes from BOOTy uses plain route refresh, without the begin and end markers. Nothing is lost; stale routes of BOOTy are not swept at the end of a refresh. |
+| Extended message (RFC 8654) | Not sent | Messages stay at 4096 bytes. The few routes of a server fit. |
+| Paths-limit (with add-path) | Not sent | FRR sends limit 0 (no limit), so the peer behaves the same. |
+| Dynamic capability: FRR sends it with `frr defaults datacenter` (`BGP_DYNAMIC_CAPABILITY`), so the CAPRF configs send it and the bm4x templates (`traditional`) do not | Not sent | A capability change needs a session reset. The fabric does not change capabilities at run time. |
+| Graceful restart Restart State (R) bit | Off | The R bit tells the peer that the speaker restarted. BOOTy is only a helper and keeps no forwarding state, so the peer's behaviour does not change. |
+| Long-lived graceful restart family tuples (stale time 0) | Without tuples in helper mode | With stale time 0 neither side keeps routes long-lived. |
+| Software version `FRRouting/10.x` | `GoBGP/3.37.0` | Information only. |
+| No extended next hop for l2vpn evpn | GoBGP also offers it for l2vpn evpn | The route reflectors do not offer it, so it is not negotiated. FRR on the route reflectors logs one capability warning per OPEN for the unexpected l2vpn evpn tuple. |
+
+Defaults of `frr defaults`: FRR 10.3.1 has these profile-dependent
+defaults (every `FRR_CFG_DEFAULT_*` with a `match_profile` in bgpd, zebra,
+bfdd and lib). BOOTy uses `BGP_DEFAULTS`, else the profile of `frr.conf`,
+else `datacenter` (the legacy daemons file):
+
+| Default | traditional | datacenter | BOOTy |
+|---|---|---|---|
+| BGP keepalive, hold, connect retry | 60, 180, 30 s | 3, 9, 10 s | same per profile (sessions; `BGP_KEEPALIVE`/`BGP_HOLD` for the peer modes) |
+| `bgp ebgp-requires-policy` | on | off | same per profile |
+| software version capability | iBGP only | every peer | same per profile |
+| dynamic capability | off | on | not sent (GoBGP has none) |
+| `bgp deterministic-med` | off | on | GoBGP has no switch; it compares MED only between paths from the same neighbor AS. The fabric sets no MED, so the best path is the same |
+| `bgp log-neighbor-changes` | off | on | GoBGP logs every peer state change in both |
+| `bgp default show-hostname`, `show-nexthop-hostname` | off | on | display only, nothing to apply |
+| zebra `ip nht resolve-via-default` | on | off | same per profile: with datacenter the FIB writer does not resolve a next hop that only a default route covers |
+
+`bgp network import-check` is on in both profiles of FRR 10.3 (off only for
+traditional before 7.4); BOOTy originates the `network` prefixes without a
+RIB check, and with the templates they always exist locally (the underlay
+/32 on its dummy, the lo /128 and the blackhole /64). The other
+`FRR_CFG_DEFAULT_*` (suppress-duplicates, graceful-restart notification,
+hard-admin-reset, enforce-first-as) depend on the FRR version, not on the
+profile.
+
+Graceful restart and switch failures: as helper, BOOTy keeps the routes
+of a leaf or route reflector that restarts its BGP process with graceful
+restart (forwarding bit set) for the peer's restart time, like FRR, so a
+control plane restart of a switch does not take the server down. A switch
+that fails ends the session through BFD or the carrier with a NOTIFICATION
+and no N bit, so graceful restart does not apply and the routes go at
+once, as in FRR. When BOOTy restarts BGP (BFD down, the end of the run),
+its capability has no address family tuples, so the leaf removes BOOTy's
+routes at once, the same as for the legacy FRR.
+
 ## GoBGP peer modes
 
 | Mode | Sessions | Address families | Requirements |
 |---|---|---|---|
 | `unnumbered` (default) | One session per fabric NIC to the IPv6 link-local peer that NDP finds | IPv4 unicast, L2VPN EVPN | Fabric NICs |
-| `dual` | Unnumbered sessions per fabric NIC, plus numbered sessions to `BGP_NEIGHBORS` | Unnumbered: IPv4 unicast. Numbered: IPv4 unicast, L2VPN EVPN | `BGP_NEIGHBORS` |
+| `dual` | Unnumbered sessions per fabric NIC, plus numbered sessions to `BGP_NEIGHBORS` | Unnumbered: IPv4 unicast. Numbered: L2VPN EVPN only, like the bm4x template (`no bgp default ipv4-unicast`, `neighbor dcgw activate` only in `l2vpn evpn`) | `BGP_NEIGHBORS` |
 | `numbered` | Numbered sessions to `BGP_NEIGHBORS` | IPv4 unicast, L2VPN EVPN | `BGP_NEIGHBORS` (IPv4). The host must already reach the neighbors |
 
 Fabric NICs are the NICs in `BGP_INTERFACES`, or all detected physical NICs

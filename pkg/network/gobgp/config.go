@@ -88,6 +88,13 @@ type Config struct {
 	// MultipathRelax is "bgp bestpath as-path multipath-relax": equal-cost
 	// paths may have different AS paths of the same length.
 	MultipathRelax bool
+	// Capabilities are the optional capabilities of every peer.
+	Capabilities network.BGPCapabilities
+	// ResolveViaDefault lets the FIB writer resolve a next hop through a
+	// default route, like zebra "ip nht resolve-via-default": on with
+	// "frr defaults traditional", off with datacenter (FRR 10.3
+	// zebra/zebra_vrf.h ZEBRA_IP_NHT_RESOLVE_VIA_DEFAULT).
+	ResolveViaDefault bool
 	// LocalAS, NeighborVRF and AllowASIn configure the native peers
 	// (PeerMode); Sessions carry their own values.
 	LocalAS     uint32
@@ -137,6 +144,15 @@ type Config struct {
 	GracefulRestart *GracefulRestartConfig
 }
 
+// overlayVRFName is OVERLAY_VRF_NAME when set (empty is the default VRF),
+// else VRF_NAME.
+func overlayVRFName(netCfg *network.Config) string {
+	if netCfg.OverlayVRFSet {
+		return netCfg.OverlayVRFName
+	}
+	return netCfg.VRFName
+}
+
 // NewConfig creates a GoBGP Config from network configuration.
 // It derives addresses using the shared FRR address-derivation logic
 // and applies GoBGP-specific defaults (aggressive hold timers).
@@ -146,11 +162,6 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 	underlayIP, overlayIP, bridgeMAC, err := frr.DeriveAddresses(netCfg)
 	if err != nil {
 		return nil, fmt.Errorf("derive addresses: %w", err)
-	}
-
-	overlayVRFName := netCfg.OverlayVRFName
-	if !netCfg.OverlayVRFSet {
-		overlayVRFName = netCfg.VRFName
 	}
 
 	cfg := &Config{
@@ -163,7 +174,7 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		DNSResolvers:         netCfg.DNSResolvers,
 		BridgeName:           netCfg.BridgeName,
 		VRFName:              netCfg.VRFName,
-		OverlayVRFName:       overlayVRFName,
+		OverlayVRFName:       overlayVRFName(netCfg),
 		VRFTableID:           netCfg.VRFTableID,
 		OverlayVRFTableID:    netCfg.OverlayVRFTableID,
 		UnderlayDummyName:    netCfg.UnderlayDummyName,
@@ -190,6 +201,8 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		MinEstablishedPeers:  netCfg.BGPMinPeers,
 		Sessions:             netCfg.BGPSessions,
 		MultipathRelax:       netCfg.BGPMultipathRelax,
+		Capabilities:         netCfg.BGPCapabilities,
+		ResolveViaDefault:    netCfg.BGPDefaults == "traditional",
 		LocalAS:              netCfg.BGPLocalAS,
 		NeighborVRF:          netCfg.BGPNeighborVRF,
 		AllowASIn:            netCfg.BGPAllowASIn,

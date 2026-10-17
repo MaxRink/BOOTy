@@ -1335,6 +1335,7 @@ func applyNetworkStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"BGP_NEIGHBORS":       &cfg.Network.BGP.Neighbors,
 		"BGP_AUTH_PASSWORD":   &cfg.Network.BGP.AuthPassword,
 		"BGP_DEFAULTS":        &cfg.Network.BGP.Defaults,
+		"BGP_HOSTNAME":        &cfg.Network.BGP.Hostname,
 		"LOOPBACK_ADDRESSES":  &cfg.Network.LoopbackAddresses,
 		"BLACKHOLE_ROUTES":    &cfg.Network.BlackholeRoutes,
 		"EVPN_TYPE5_NETWORKS": &cfg.Network.EVPN.Type5Networks,
@@ -1360,26 +1361,27 @@ func applyNetworkStringVar(cfg *config.MachineConfig, key, value string) bool {
 
 func applyUint32Var(cfg *config.MachineConfig, key, value string) (bool, error) {
 	uint32Fields := map[string]*uint32{
-		"asn_server":            &cfg.Network.BGP.ASN,
-		"provision_vni":         &cfg.Network.EVPN.ProvisionVNI,
-		"leaf_asn":              &cfg.Network.EVPN.LeafASN,
-		"local_asn":             &cfg.Network.EVPN.LocalASN,
-		"VRF_TABLE_ID":          &cfg.Network.VRF.TableID,
-		"vrf_table_id":          &cfg.Network.VRF.TableID,
-		"BGP_KEEPALIVE":         &cfg.Network.BGP.Keepalive,
-		"bgp_keepalive":         &cfg.Network.BGP.Keepalive,
-		"BGP_HOLD":              &cfg.Network.BGP.Hold,
-		"bgp_hold":              &cfg.Network.BGP.Hold,
-		"BFD_TRANSMIT_MS":       &cfg.Network.BGP.BFDTransmitMS,
-		"bfd_transmit_ms":       &cfg.Network.BGP.BFDTransmitMS,
-		"BFD_RECEIVE_MS":        &cfg.Network.BGP.BFDReceiveMS,
-		"BFD_DETECT_MULTIPLIER": &cfg.Network.BGP.BFDDetectMultiplier,
-		"bfd_receive_ms":        &cfg.Network.BGP.BFDReceiveMS,
-		"BGP_REMOTE_ASN":        &cfg.Network.BGP.RemoteASN,
-		"bgp_remote_asn":        &cfg.Network.BGP.RemoteASN,
-		"BGP_LOCAL_AS":          &cfg.Network.BGP.LocalAS,
-		"BGP_CONNECT_RETRY":     &cfg.Network.BGP.ConnectRetry,
-		"OVERLAY_VRF_TABLE_ID":  &cfg.Network.VRF.OverlayTableID,
+		"asn_server":                &cfg.Network.BGP.ASN,
+		"provision_vni":             &cfg.Network.EVPN.ProvisionVNI,
+		"leaf_asn":                  &cfg.Network.EVPN.LeafASN,
+		"local_asn":                 &cfg.Network.EVPN.LocalASN,
+		"VRF_TABLE_ID":              &cfg.Network.VRF.TableID,
+		"vrf_table_id":              &cfg.Network.VRF.TableID,
+		"BGP_KEEPALIVE":             &cfg.Network.BGP.Keepalive,
+		"bgp_keepalive":             &cfg.Network.BGP.Keepalive,
+		"BGP_HOLD":                  &cfg.Network.BGP.Hold,
+		"bgp_hold":                  &cfg.Network.BGP.Hold,
+		"BFD_TRANSMIT_MS":           &cfg.Network.BGP.BFDTransmitMS,
+		"bfd_transmit_ms":           &cfg.Network.BGP.BFDTransmitMS,
+		"BFD_RECEIVE_MS":            &cfg.Network.BGP.BFDReceiveMS,
+		"BFD_DETECT_MULTIPLIER":     &cfg.Network.BGP.BFDDetectMultiplier,
+		"bfd_receive_ms":            &cfg.Network.BGP.BFDReceiveMS,
+		"BGP_REMOTE_ASN":            &cfg.Network.BGP.RemoteASN,
+		"bgp_remote_asn":            &cfg.Network.BGP.RemoteASN,
+		"BGP_LOCAL_AS":              &cfg.Network.BGP.LocalAS,
+		"BGP_CONNECT_RETRY":         &cfg.Network.BGP.ConnectRetry,
+		"BGP_GRACEFUL_RESTART_TIME": &cfg.Network.BGP.GracefulRestartTime,
+		"OVERLAY_VRF_TABLE_ID":      &cfg.Network.VRF.OverlayTableID,
 	}
 
 	if ptr, ok := uint32Fields[key]; ok {
@@ -1711,21 +1713,8 @@ func applyIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 		cfg.Network.WaitMaxAttempts = &n
 		return true, nil
 	}
-	if strict, ok := map[string]**bool{
-		"FRR_CONFIG_STRICT":          &cfg.Network.FRRStrict,
-		"NETPLAN_STRICT":             &cfg.Network.NetplanStrict,
-		"BGP_MULTIPATH_RELAX":        &cfg.Network.BGP.MultipathRelax,
-		"BGP_FAST_EXTERNAL_FAILOVER": &cfg.Network.BGP.FastExternalFailover,
-		"BGP_EBGP_REQUIRES_POLICY":   &cfg.Network.BGP.EBGPRequiresPolicy,
-		"OOB_EFI_VAR":                &cfg.Telemetry.OOBEFIVar,
-	}[key]; ok {
-		// A typo must not silently pick a value, so only booleans parse.
-		v, err := strconv.ParseBool(value)
-		if err != nil {
-			return true, fmt.Errorf("invalid %s: %w", key, err)
-		}
-		*strict = &v
-		return true, nil
+	if handled, err := applyOptionalBoolVar(cfg, key, value); handled {
+		return true, err
 	}
 	if list, ok := map[string]any{
 		"BGP_SESSIONS":        &cfg.Network.BGP.Sessions,
@@ -1740,6 +1729,30 @@ func applyIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 		if err := strictJSONVar(value, list); err != nil {
 			return true, fmt.Errorf("invalid %s: %w", key, err)
 		}
+		return true, nil
+	}
+	return false, nil
+}
+
+// applyOptionalBoolVar handles the booleans where unset differs from false.
+func applyOptionalBoolVar(cfg *config.MachineConfig, key, value string) (bool, error) {
+	if strict, ok := map[string]**bool{
+		"FRR_CONFIG_STRICT":          &cfg.Network.FRRStrict,
+		"NETPLAN_STRICT":             &cfg.Network.NetplanStrict,
+		"BGP_MULTIPATH_RELAX":        &cfg.Network.BGP.MultipathRelax,
+		"BGP_FAST_EXTERNAL_FAILOVER": &cfg.Network.BGP.FastExternalFailover,
+		"BGP_EBGP_REQUIRES_POLICY":   &cfg.Network.BGP.EBGPRequiresPolicy,
+		"BGP_GRACEFUL_RESTART":       &cfg.Network.BGP.GracefulRestart,
+		"BGP_ADDPATH_RX":             &cfg.Network.BGP.AddPathReceive,
+		"BGP_SOFTWARE_VERSION":       &cfg.Network.BGP.SoftwareVersion,
+		"OOB_EFI_VAR":                &cfg.Telemetry.OOBEFIVar,
+	}[key]; ok {
+		// A typo must not silently pick a value, so only booleans parse.
+		v, err := strconv.ParseBool(value)
+		if err != nil {
+			return true, fmt.Errorf("invalid %s: %w", key, err)
+		}
+		*strict = &v
 		return true, nil
 	}
 	return false, nil

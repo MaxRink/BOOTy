@@ -49,6 +49,9 @@ type fibWriter struct {
 	installed  map[string]*netlink.Route
 	unresolved map[netip.Addr]time.Time
 	resync     time.Duration
+	// resolveViaDefault allows a next hop that only a default route covers,
+	// like zebra "ip nht resolve-via-default" (on with traditional).
+	resolveViaDefault bool
 }
 
 func newFIBWriter(bgp *server.BgpServer, sel *fibSelector, vrfs map[int]string) *fibWriter {
@@ -293,7 +296,8 @@ func (w *fibWriter) nexthop(r *fibRoute, nh fibNexthop) (*netlink.NexthopInfo, e
 // else the gateway the kernel uses to reach it (zebra NHT).
 func (w *fibWriter) resolve(table int, nh netip.Addr) (int, netip.Addr, bool) {
 	routes, err := w.nl.RouteGetWithOptions(net.IP(nh.AsSlice()), &netlink.RouteGetOptions{VrfName: w.vrfs[table]})
-	if err == nil && len(routes) > 0 && routes[0].LinkIndex > 0 && routes[0].Type != unix.RTN_LOCAL {
+	if err == nil && len(routes) > 0 && routes[0].LinkIndex > 0 && routes[0].Type != unix.RTN_LOCAL &&
+		(w.resolveViaDefault || !w.onlyDefault(table, nh)) {
 		via := nh
 		if gw, ok := netip.AddrFromSlice(routes[0].Gw); ok && routes[0].Gw != nil {
 			via = gw.Unmap()
@@ -306,6 +310,29 @@ func (w *fibWriter) resolve(table int, nh netip.Addr) (int, netip.Addr, bool) {
 		w.log.Warn("next hop not reachable; its routes are not installed", "nexthop", nh, "table", table, "error", err)
 	}
 	return 0, netip.Addr{}, false
+}
+
+// onlyDefault reports whether no route but a default route of the table
+// covers nh.
+func (w *fibWriter) onlyDefault(table int, nh netip.Addr) bool {
+	family := netlink.FAMILY_V4
+	if nh.Is6() && !nh.Is4In6() {
+		family = netlink.FAMILY_V6
+	}
+	routes, err := w.nl.RouteListFiltered(family, &netlink.Route{Table: table}, netlink.RT_FILTER_TABLE)
+	if err != nil {
+		return false
+	}
+	for i := range routes {
+		d := routes[i].Dst
+		if d == nil {
+			continue
+		}
+		if ones, _ := d.Mask.Size(); ones > 0 && d.Contains(net.IP(nh.Unmap().AsSlice())) {
+			return false
+		}
+	}
+	return true
 }
 
 func sameRoute(a, b *netlink.Route) bool {

@@ -48,8 +48,10 @@ type Session struct {
 	BFDProfile string
 	// RouteMaps are the route-maps per activated address family.
 	RouteMaps []SessionRouteMaps
-	// EBGPRequiresPolicy is "bgp ebgp-requires-policy" of the router: on
-	// unless "no bgp ebgp-requires-policy" (the current FRR default). It
+	// EBGPRequiresPolicy is "bgp ebgp-requires-policy" of the router. The
+	// default follows "frr defaults" like FRR 10.3 (bgpd/bgp_vty.c
+	// BGP_EBGP_REQUIRES_POLICY): on for traditional, off for datacenter
+	// (also without the line, the profile of the legacy daemons file). It
 	// matters only for eBGP sessions.
 	EBGPRequiresPolicy bool
 	// BFD timers from the profile, with the FRR defaults for unset
@@ -128,7 +130,10 @@ func (c *Config) session(r *Router, n *Neighbor) (Session, error) {
 		g = findNeighbor(r, n.Group)
 	}
 	s := Session{Name: n.Name, Interface: n.Interface, Line: n.Line}
-	s.EBGPRequiresPolicy = r.EBGPRequiresPolicy == nil || *r.EBGPRequiresPolicy
+	s.EBGPRequiresPolicy = c.Defaults == ProfileTraditional
+	if r.EBGPRequiresPolicy != nil {
+		s.EBGPRequiresPolicy = *r.EBGPRequiresPolicy
+	}
 	if r.VRF != "default" {
 		s.VRF = r.VRF
 	}

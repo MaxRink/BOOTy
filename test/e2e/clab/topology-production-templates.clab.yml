@@ -2,9 +2,9 @@
 #
 # The template variant (#630 section 4.3 matrix) is selected with
 # PRODTPL_BOOTY_FS, PRODTPL_SHADOW_FRR, PRODTPL_SHADOW_SETUP,
-# PRODTPL_LEAF_SETUP and PRODTPL_NATIVE_VARS; unset means the two-uplink template. For the
-# one-uplink template, test/e2e/clab/prodtpl-variant.sh one-uplink prints
-# them. The tests read PRODTPL_VARIANT.
+# PRODTPL_LEAF_SETUP, PRODTPL_NATIVE_VARS and PRODTPL_NATIVE_VRF_VARS; unset
+# means the two-uplink template. test/e2e/clab/prodtpl-variant.sh VARIANT
+# prints them. The tests read PRODTPL_VARIANT.
 #
 # BOOTy gets the rendered bm4x-operator templates (data/fs-prodtpl-booty,
 # a copy of pkg/network/frrconf/testdata/bm4x/two-uplinks). A shadow FRR
@@ -139,7 +139,7 @@ topology:
       image: booty-gobgp-test:latest
       startup-delay: 20
       binds:
-        - data/vars-prodtpl-native-vrf:/deploy/vars:ro
+        - ${PRODTPL_NATIVE_VRF_VARS:=data/vars-prodtpl-native-vrf}:/deploy/vars:ro
       env:
         BOOTY_NO_REBOOT: "1"
 

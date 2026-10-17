@@ -2,6 +2,7 @@ package gobgp
 
 import (
 	"cmp"
+	"fmt"
 
 	apipb "github.com/osrg/gobgp/v3/api"
 
@@ -52,7 +53,7 @@ func buildNumberedPeer(cfg *Config, addr string, families []*apipb.AfiSafi) *api
 	if cfg.AuthPassword != "" {
 		peer.Conf.AuthPassword = cfg.AuthPassword
 	}
-
+	setCapabilities(peer, &cfg.Capabilities)
 	return peer
 }
 
@@ -79,7 +80,7 @@ func buildInterfacePeer(cfg *Config, iface, addr string, families []*apipb.AfiSa
 	if cfg.AuthPassword != "" {
 		peer.Conf.AuthPassword = cfg.AuthPassword
 	}
-
+	setCapabilities(peer, &cfg.Capabilities)
 	return peer
 }
 
@@ -93,6 +94,32 @@ func allFamilies() []*apipb.AfiSafi {
 			Family: &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
 		}},
 	}
+}
+
+// evpnFamilies returns only the L2VPN-EVPN address family.
+func evpnFamilies() []*apipb.AfiSafi {
+	return []*apipb.AfiSafi{
+		{Config: &apipb.AfiSafiConfig{
+			Family: &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
+		}},
+	}
+}
+
+// peerModeFamilies returns the families of the unnumbered and of the
+// numbered peers of a BGP_PEER_MODE; nil means no such peers. In dual mode
+// the numbered peers (the route reflectors) get only L2VPN-EVPN, like the
+// bm4x template ("no bgp default ipv4-unicast", only "neighbor dcgw
+// activate" in l2vpn evpn); IPv4 unicast runs on the unnumbered peers.
+func peerModeFamilies(mode network.PeerMode) (iface, numbered func() []*apipb.AfiSafi, err error) {
+	switch mode {
+	case network.PeerModeUnnumbered:
+		return allFamilies, nil, nil
+	case network.PeerModeDual:
+		return ipv4Families, evpnFamilies, nil
+	case network.PeerModeNumbered:
+		return nil, allFamilies, nil
+	}
+	return nil, nil, fmt.Errorf("unsupported peer mode: %q", mode)
 }
 
 // ipv4Families returns only IPv4 unicast address family.
@@ -144,7 +171,31 @@ func buildSessionPeer(cfg *Config, s *network.BGPSession, addr string) *apipb.Pe
 		// table, like FRR bgpd in "router bgp N vrf NAME".
 		peer.Transport.BindInterface = vrf
 	}
+	setCapabilities(peer, &cfg.Capabilities)
 	return peer
+}
+
+// setCapabilities adds the optional OPEN capabilities. GoBGP always sends
+// route refresh, the FQDN (the hostname, set from HOSTNAME), 4-octet AS
+// and extended next hop, and the software version to iBGP peers.
+func setCapabilities(p *apipb.Peer, c *network.BGPCapabilities) {
+	p.Conf.SendSoftwareVersion = c.SoftwareVersion
+	if c.GracefulRestart {
+		// Helper only, like the FRR default: the capability without
+		// address family tuples, so a peer does not keep our routes when
+		// the session ends. GoBGP then also sends long-lived graceful
+		// restart without tuples (FRR sends them with stale time 0).
+		p.GracefulRestart = &apipb.GracefulRestart{Enabled: true, HelperOnly: true, RestartTime: c.GracefulRestartTime, LonglivedEnabled: true}
+	}
+	for _, af := range p.AfiSafis {
+		if c.GracefulRestart {
+			af.MpGracefulRestart = &apipb.MpGracefulRestart{Config: &apipb.MpGracefulRestartConfig{Enabled: true}}
+			af.LongLivedGracefulRestart = &apipb.LongLivedGracefulRestart{Config: &apipb.LongLivedGracefulRestartConfig{Enabled: true}}
+		}
+		if c.AddPathReceive {
+			af.AddPaths = &apipb.AddPaths{Config: &apipb.AddPathsConfig{Receive: true}}
+		}
+	}
 }
 
 func sessionFamilies(s *network.BGPSession) []*apipb.AfiSafi {

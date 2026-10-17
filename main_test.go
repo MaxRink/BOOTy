@@ -2025,8 +2025,44 @@ func TestApplyBGPOptions(t *testing.T) {
 	t.Run("native defaults off", func(t *testing.T) {
 		n := &network.Config{}
 		applyBGPOptions(&config.BGPConfig{}, n)
-		if n.BGPInstallRoutes || n.BGPMultipathRelax || n.BGPAllowASIn != 0 {
+		if n.BGPInstallRoutes || n.BGPMultipathRelax || n.BGPAllowASIn != 0 || n.BGPHostname != "" {
 			t.Fatalf("native defaults = %+v", n)
+		}
+	})
+	t.Run("hostname", func(t *testing.T) {
+		n := &network.Config{}
+		applyBGPOptions(&config.BGPConfig{Hostname: "m-001"}, n)
+		if n.BGPHostname != "m-001" {
+			t.Fatalf("BGPHostname = %q", n.BGPHostname)
+		}
+	})
+	// The OPEN capabilities default to FRR's for the "frr defaults"
+	// profile: the software version goes to every peer with datacenter
+	// (also the default without frr.conf and BGP_DEFAULTS), to iBGP peers
+	// only with traditional. BGP_DEFAULTS wins over frr.conf; a set value
+	// wins over the profile.
+	t.Run("capabilities", func(t *testing.T) {
+		for _, tt := range []struct {
+			name, parsed, native, want string
+			version                    bool
+		}{
+			{"no profile", "", "", "datacenter", true},
+			{"frr.conf datacenter", "datacenter", "", "datacenter", true},
+			{"frr.conf traditional", "traditional", "", "traditional", false},
+			{"BGP_DEFAULTS wins", "datacenter", "traditional", "traditional", false},
+		} {
+			n := &network.Config{BGPDefaults: tt.parsed}
+			applyBGPOptions(&config.BGPConfig{Defaults: tt.native}, n)
+			want := network.BGPCapabilities{GracefulRestart: true, GracefulRestartTime: 120, AddPathReceive: true, SoftwareVersion: tt.version}
+			if n.BGPDefaults != tt.want || n.BGPCapabilities != want {
+				t.Errorf("%s: profile %q capabilities %+v, want %q %+v", tt.name, n.BGPDefaults, n.BGPCapabilities, tt.want, want)
+			}
+		}
+		n := &network.Config{}
+		applyBGPOptions(&config.BGPConfig{GracefulRestart: new(false), GracefulRestartTime: 60,
+			AddPathReceive: new(false), SoftwareVersion: new(false)}, n)
+		if want := (network.BGPCapabilities{GracefulRestartTime: 60}); n.BGPCapabilities != want {
+			t.Fatalf("set capabilities = %+v, want %+v", n.BGPCapabilities, want)
 		}
 	})
 	// The peer options are defaults: a session value wins.
@@ -2182,6 +2218,15 @@ func TestMergeNetplanConfigOverlayDevices(t *testing.T) {
 	}
 }
 
+// The "frr defaults" profile of frr.conf reaches the network config.
+func TestMergeNetplanConfigBGPDefaults(t *testing.T) {
+	dst := &network.Config{}
+	mergeNetplanConfig(dst, &network.Config{BGPDefaults: "traditional"})
+	if dst.BGPDefaults != "traditional" {
+		t.Fatalf("BGPDefaults = %q, want traditional", dst.BGPDefaults)
+	}
+}
+
 // Every overlay device setting follows the native rule on its own: a set
 // native value wins, an unset one takes the netplan value. The native
 // NoAcceptRA and EmitLLDP lists replace the netplan lists.
@@ -2331,5 +2376,18 @@ func TestSetupNetworkModeNICWait(t *testing.T) {
 	none, eight := run(-1), run(8)
 	if eight-none < 4*time.Second {
 		t.Fatalf("NIC_WAIT_SECONDS=8 took %s, -1 took %s; want several seconds more", eight, none)
+	}
+}
+
+// BGP_HOSTNAME becomes the system host name that GoBGP sends as the FQDN;
+// unset keeps it, and a failure is only logged.
+func TestSetBGPHostname(t *testing.T) {
+	var got []string
+	set := func(b []byte) error { got = append(got, string(b)); return nil }
+	setBGPHostname("", set)
+	setBGPHostname("m-001", set)
+	setBGPHostname("m-002", func([]byte) error { return errors.New("eperm") })
+	if !reflect.DeepEqual(got, []string{"m-001"}) {
+		t.Fatalf("sethostname calls = %q", got)
 	}
 }

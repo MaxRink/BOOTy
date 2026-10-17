@@ -1,8 +1,9 @@
 # Production template lab, variant "native-model": the native server runs
 # the native model of the templates: NETWORK_DEVICES (the netplan section),
 # BGP_SESSIONS with BGP_PEER_GROUPS and BFD_PROFILES (the frr.conf neighbors)
-# instead of the scalar device and peer keys. ebgp-requires-policy stays on;
-# every session has route-maps in both directions.
+# instead of the scalar device and peer keys. BGP_EBGP_REQUIRES_POLICY=false
+# matches the template's "no bgp ebgp-requires-policy" in Vrf_underlay;
+# every session has route-maps in both directions anyway.
 export IMAGE_ALLOW_INSECURE_HTTP="true"
 export IMAGE="http://172.31.250.10/images/test.img.gz"
 export HOSTNAME="native-prodtpl-e2e"
@@ -30,6 +31,7 @@ export VRF_NAME="Vrf_underlay"
 export VRF_TABLE_ID="10"
 export BRIDGE_NAME="br.provision"
 export BGP_MULTIPATH_RELAX="true"
+export BGP_EBGP_REQUIRES_POLICY="false"
 export BGP_INSTALL_ROUTES="true"
 export BGP_FAST_EXTERNAL_FAILOVER="true"
 export BLACKHOLE_ROUTES="2001:db8:40a:5481::/64"

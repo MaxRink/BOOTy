@@ -62,29 +62,38 @@ func TestParseGolden(t *testing.T) {
 	}
 }
 
-// Every statement of the production template must matter: removing any
-// single line changes the model or makes the config invalid. A line whose
-// removal changes nothing would be a statement that BOOTy silently drops.
+// Every statement of every production template fixture must matter:
+// removing any single line changes the model or makes the config invalid.
+// A line whose removal changes nothing would be a statement that BOOTy
+// silently drops.
 func TestParseMutationRemoveLine(t *testing.T) {
-	data, err := os.ReadFile("testdata/bm4x/two-uplinks/frr.conf")
-	if err != nil {
-		t.Fatal(err)
+	files, err := filepath.Glob("testdata/bm4x/*/frr.conf")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no bm4x fixtures (%v)", err)
 	}
-	base, err := Parse(data)
-	if err != nil {
-		t.Fatal(err)
-	}
-	lines := strings.Split(string(data), "\n")
-	for i, line := range lines {
-		fields := strings.Fields(line)
-		if len(fields) == 0 || strings.HasPrefix(fields[0], "!") || ignoredWhenRemoved(fields) {
-			continue
-		}
-		mutated := strings.Join(append(append([]string{}, lines[:i]...), lines[i+1:]...), "\n")
-		cfg, err := Parse([]byte(mutated))
-		if err == nil && reflect.DeepEqual(stripLines(cfg), stripLines(base)) {
-			t.Errorf("removing line %d %q changes nothing", i+1, strings.TrimSpace(line))
-		}
+	for _, file := range files {
+		t.Run(filepath.Base(filepath.Dir(file)), func(t *testing.T) {
+			data, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			base, err := Parse(data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lines := strings.Split(string(data), "\n")
+			for i, line := range lines {
+				fields := strings.Fields(line)
+				if len(fields) == 0 || strings.HasPrefix(fields[0], "!") || ignoredWhenRemoved(fields) {
+					continue
+				}
+				mutated := strings.Join(append(append([]string{}, lines[:i]...), lines[i+1:]...), "\n")
+				cfg, err := Parse([]byte(mutated))
+				if err == nil && reflect.DeepEqual(stripLines(cfg), stripLines(base)) {
+					t.Errorf("removing line %d %q changes nothing", i+1, strings.TrimSpace(line))
+				}
+			}
+		})
 	}
 }
 

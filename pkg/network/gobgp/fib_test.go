@@ -4,7 +4,9 @@ package gobgp
 
 import (
 	"context"
+	"log/slog"
 	"net"
+	"net/netip"
 	"os"
 	"runtime"
 	"slices"
@@ -205,5 +207,38 @@ func TestFIBWriterKernel(t *testing.T) {
 	<-done
 	if got := fibTestRoutes(t, h); len(got) != 0 {
 		t.Fatalf("table 1000 after stop = %q, want no BGP routes", got)
+	}
+}
+
+// A next hop that only the default route of the VRF covers is resolved
+// with zebra "ip nht resolve-via-default" (frr defaults traditional) and
+// not without it (datacenter); a more specific route resolves it in both.
+func TestFIBResolveViaDefault(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Fatal("test requires root (run with sudo)")
+	}
+	h := fibTestNS(t)
+	dl, err := h.LinkByName("dum-t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, all, _ := net.ParseCIDR("0.0.0.0/0")
+	if err := h.RouteAdd(&netlink.Route{Dst: all, Gw: net.ParseIP("10.99.0.3"), LinkIndex: dl.Attrs().Index, Table: 1000}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		viaDefault bool
+		nh         string
+		want       bool
+	}{
+		{true, "10.97.0.5", true},
+		{false, "10.97.0.5", false},
+		{false, "10.98.0.7", true},
+	} {
+		w := &fibWriter{nl: h, vrfs: map[int]string{1000: "vrf-t"}, log: slog.Default(),
+			unresolved: map[netip.Addr]time.Time{}, resolveViaDefault: tt.viaDefault}
+		if _, _, ok := w.resolve(1000, netip.MustParseAddr(tt.nh)); ok != tt.want {
+			t.Errorf("resolve-via-default %v: %s resolved %v, want %v", tt.viaDefault, tt.nh, ok, tt.want)
+		}
 	}
 }

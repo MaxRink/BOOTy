@@ -517,20 +517,19 @@ func (u *UnderlayTier) addPeers(ctx context.Context) error {
 	var added int
 	var lastErr error
 
-	switch u.cfg.PeerMode {
-	case network.PeerModeUnnumbered:
-		added, lastErr = u.addInterfacePeers(ctx, allFamilies())
-	case network.PeerModeDual:
-		added, lastErr = u.addInterfacePeers(ctx, ipv4Families())
-		n, err := u.addNumberedPeers(ctx, allFamilies())
+	iface, numbered, err := peerModeFamilies(u.cfg.PeerMode)
+	if err != nil {
+		return err
+	}
+	if iface != nil {
+		added, lastErr = u.addInterfacePeers(ctx, iface())
+	}
+	if numbered != nil {
+		n, err := u.addNumberedPeers(ctx, numbered())
 		added += n
 		if err != nil {
 			lastErr = err
 		}
-	case network.PeerModeNumbered:
-		added, lastErr = u.addNumberedPeers(ctx, allFamilies())
-	default:
-		return fmt.Errorf("unsupported peer mode: %q", u.cfg.PeerMode)
 	}
 
 	if added == 0 && lastErr != nil {
@@ -567,7 +566,6 @@ func (u *UnderlayTier) needsNICs() bool {
 // Each session's routes go to the table of its VRF, like FRR keeps one RIB
 // per "router bgp N vrf X".
 func (u *UnderlayTier) startFIBWriter() {
-	sel, vrfs := u.fibSelector(u.vrfTable)
 	// Like zebra with "linkdown" next hops: the kernel skips an ECMP member
 	// at once when its NIC loses carrier.
 	for _, err := range ignoreLinkdownRoutes("/proc/sys/net", sessionInterfaces(u.cfg.Sessions)) {
@@ -576,11 +574,20 @@ func (u *UnderlayTier) startFIBWriter() {
 	ctx, cancel := context.WithCancel(context.Background())
 	u.stopFIB = cancel
 	u.fibDone = make(chan struct{})
-	w := newFIBWriter(u.bgp, sel, vrfs)
+	w := u.buildFIBWriter(u.vrfTable)
 	go func() {
 		defer close(u.fibDone)
 		w.run(ctx)
 	}()
+}
+
+// buildFIBWriter returns the FIB writer of the sessions, with the zebra
+// "ip nht resolve-via-default" of the profile.
+func (u *UnderlayTier) buildFIBWriter(vrfTable func(string) int) *fibWriter {
+	sel, vrfs := u.fibSelector(vrfTable)
+	w := newFIBWriter(u.bgp, sel, vrfs)
+	w.resolveViaDefault = u.cfg.ResolveViaDefault
+	return w
 }
 
 // nativeTables returns the routing tables of the BGP_PEER_MODE peers and
