@@ -30,7 +30,7 @@ func TestKexecHandoffPersistsTargetWritesQEMU(t *testing.T) {
 
 	kernel := findKernel(t)
 	rawImage := createChrootCapableTestDiskImage(t, 512)
-	installKexecVerifyBoot(t, rawImage, kernel)
+	installKexecVerifyBoot(t, rawImage, kernel, "console=ttyS0 panic=1")
 	baseURL := startImageServer(t, compressGzip(t, rawImage))
 
 	targetDisk := filepath.Join(t.TempDir(), "kexec-persist.qcow2")
@@ -84,8 +84,9 @@ exit 1
 }
 
 // installKexecVerifyBoot puts a kernel, a verify initramfs and an
-// update-grub fixture that points GRUB at them into the image root.
-func installKexecVerifyBoot(t *testing.T, rawImage, kernel string) {
+// update-grub fixture that points GRUB at them, with cmdline, into the
+// image root.
+func installKexecVerifyBoot(t *testing.T, rawImage, kernel, cmdline string) {
 	t.Helper()
 
 	loopDev := strings.TrimSpace(string(runOutput(t, "setup kexec image loop device",
@@ -108,7 +109,7 @@ func installKexecVerifyBoot(t *testing.T, rawImage, kernel string) {
 set -eu
 mkdir -p /boot/grub
 printf '%s\n' 'set default=0' 'menuentry "kexec-verify" {' \
-  '  linux /boot/vmlinuz-kexec console=ttyS0 panic=1' \
+  '  linux /boot/vmlinuz-kexec ` + cmdline + `' \
   '  initrd /boot/initrd-kexec-verify.img' '}' > /boot/grub/grub.cfg
 `
 	updateGrubPath := filepath.Join(root, "usr", "sbin", "update-grub")
@@ -124,7 +125,7 @@ func buildKexecVerifyInitramfs(t *testing.T, out string) {
 	t.Helper()
 
 	dir := filepath.Join(t.TempDir(), "verify")
-	for _, d := range []string{"bin", "dev", "proc", "mnt"} {
+	for _, d := range []string{"bin", "dev", "proc", "sys", "mnt"} {
 		if err := os.MkdirAll(filepath.Join(dir, d), 0o755); err != nil {
 			t.Fatalf("mkdir verify %s: %v", d, err)
 		}
@@ -145,7 +146,7 @@ func buildKexecVerifyInitramfs(t *testing.T, out string) {
 			break
 		}
 	}
-	for _, applet := range []string{"sh", "mount", "cat", "echo", "sleep", "poweroff"} {
+	for _, applet := range []string{"sh", "mount", "cat", "echo", "sleep", "poweroff", "ls", "wc"} {
 		if err := os.Symlink("busybox", filepath.Join(dir, "bin", applet)); err != nil {
 			t.Fatalf("symlink verify applet %s: %v", applet, err)
 		}
@@ -155,6 +156,14 @@ func buildKexecVerifyInitramfs(t *testing.T, out string) {
 export PATH=/bin
 mount -t proc proc /proc
 mount -t devtmpfs devtmpfs /dev
+mount -t sysfs sysfs /sys
+echo "KEXEC-VERIFY cmdline=$(cat /proc/cmdline)"
+if [ -d /sys/firmware/efi ]; then
+	mount -t efivarfs efivarfs /sys/firmware/efi/efivars 2>/dev/null
+	echo "KEXEC-VERIFY efi=yes runtime=$(cat /sys/firmware/efi/runtime 2>/dev/null || echo unknown) efivars=$(ls /sys/firmware/efi/efivars 2>/dev/null | wc -l)"
+else
+	echo "KEXEC-VERIFY efi=no"
+fi
 i=0
 while [ ! -b /dev/vda2 ] && [ $i -lt 50 ]; do sleep 0.2; i=$((i+1)); done
 if mount -o ro /dev/vda2 /mnt; then

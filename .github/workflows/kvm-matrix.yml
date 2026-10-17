@@ -103,10 +103,12 @@ jobs:
             test_tag: e2e
             test_regex: TestTPMSmokeQEMU
             setup: ""
+          # Provisions a target and kexecs into it, under SeaBIOS and OVMF.
           - scenario: kexec
             qemu_extra: ""
             test_tag: e2e
-            test_regex: TestKexecSmokeQEMU
+            test_regex: "^TestKexecSmokeQEMU$"
+            privileged: true
             setup: ""
           - scenario: kexec-persist
             qemu_extra: ""
