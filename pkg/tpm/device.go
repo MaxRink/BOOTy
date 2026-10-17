@@ -4,10 +4,12 @@ package tpm
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
@@ -24,7 +26,7 @@ func Open() (*Device, error) {
 	for _, path := range []string{devTPMRM, devTPM} {
 		tpm, err := linuxtpm.Open(path)
 		if err == nil {
-			return &Device{tpm: tpm}, nil
+			return &Device{tpm: retryTPM{tpm}}, nil
 		}
 	}
 	return nil, errors.New("no TPM device available")
@@ -118,4 +120,32 @@ func pcrSelectSingle(index int) ([]byte, error) {
 	mask := make([]byte, 3) // fixed 3 bytes for PCR 0-23
 	mask[index/8] |= 1 << (index % 8)
 	return mask, nil
+}
+
+// Response codes after which a TPM command can be sent again unchanged
+// (TPM 2.0 Part 2, 6.6.3): TPM_RC_YIELDED, TPM_RC_TESTING, TPM_RC_RETRY.
+const (
+	rcYielded = 0x908
+	rcTesting = 0x90A
+	rcRetry   = 0x922
+)
+
+// retryTPM resends a command that the TPM could not start yet, like the
+// TSS (tpm2-tss Esys) does. swtpm answers ActivateCredential with
+// TPM_RC_RETRY first; a TPM may do so for any command.
+type retryTPM struct{ transport.TPMCloser }
+
+func (r retryTPM) Send(cmd []byte) ([]byte, error) {
+	for attempt := 0; ; attempt++ {
+		rsp, err := r.TPMCloser.Send(cmd)
+		if err != nil || len(rsp) < 10 || attempt == 10 {
+			return rsp, err //nolint:wrapcheck // transport error as is
+		}
+		switch binary.BigEndian.Uint32(rsp[6:10]) {
+		case rcYielded, rcTesting, rcRetry:
+			time.Sleep(time.Duration(attempt+1) * 10 * time.Millisecond)
+		default:
+			return rsp, nil
+		}
+	}
 }

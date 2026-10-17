@@ -1,23 +1,39 @@
 package tpm
 
-// PCR register assignments for the BOOTy provisioning pipeline.
-// These follow the TCG specification layout where possible:
+// PCR plan, following the UAPI TPM PCR registry
+// (https://uapi-group.org/specifications/specs/linux_tpm_pcr_registry/):
 //
-//	PCR 0-6:   Platform firmware (measured by hardware/firmware)
-//	PCR 7:     Secure Boot policy
-//	PCR 8-13:  BOOTy provisioning measurements
-//	PCR 14:    BOOTy identity / provisioner measurement
-//	PCR 15:    OS image measurement
+//	PCR 0-7:  firmware; read only. PCR 7 is the Secure Boot policy.
+//	PCR 8, 9: GRUB commands and files (the BOOTy kernel and initramfs).
+//	          BOOTy does not extend them; quotes include them.
+//	PCR 10:   IMA. BOOTy does not extend it.
+//	PCR 11-13: systemd-stub (UKI sections, command line, sysexts).
+//	PCR 14:   shim MokList. BOOTy does not extend it.
+//	PCR 15:   systemd machine identity and volume keys.
+//	PCR 16:   debug.
+//	PCR 23:   application support. BOOTy runtime events.
+//
+// BOOTy extends its own events (binary, configuration, image) into one
+// PCR, PCRBooty, and keeps the event order in a MeasurementLog, which the
+// verifier replays. PCR 15 is not used: after a kexec handoff the target OS
+// keeps the PCR values of the BOOTy boot, and systemd in the target expects
+// PCR 15 to hold only its own events. PCR 23 is resettable by software, so
+// a verifier must not trust PCR 23 alone. The BOOTy ISO boots through shim
+// and GRUB: the firmware measures shim and GRUB into PCR 4, and GRUB
+// measures the kernel and the initramfs (which contains BOOTy) into PCR 9
+// and its commands into PCR 8. A quote must therefore cover PCR 4, 8 and 9
+// together with PCR 23, and the verifier matches 4, 8 and 9 against the
+// expected BOOTy release before it replays the PCR 23 log. PCR 11 applies
+// only to a future UKI boot.
+// See docs/usage-security-telemetry.md#pcr-plan.
 const (
 	PCRFirmware    = 0  // Platform firmware measurements
 	PCRFirmwareCfg = 1  // Firmware configuration
-	PCRBootLoader  = 4  // Bootloader measurements
+	PCRBootLoader  = 4  // Bootloader measurements (shim, GRUB)
+	PCRGRUBCmds    = 8  // GRUB commands and kernel command line
+	PCRGRUBFiles   = 9  // Files that GRUB loads: kernel and initramfs (BOOTy)
 	PCRSecureBoot  = 7  // Secure Boot policy
-	PCRBinary      = 8  // BOOTy binary integrity
-	PCRImage       = 9  // OS image checksum
-	PCRConfig      = 10 // Provisioning configuration hash
-	PCRProvisioner = 14 // BOOTy provisioner identity
-	PCROSImage     = 15 // OS image measurement (streaming)
+	PCRBooty       = 23 // BOOTy runtime events (application support)
 )
 
 // PCRDescription returns a human-readable description for a PCR index.
@@ -31,16 +47,12 @@ func PCRDescription(pcr int) string {
 		return "bootloader"
 	case PCRSecureBoot:
 		return "secure boot policy"
-	case PCRBinary:
-		return "BOOTy binary"
-	case PCRImage:
-		return "OS image checksum"
-	case PCRConfig:
-		return "provisioning config"
-	case PCRProvisioner:
-		return "provisioner identity"
-	case PCROSImage:
-		return "OS image streaming"
+	case PCRGRUBCmds:
+		return "GRUB commands"
+	case PCRGRUBFiles:
+		return "GRUB loaded files (kernel, initramfs)"
+	case PCRBooty:
+		return "BOOTy runtime events"
 	default:
 		return "unknown"
 	}

@@ -57,10 +57,8 @@ existing bare-metal provisioners.
                      │ kexec / boot
 ┌────────────────────▼───────────────────────────────────────┐
 │ BOOTy initrd (provisioner)                                 │
-│  PCR[8] = BOOTy binary hash (self-measurement)             │
-│  PCR[9] = OS image checksum (what was written to disk)     │
-│  PCR[10] = Provisioning config hash                        │
-│  PCR[14] = Custom measurement (provisioner identity)       │
+│  PCR[23] = BOOTy events: binary, OS image checksum,        │
+│            provisioning config (docs/usage-security-telemetry.md)           │
 └────────────────────┬───────────────────────────────────────┘
                      │ success
 ┌────────────────────▼───────────────────────────────────────┐
@@ -177,7 +175,7 @@ func (o *Orchestrator) Attest(ctx context.Context) error {
         return fmt.Errorf("get attestation nonce: %w", err)
     }
 
-    quote, sig, err := o.tpm.Quote([]int{0, 1, 4, 7, 8, 9, 10, 14}, nonce)
+    quote, sig, err := o.tpm.Quote([]int{0, 1, 4, 7, 8, 9, 23}, nonce)
     if err != nil {
         return fmt.Errorf("generate TPM quote: %w", err)
     }
@@ -227,9 +225,7 @@ func (t *TPM) UnsealSecret(sealedBlob []byte) ([]byte, error) {
 # /deploy/vars
 export TPM_ENABLED="true"
 export TPM_ATTEST="true"           # Send attestation quote to CAPRF
-export TPM_PCR_IMAGE="9"           # PCR index for image hash
-export TPM_PCR_CONFIG="10"         # PCR index for config hash
-export TPM_PCR_PROVISIONER="14"    # PCR index for provisioner steps
+# BOOTy events go to PCR 23 only (docs/tpm.md); there is no PCR option.
 ```
 
 ## Required Binaries in Initramfs

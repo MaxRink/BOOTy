@@ -34,10 +34,10 @@ generation. This companion proposal adds production-grade capabilities:
 ┌─────────────────────────────────────────────────────────┐
 │ BOOTy Self-Measurement                                  │
 │                                                         │
-│  1. Hash own binary (/init) → extend PCR[14]            │
-│  2. Hash provisioning config → extend PCR[14]           │
-│  3. Stream OS image → hash while streaming → PCR[15]    │
-│  4. Hash cloud-init config if present → PCR[15]         │
+│  1. Hash own binary (/init) → extend PCR[23]            │
+│  2. Hash provisioning config → extend PCR[23]           │
+│  3. Stream OS image → hash while streaming → PCR[23]    │
+│  4. Hash cloud-init config if present → PCR[23]         │
 │  5. Generate TPM2 attestation quote                     │
 │  6. Send quote + event log to CAPRF                     │
 └──────────────────────────┬──────────────────────────────┘
@@ -67,10 +67,11 @@ import (
     "os"
 )
 
-// MeasurementPCR assignments (BOOTy convention).
+// BOOTy extends all its events into one PCR (docs/usage-security-telemetry.md): PCR 14 is
+// the shim MokList and PCR 15 belongs to systemd in the target OS.
 const (
-    PCRSelfMeasurement    = 14 // BOOTy binary + config hash
-    PCRImageMeasurement   = 15 // OS image hash
+    PCRSelfMeasurement    = 23 // BOOTy binary + config hash
+    PCRImageMeasurement   = 23 // OS image hash
 )
 
 // Measurer extends TPM PCR values with provisioning artifacts.
@@ -80,7 +81,7 @@ type Measurer struct {
 }
 
 // MeasureSelf hashes the BOOTy binary and provisioning config,
-// extending PCR[14].
+// extending PCR[23].
 func (m *Measurer) MeasureSelf(ctx context.Context) error {
     // Hash /init (BOOTy binary)
     initHash, err := hashFile("/init")
@@ -100,7 +101,7 @@ func (m *Measurer) MeasureSelf(ctx context.Context) error {
     return m.tpm.ExtendPCR(PCRSelfMeasurement, configHash)
 }
 
-// MeasureImage hashes OS image data and extends PCR[15].
+// MeasureImage hashes OS image data and extends PCR[23].
 // Called via io.TeeReader during image streaming.
 func (m *Measurer) MeasureImage(ctx context.Context, imageHash []byte) error {
     return m.tpm.ExtendPCR(PCRImageMeasurement, imageHash)
@@ -179,7 +180,7 @@ COPY --from=tools /usr/bin/tpm2_eventlog bin/tpm2_eventlog
 ### Unit Tests
 
 - `tpm/measure_test.go` — Self-measurement with `go-tpm-tools/simulator`.
-  Verify PCR[14] extended correctly after hashing test binary.
+  Verify PCR[23] extended correctly after hashing test binary.
 - `tpm/eventlog_test.go` — Event log serialization/deserialization.
 - `tpm/quote_test.go` — Quote generation with simulator. Verify quote
   covers expected PCRs and is verifiable with EK certificate.

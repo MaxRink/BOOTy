@@ -59,9 +59,9 @@ func TestMeasurementLog(t *testing.T) {
 	digest1 := HashBytes([]byte("event1"))
 	digest2 := HashBytes([]byte("event2"))
 
-	log.Add(PCRBinary, "first event", digest1)
-	log.Add(PCRBinary, "second event", digest2)
-	log.Add(PCRImage, "image event", digest1)
+	log.Add(PCRBooty, "first event", digest1)
+	log.Add(PCRBooty, "second event", digest2)
+	log.Add(PCRSecureBoot, "secure boot event", digest1)
 
 	entries := log.Entries()
 	if len(entries) != 3 {
@@ -71,9 +71,9 @@ func TestMeasurementLog(t *testing.T) {
 		t.Errorf("first entry label = %q", entries[0].Label)
 	}
 
-	digests := log.DigestsForPCR(PCRBinary)
+	digests := log.DigestsForPCR(PCRBooty)
 	if len(digests) != 2 {
-		t.Errorf("expected 2 digests for PCR %d, got %d", PCRBinary, len(digests))
+		t.Errorf("expected 2 digests for PCR %d, got %d", PCRBooty, len(digests))
 	}
 }
 
@@ -82,15 +82,15 @@ func TestReplayMeasurementLog(t *testing.T) {
 	d1 := HashBytes([]byte("boot"))
 	d2 := HashBytes([]byte("config"))
 
-	log.Add(PCRBinary, "boot measurement", d1)
-	log.Add(PCRConfig, "config measurement", d2)
+	log.Add(PCRBooty, "boot measurement", d1)
+	log.Add(PCRSecureBoot, "secure boot measurement", d2)
 
 	pcrs := ReplayMeasurementLog(log)
-	if _, ok := pcrs[PCRBinary]; !ok {
-		t.Error("missing PCR binary in replayed log")
+	if _, ok := pcrs[PCRBooty]; !ok {
+		t.Error("missing PCR BOOTy in replayed log")
 	}
-	if _, ok := pcrs[PCRConfig]; !ok {
-		t.Error("missing PCR config in replayed log")
+	if _, ok := pcrs[PCRSecureBoot]; !ok {
+		t.Error("missing PCR secure boot in replayed log")
 	}
 }
 

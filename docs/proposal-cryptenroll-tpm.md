@@ -12,7 +12,8 @@ Bind LUKS2 key slots to TPM2 PCR policies during provisioning, enabling
 unattended encrypted boot without manual passphrase entry. Uses Go `go-tpm`
 library for direct TPM2 operations (preferred), with `systemd-cryptenroll`
 binary as fallback. Configurable PCR binding (default: PCR 7 for SecureBoot
-state + PCR 14 for provisioner identity).
+state). Never bind to PCR 14: shim measures the MokList into it. BOOTy
+extends its own events into PCR 23 only, see [PCR plan](usage-security-telemetry.md#pcr-plan).
 
 ## Motivation
 
@@ -137,7 +138,7 @@ func (e *Enroller) enrollViaCryptenroll(ctx context.Context, cfg Config, existin
         pcrList[i] = fmt.Sprintf("%d", p)
     }
 
-    // systemd-cryptenroll --tpm2-device=auto --tpm2-pcrs=7+14 /dev/sda3
+    // systemd-cryptenroll --tpm2-device=auto --tpm2-pcrs=7 /dev/sda3
     cmd := exec.CommandContext(ctx, "systemd-cryptenroll",
         "--tpm2-device=auto",
         fmt.Sprintf("--tpm2-pcrs=%s", strings.Join(pcrList, "+")),

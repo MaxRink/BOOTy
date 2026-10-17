@@ -320,6 +320,15 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   timeout (#627)
 - Machine-files symlinks are recreated, never followed (#629)
 - `SKIP_TLS_VERIFY` never applies to `TOKEN_URL` or the crash upload (#589, #650)
+- `pkg/tpm` attestation (library only; provisioning does not use it yet): the
+  AK is a restricted ECDSA P-256 signing key of the endorsement hierarchy,
+  `MakeCredential` and `ActivateCredential` bind it to the EK, and
+  `VerifyQuote` checks a quote against a trusted AK, the nonce and the signed
+  PCR digest. `VerifyQuoteSignature`, which used the key carried in the
+  quote, and the `PubKeyX`, `PubKeyY` and `PCRDigest` quote fields are
+  removed. BOOTy PCR events move from PCR 8, 9, 10, 14 and 15 (GRUB, IMA,
+  shim, systemd) to PCR 23 (`PCRBooty`); the cryptenroll proposal no longer
+  binds PCR 14 (#707)
 
 ### Fixes
 
