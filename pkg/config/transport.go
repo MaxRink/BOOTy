@@ -77,6 +77,13 @@ type TransportConfig struct {
 	// Default: ""
 	ErrorURL string `yaml:"errorURL" json:"errorURL"`
 
+	// RebootURL receives the reboot-required status: BOOTy stored firmware
+	// settings that need a reset before it can finish the task, and boots
+	// the ramdisk again. CAPRF keeps (or inserts again) the boot media and
+	// does not count the reboot as a failure. See docs/sriov.md.
+	// Default: "" (BOOTy still reboots, CAPRF is not told)
+	RebootURL string `yaml:"rebootURL" json:"rebootURL"`
+
 	// SuccessURL is the endpoint to report provisioning success.
 	// Default: ""
 	SuccessURL string `yaml:"successURL" json:"successURL"`

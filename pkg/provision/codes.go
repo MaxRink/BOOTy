@@ -55,6 +55,7 @@ var failureCodes = []FailureCode{
 	{"BOOTY-HW-003", ClassHardware, "health-checks", "A health check failed."},
 	{"BOOTY-HW-004", ClassHardware, "setup-mellanox", "Mellanox NIC setup failed."},
 	{"BOOTY-HW-005", ClassHardware, "configure-sriov", "SR-IOV profile check or apply failed."},
+	{"BOOTY-HW-006", ClassEnvironment, "configure-sriov", "SR-IOV firmware changed; a verify reboot needs REBOOT_URL support in CAPRF."},
 
 	{"BOOTY-CFG-001", ClassConfig, "validate-provision-inputs", "Provisioning inputs are invalid."},
 	{"BOOTY-CFG-002", ClassConfig, "config", "The vars file or the configuration is invalid."},
@@ -130,6 +131,7 @@ const (
 	codeDiskInUse        = "BOOTY-DSK-010"
 	codeAmbiguousRoot    = "BOOTY-DSK-012"
 	codeEFIVars          = "BOOTY-EFI-002"
+	codeVerifyReboot     = "BOOTY-HW-006"
 )
 
 // sentinelCodes maps known errors to a specific code. The first match wins.
@@ -145,6 +147,7 @@ var sentinelCodes = []struct {
 	{disk.ErrInUseCheck, codeDiskInUse},
 	{disk.ErrAmbiguousRootPartition, codeAmbiguousRoot},
 	{ErrEFIVarsUnavailable, codeEFIVars},
+	{ErrVerifyRebootUnsupported, codeVerifyReboot},
 }
 
 // FailureCodes returns a copy of the code catalog.

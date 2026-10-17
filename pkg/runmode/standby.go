@@ -289,6 +289,14 @@ func (m *StandbyMode) handleProvision(ctx context.Context, cmd config.Command, c
 			provisionSucceeded = true
 			break
 		}
+		var rebootErr *provision.RebootRequiredError
+		if errors.As(provErr, &rebootErr) {
+			// The firmware change needs a reset first; the command must run
+			// again after the reboot into the ramdisk.
+			m.ack(ctx, cmd.ID, "failed", "provision command needs a reboot first ("+rebootErr.Message()+
+				"); send it again after the reboot")
+			return &commandResult{err: &RebootRequestedError{}}
+		}
 		slog.Error("hot provision failed", "error", provErr)
 		if setupErr := rescue.Setup(ctx, rescueCfg); setupErr != nil {
 			slog.Warn("rescue setup error", "error", setupErr)

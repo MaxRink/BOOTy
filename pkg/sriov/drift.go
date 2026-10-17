@@ -22,6 +22,13 @@ const (
 	StatusApplied = "applied"
 	// StatusFailed means the apply failed or is not possible.
 	StatusFailed = "failed"
+	// StatusRefusedInUse means BOOTy did not make a runtime change because
+	// the port carries the ramdisk network and the change would disrupt
+	// it. The target is not met, so it fails with onDrift fail or apply.
+	StatusRefusedInUse = "refused-in-use"
+	// StatusDeferred means a runtime setting waits for the reboot that
+	// activates a stored firmware change of the adapter.
+	StatusDeferred = "deferred"
 )
 
 // Finding levels.
@@ -46,7 +53,7 @@ type Finding struct {
 // Compliant reports whether the finding meets the profile: ok, or applied
 // (it takes effect after the reboot that BOOTy does next).
 func (f *Finding) Compliant() bool {
-	return f.Status == StatusOK || f.Status == StatusApplied
+	return f.Status == StatusOK || f.Status == StatusApplied || f.Status == StatusDeferred
 }
 
 // String formats a finding for logs and errors.
@@ -116,6 +123,9 @@ func Assign(profiles []Profile, pfs []PF) ([]Assignment, []Finding, error) {
 	}
 	return out, findings, nil
 }
+
+// Detail of an applied setting that is active at once, without a reset.
+const detailActiveNow = "active now"
 
 // Detail of a setting that BOOTy stored earlier in this boot.
 const detailStoredThisBoot = "stored in this boot; takes effect after the reboot"

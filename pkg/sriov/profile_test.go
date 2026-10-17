@@ -50,6 +50,7 @@ func TestValidateRejects(t *testing.T) {
 	}{
 		{"onDrift", func(c *Config) { c.OnDrift = "Apply" }, "SRIOV_ON_DRIFT"},
 		{"nicTools", func(c *Config) { c.NICTools = "mft" }, "NIC_TOOLS"},
+		{"verifyReboot", func(c *Config) { c.VerifyReboot = "yes" }, "SRIOV_VERIFY_REBOOT"},
 		{"duplicate", func(c *Config) { c.Profiles = append(c.Profiles, c.Profiles[0]) }, "defined twice"},
 		{"name", func(c *Config) { c.Profiles[0].Name = "" }, "name must be"},
 		{"name chars", func(c *Config) { c.Profiles[0].Name = "a b" }, "name must be"},
@@ -136,6 +137,13 @@ func TestDefaults(t *testing.T) {
 	c.NICTools = ToolsKernel
 	if c.Tools() != ToolsKernel {
 		t.Fatal("nicTools ignored")
+	}
+	if !c.VerifyRebootEnabled() {
+		t.Fatal("verify reboot is on by default")
+	}
+	c.VerifyReboot = VerifyRebootOff
+	if c.VerifyRebootEnabled() {
+		t.Fatal("verifyReboot off ignored")
 	}
 }
 

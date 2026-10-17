@@ -10,6 +10,9 @@ const (
 	StatusInit    Status = "init"
 	StatusSuccess Status = "success"
 	StatusError   Status = "error"
+	// StatusRebootRequired tells the server that BOOTy reboots into the
+	// ramdisk again before it finishes the task (REBOOT_URL).
+	StatusRebootRequired Status = "reboot-required"
 )
 
 // Crash artifact collection defaults.

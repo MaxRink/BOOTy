@@ -4,13 +4,19 @@ package sriov
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
+
+	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 )
 
 // netdevsim is a netdevsim device: a software NIC with devlink, an eSwitch
@@ -187,5 +193,133 @@ func TestNetdevsimDiscover(t *testing.T) {
 	}
 	if vfs < 2 {
 		t.Fatalf("rtnetlink VFs: %+v", pfs)
+	}
+}
+
+func netdevsimReconcile(t *testing.T, n *netdevsim, rt RuntimeSettings) *Result {
+	t.Helper()
+	waitPFs(t, n, 1)
+	p := Profile{Name: "nsim", Match: Match{Driver: "netdevsim"}, Runtime: rt}
+	r := &Reconciler{Config: &Config{Profiles: []Profile{p}, OnDrift: OnDriftFail},
+		Discover: func() ([]PF, error) { return netdevsimPFs(t, n), nil },
+		Runtime:  NewKernelRuntime()}
+	res, err := r.Run(t.Context())
+	if err != nil {
+		t.Fatalf("reconcile: %v\nfindings: %+v", err, res.Findings)
+	}
+	return res
+}
+
+// TestNetdevsimRuntimeVFAttributes creates VFs and sets every VF attribute
+// through sysfs and rtnetlink, keeps them, and reads them back.
+func TestNetdevsimRuntimeVFAttributes(t *testing.T) {
+	n := newNetdevsim(t, 4711, 1)
+	n.setMaxVFs(t, 8)
+	netdevsimReconcile(t, n, RuntimeSettings{NumVFs: ptr(2), Handoff: HandoffKeep,
+		VFDefaults: VFSettings{Trust: ptr(true), SpoofChk: ptr(false), LinkState: "disable"},
+		VFs: []VFOverride{{Index: 1, MAC: "02:00:00:00:47:11",
+			VFSettings: VFSettings{VLAN: ptr(100), QoS: ptr(3), MaxTxRate: ptr(1000), SpoofChk: ptr(true)}}}})
+
+	pfs := netdevsimPFs(t, n)
+	if len(pfs) != 1 || pfs[0].NumVFs != 2 || len(pfs[0].VFs) != 2 {
+		t.Fatalf("PF after apply: %+v", pfs)
+	}
+	vf0, vf1 := findVF(pfs[0].VFs, 0), findVF(pfs[0].VFs, 1)
+	if !vf0.Trust || vf0.SpoofChk || vf0.LinkState != "disable" {
+		t.Errorf("VF 0 = %+v", vf0)
+	}
+	if vf1.MAC != "02:00:00:00:47:11" || vf1.VLAN != 100 || vf1.QoS != 3 || vf1.MaxTxRate != 1000 || !vf1.SpoofChk || !vf1.Trust {
+		t.Errorf("VF 1 = %+v", vf1)
+	}
+}
+
+// TestNetdevsimRuntimeSwitchdevAndReset switches the eSwitch to switchdev
+// with VFs, checks the result, and lets the handoff reset restore legacy
+// mode without VFs.
+func TestNetdevsimRuntimeSwitchdevAndReset(t *testing.T) {
+	n := newNetdevsim(t, 4712, 1)
+	n.setMaxVFs(t, 8)
+	res := netdevsimReconcile(t, n, RuntimeSettings{NumVFs: ptr(2), EswitchMode: EswitchSwitchdev})
+	var handoff bool
+	for _, f := range res.Findings {
+		if f.Setting == SettingHandoff {
+			handoff = f.Status == StatusOK
+		}
+	}
+	if !handoff {
+		t.Fatalf("no successful handoff reset: %+v", res.Findings)
+	}
+	pfs := netdevsimPFs(t, n)
+	if len(pfs) != 1 || pfs[0].NumVFs != 0 || pfs[0].Eswitch.Mode != EswitchLegacy {
+		t.Fatalf("after the handoff reset: %+v", pfs)
+	}
+}
+
+// TestNetdevsimInUseRefusesChanges is review finding 7: a port with a
+// global address carries ramdisk traffic, so the real kernel check
+// refuses the eSwitch and the VF count change and leaves the port alone.
+func TestNetdevsimInUseRefusesChanges(t *testing.T) {
+	n := newNetdevsim(t, 4714, 1)
+	n.setMaxVFs(t, 8)
+	pfs := waitPFs(t, n, 1)
+	link, err := netlink.LinkByName(pfs[0].Interface)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, err := netlink.ParseAddr("192.0.2.47/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := netlink.AddrAdd(link, addr); err != nil {
+		t.Fatalf("add address: %v", err)
+	}
+	if inUse, reason := NewKernelRuntime().InUse(&pfs[0]); !inUse || !strings.Contains(reason, "192.0.2.47/24") {
+		t.Fatalf("InUse = %v %q", inUse, reason)
+	}
+	p := Profile{Name: "nsim", Match: Match{Driver: "netdevsim"}, Runtime: RuntimeSettings{NumVFs: ptr(2), EswitchMode: EswitchSwitchdev}}
+	r := &Reconciler{Config: &Config{Profiles: []Profile{p}, OnDrift: OnDriftWarn},
+		Discover: func() ([]PF, error) { return netdevsimPFs(t, n), nil }, Runtime: NewKernelRuntime()}
+	res, err := r.Run(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	refused := 0
+	for _, f := range res.Findings {
+		// netdevsim is not in the driver table: the VF count is refused too.
+		if (f.Setting == SettingNumVFs || f.Setting == SettingEswitch) && f.Status == StatusRefusedInUse && strings.Contains(f.Detail, "disrupt the ramdisk network") {
+			refused++
+		}
+	}
+	after := waitPFs(t, n, 1)
+	if refused != 2 || after[0].NumVFs != 0 || after[0].Eswitch.Mode != EswitchLegacy {
+		t.Fatalf("refused %d, port after %+v, findings %+v", refused, after[0], res.Findings)
+	}
+}
+
+// TestNetdevsimInUseTCPSocket checks the sock_diag path against the real
+// kernel: a TCP socket bound to the port (like a BGP unnumbered session)
+// marks it as in use, without any address on it.
+func TestNetdevsimInUseTCPSocket(t *testing.T) {
+	n := newNetdevsim(t, 4715, 1)
+	pfs := waitPFs(t, n, 1)
+	if inUse, reason := NewKernelRuntime().InUse(&pfs[0]); inUse {
+		t.Fatalf("idle port in use: %s", reason)
+	}
+	name := pfs[0].Interface
+	lc := net.ListenConfig{Control: func(_, _ string, c syscall.RawConn) error {
+		var serr error
+		if err := c.Control(func(fd uintptr) { serr = unix.BindToDevice(int(fd), name) }); err != nil {
+			return err
+		}
+		return serr
+	}}
+	ln, err := lc.Listen(t.Context(), "tcp6", "[::]:0")
+	if err != nil {
+		t.Fatalf("listen on %s: %v", name, err)
+	}
+	defer ln.Close()
+	inUse, reason := NewKernelRuntime().InUse(&pfs[0])
+	if !inUse || !strings.Contains(reason, "TCP session") {
+		t.Fatalf("socket bound to %s: in use %v %q", name, inUse, reason)
 	}
 }

@@ -4,6 +4,7 @@ package runmode
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -33,6 +34,12 @@ func (m *ProvisionMode) Run(ctx context.Context) error {
 			m.succeeded = true
 			m.firmwareChanged = orch.FirmwareChanged()
 			return provisionComplete(m.firmwareChanged, m.deps.Cfg.PowerOffOnSuccess())
+		}
+		var rebootErr *provision.RebootRequiredError
+		if errors.As(err, &rebootErr) {
+			// BOOTy boots the ramdisk again (verify reboot); no rescue.
+			slog.Warn("provisioning stopped for a reboot into the ramdisk", "status", rebootErr.Message())
+			return &RebootRequestedError{}
 		}
 		slog.Error("provisioning failed", "error", err)
 

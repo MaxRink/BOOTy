@@ -104,11 +104,7 @@ func scopeKey(pf *PF, setting string) string {
 	if adapterScoped(setting) {
 		return "adapter " + adapterKey(pf)
 	}
-	port := pf.PhysPortName
-	if port == "" {
-		port = pf.MAC
-	}
-	return "port " + pf.Bus + "/" + pf.PCIAddress + "/" + port
+	return "port " + portKey(pf)
 }
 
 // adapterConflicts finds the adapter-wide settings that profiles of ports

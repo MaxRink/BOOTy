@@ -180,11 +180,147 @@ report (`ERROR_URL`) names the `pending-reset` settings.
 
 BOOTy logs a summary line `SR-IOV compliance` with the finding counts.
 
+### Runtime settings
+
+Runtime settings do not survive the kexec or the reboot into the installed
+OS. BOOTy applies them in the ramdisk to prove that the PF ports can run
+them, checks the result, and by default restores the state from before:
+
+1. Group the PF ports by device (devlink handle): ports of one device share
+   `sriov_numvfs` and the eSwitch. Two ports of a device that want
+   different values fail.
+2. On a port the ramdisk uses, BOOTy refuses the changes that would
+   disrupt the provisioning network and its BGP sessions:
+   - every eSwitch change: mlx5 replaces the PF netdev by the uplink
+     representor in switchdev mode;
+   - a VF count change on a driver that resets the PF for it. Per driver
+     (Linux 6.12 source):
+
+     | Driver | `sriov_configure` | VF count on a port in use |
+     |--------|-------------------|---------------------------|
+     | `mlx5_core` | enables the legacy eSwitch and `pci_enable_sriov`; the PF netdev stays up. With a hardware LAG (the port has a bond master), `mlx5_eswitch_enable` toggles the LAG on the first VFs (`mlx5_lag_disable_change`) | allowed, refused on a bonded port |
+     | `ice` | `ice_ena_vfs` / `ice_free_vfs` change only VF resources | allowed |
+     | `igb` | `igb_sriov_reinit` closes and opens the PF | refused |
+     | `ixgbe` | `ixgbe_sriov_reinit` reinitializes the PF | refused |
+     | `i40e` | resets and rebuilds the PF when it turns VEB mode on (first VFs) or off (no VFs) | refused |
+     | any other | not checked | refused |
+
+     `SRIOV_UPLINK_VF_DRIVERS` (YAML `provision.sriov.uplinkVFDrivers`)
+     replaces the list of allowed drivers. On T-CaaS bm4x the ConnectX-6
+     uplinks are the SR-IOV PFs, so `mlx5_core` must stay in it.
+
+     Runbook, T-CaaS bm4x: a profile with `eswitchMode: switchdev` on the
+     ConnectX uplinks always ends `refused-in-use` and fails the run with
+     `onDrift` `fail` or `apply`. Use `onDrift: warn` for such a profile,
+     or leave the eSwitch mode to the operator or the DRA driver and set
+     only `numVFs` and the VF attributes.
+
+   A refused setting is `refused-in-use`, and the VF findings of a refused
+   VF count are too. The target is not met, so with `onDrift` `fail` or
+   `apply` the run fails, and with `warn` it is logged. A setting whose
+   target is already met needs no change and is never refused.
+
+   BOOTy decides "in use" from its own network config first: the
+   interfaces the stack really uses. GoBGP peers on the interfaces of its
+   unnumbered sessions (frr.conf `neighbor X interface`, `BGP_SESSIONS`),
+   else on `BGP_INTERFACES`, else on every physical NIC; the FRR stack
+   peers on every physical NIC, also with `BGP_INTERFACES`; the static
+   interface (without one, the first physical NIC), bond members, VLAN
+   parents, netplan ethernets and set-name targets also count, with globs
+   resolved against the links of the host. The kernel state adds a master
+   device, a VLAN or other link on top, an address other than IPv6
+   link-local, a TCP socket bound to the port (sock_diag, when the
+   `inet_diag` and `tcp_diag` modules are there) and a unicast route
+   through it. BOOTy never connects to a peer to find out: against a peer
+   with graceful restart, a new connection from an established neighbor
+   can reset the live session.
+3. eSwitch mode through devlink (`DEVLINK_CMD_ESWITCH_SET`), with the VFs
+   off first.
+4. `sriov_numvfs` through `/sys/bus/<bus>/devices/<address>/sriov_numvfs`,
+   through 0 when the count changes.
+5. VF attributes through rtnetlink on the PF netdev, for each VF below
+   `numVFs`: `vfDefaults` merged with the `vfs[]` entry of the index. MAC,
+   VLAN and QoS, min and max rate, spoof check, link state and trust, in
+   the order of `ip link set <pf> vf N`.
+6. Read the ports again and compare `eswitchMode`, `numVFs` and each VF
+   (`vfs[N]`, with the wanted and the read attributes). BOOTy finds the
+   device and its netdev by bus, PCI address and port (`phys_port_name`,
+   else the MAC), never by the interface name: a switchdev change
+   re-registers the PF netdev, which can then have another name.
+7. `handoff: reset` (the default) turns the VFs off, restores the eSwitch
+   mode if BOOTy changed it and restores an earlier VF count, then checks
+   it (`handoff`). `handoff: keep` leaves the state, for modes in which the
+   ramdisk keeps running (standby, agent).
+
+When BOOTy stored a change of `sriovEnabled`, `maxVFs` or `linkType` of
+the adapter in the same run, `sriov_totalvfs` and the link type are still
+the old ones, so creating the VFs now would fail. The runtime settings of
+that adapter are `deferred` (logged as a warning) and BOOTy makes a
+[verify reboot](#verify-reboot) before any disk change; the next boot of
+the ramdisk checks them for real. Other stored firmware changes, such as
+`CQE_COMPRESSION` alone, do not defer anything: the runtime settings are
+checked in the same run, and the handoff reboots instead of kexec.
+
+### Verify reboot
+
+A verify reboot stops the task at `configure-sriov`, before the disk is
+touched, and boots the BOOTy ramdisk again:
+
+1. BOOTy posts the status `reboot-required` to `REBOOT_URL` (YAML
+   `transport.rebootURL`). The body is one line of space-separated tokens,
+   values without spaces:
+
+   ```text
+   reboot-required reason=sriov-firmware adapters=0000:3b:00,0000:5e:00 settings=maxVFs,sriovEnabled
+   ```
+
+   The first token is always `reboot-required`, then `reason=<token>`
+   (today only `sriov-firmware`), then optional `key=value` tokens: here
+   the adapters (PCI slots) and the stored settings that need the reset.
+   CAPRF arms the boot media again before it answers 2xx, so BOOTy waits
+   for a 2xx answer: it retries every 2 s for at most 30 s. Without a 2xx
+   it reboots anyway and logs an error, because the host may then boot the
+   disk instead of BOOTy.
+2. BOOTy reboots (warm), without the error status, without rescue
+   handling and without a failure count.
+3. In the next boot the journal is gone, the stored values are active
+   (`ok`), the runtime settings are applied and checked, and the task goes
+   on. A setting that still is not active is `pending-reset` (see
+   [Cold power cycle](#cold-power-cycle)).
+
+CAPRF must, on `reboot-required`:
+
+- keep the boot media inserted, or insert it again when it ejected the
+  media at the `init` callback, so the host boots BOOTy again;
+- not count the reboot as a failure and not power-cycle the host, and
+  expect a second `init` callback of the same task;
+- keep the task timeout running across both boots, or extend it.
+
+Without `REBOOT_URL` BOOTy does not reboot: the run fails with the error
+`sriov-verify-reboot-unsupported: SR-IOV firmware changed; a verify reboot
+needs REBOOT_URL support in CAPRF`. A plain reboot could boot the old OS
+in the middle of the task (CAPRF ejects the media at `init`), whose
+compute profile can write `NUM_OF_VFS` again, and the task would stall.
+`SRIOV_VERIFY_REBOOT=off` (YAML `provision.sriov.verifyReboot`) skips the
+verify reboot: the run goes on to the handoff, which reboots instead of
+kexec, and the deferred runtime settings are not checked (a warning).
+
+CAPRF should cap repeated `reboot-required` statuses of the same task (for
+example two), so a firmware setting that never becomes active cannot
+reboot the host forever; BOOTy reports `pending-reset` for it on the next
+boot. In standby mode a `provision` command that needs the verify
+reboot is acknowledged as `failed` with the same status line; send it
+again after the reboot.
+
+Runtime findings are otherwise `ok`, `failed` or `refused-in-use`. `onDrift` `warn` logs a failure,
+`fail` and `apply` stop the run. The runtime settings use only kernel
+interfaces, so they work on every driver that implements them: `mlx5_core`,
+`ice`, `i40e`, `ixgbe`, `bnxt_en`, `qede`, `cxgb4`, `sfc` and `igb`. In
+switchdev mode, mlx5 does not take VLAN, QoS, trust and spoof check through
+the PF netdev; those fail with the driver error.
+
 `provision.sriov` is always decoded strictly: an unknown key fails even
 when the rest of the YAML or JSON config is not loaded strictly.
-
-This version does not apply runtime settings; a profile with runtime
-settings reports them as `unverified`.
 
 ## Handoff contract
 
@@ -195,12 +331,20 @@ runs the representors and tc-flower offload.
 
 BOOTy guarantees at the handoff, for every PF port:
 
-1. The inventory has the `sriov` report of the port in the state at the
-   handoff: with SR-IOV profiles, `configure-sriov` sends the inventory
-   again after its changes (`INVENTORY_ENABLED=true`).
-2. BOOTy never leaves VFs or a switchdev eSwitch behind that it created:
-   the installed OS starts with the state that the NIC firmware and the OS
-   driver defaults give (`sriovNumVFs` 0, eSwitch `legacy`).
+1. The inventory has the `sriov` report of the port: with SR-IOV
+   profiles, `configure-sriov` sends the inventory again after its runtime
+   changes (`INVENTORY_ENABLED=true`). Firmware values that BOOTy stored in
+   the same run still show the old active values (`sriovTotalVFs`,
+   `linkType`) until the reboot; after a verify reboot the inventory of the
+   next boot has the new values.
+2. BOOTy never leaves VFs or a switchdev eSwitch behind that it created
+   (`handoff: reset`, the default): the installed OS starts with the state
+   that the NIC firmware and the OS driver defaults give (`sriovNumVFs` 0,
+   eSwitch `legacy`). With profiles, the runtime settings of every matched
+   PF port worked in the ramdisk with the firmware values of the handoff,
+   or the run failed: when a stored firmware change affects them, the
+   [verify reboot](#verify-reboot) checks them in the next boot before the
+   task goes on.
 3. A firmware-level setting that BOOTy changed is active: BOOTy reboots
    instead of kexec after the change, so `sriovTotalVFs`, the link type and
    the SR-IOV enable are the new values in the installed OS.

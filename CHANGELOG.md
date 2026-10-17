@@ -361,6 +361,26 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   `configure-sriov` step checks the firmware settings against the stored and
   the active values and warns, fails or applies per `SRIOV_ON_DRIFT`;
   `NIC_TOOLS` limits the tools
+- `configure-sriov` applies the runtime settings of the SR-IOV profiles in
+  the ramdisk through generic kernel interfaces (`sriov_numvfs` in sysfs, the
+  devlink eSwitch mode, the rtnetlink VF attributes), checks them, and
+  restores the state before the handoff (`runtime.handoff: reset`, the
+  default). It never changes the eSwitch of a port the ramdisk network uses
+- The SR-IOV in-use guard refuses VF count changes on a port the ramdisk
+  network uses only for drivers that reset the PF for them (igb, ixgbe,
+  i40e and unknown drivers); mlx5_core and ice are allowed, so the T-CaaS
+  ConnectX uplinks can be checked. Refused settings are `refused-in-use`.
+  `SRIOV_UPLINK_VF_DRIVERS` replaces the driver list. On an mlx5 port with
+  a bond master (hardware LAG) the VF count change is refused too, because
+  the first VFs toggle the LAG
+- `REBOOT_URL` and the `reboot-required` status: when `configure-sriov`
+  stored SR-IOV enable, VF limit or link type changes that the runtime
+  settings depend on, BOOTy reports `reboot-required reason=sriov-firmware
+  adapters=<slots> settings=<names>` and boots the ramdisk again before any
+  disk change, to check the runtime settings with the new firmware values.
+  It waits up to 30 s for the 2xx of that status. Without `REBOOT_URL` the
+  run fails (`sriov-verify-reboot-unsupported`); `SRIOV_VERIFY_REBOOT=off`
+  hands off without the check
 
 ### Security
 

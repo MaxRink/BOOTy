@@ -1024,6 +1024,9 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (_ network
 	if err != nil {
 		return nil, err
 	}
+	// SR-IOV changes must leave the interfaces of this network alone; the
+	// static interface of a netplan match is known from here on.
+	network.RecordUsedInterfaces(netCfg)
 
 	// Priority: GoBGP > FRR > Static > DHCP.
 	if netCfg.IsGoBGPMode() {

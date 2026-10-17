@@ -25,6 +25,7 @@ step (step `*`). Any other error gets the code of its step.
 | `BOOTY-HW-003` | hardware | `health-checks` | A health check failed. |
 | `BOOTY-HW-004` | hardware | `setup-mellanox` | Mellanox NIC setup failed. |
 | `BOOTY-HW-005` | hardware | `configure-sriov` | SR-IOV profile check or apply failed. |
+| `BOOTY-HW-006` | environment | `configure-sriov` | SR-IOV firmware changed; a verify reboot needs REBOOT_URL support in CAPRF. |
 | `BOOTY-CFG-001` | config | `validate-provision-inputs` | Provisioning inputs are invalid. |
 | `BOOTY-CFG-002` | config | `config` | The vars file or the configuration is invalid. |
 | `BOOTY-IMG-001` | permanent | `verify-image` | Image signature verification failed. |

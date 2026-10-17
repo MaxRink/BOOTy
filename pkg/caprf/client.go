@@ -321,6 +321,8 @@ func (c *Client) ReportStatus(ctx context.Context, status config.Status, message
 		url = c.cfg.Transport.SuccessURL
 	case config.StatusError:
 		url = c.cfg.Transport.ErrorURL
+	case config.StatusRebootRequired:
+		url = c.cfg.Transport.RebootURL
 	default:
 		return fmt.Errorf("unknown status: %s", status)
 	}

@@ -64,6 +64,15 @@ type Config struct {
 	// NICTools are the tool classes BOOTy may use (NIC_TOOLS): kernel,
 	// opensource (default) or vendor.
 	NICTools string `yaml:"nicTools,omitempty" json:"nicTools,omitempty"`
+	// VerifyReboot is the verify reboot after stored firmware changes that
+	// the runtime settings depend on (SRIOV_VERIFY_REBOOT): on (default)
+	// boots the ramdisk again to check them and needs REBOOT_URL; off goes
+	// on to the handoff without that check.
+	VerifyReboot string `yaml:"verifyReboot,omitempty" json:"verifyReboot,omitempty"`
+	// UplinkVFDrivers are the drivers that may change the VF count of a
+	// port the ramdisk network uses (SRIOV_UPLINK_VF_DRIVERS); empty uses
+	// DefaultUplinkVFDrivers (mlx5_core, ice).
+	UplinkVFDrivers []string `yaml:"uplinkVFDrivers,omitempty" json:"uplinkVFDrivers,omitempty"`
 }
 
 // Profile is the desired SR-IOV state of the PF ports it matches. A host
@@ -184,6 +193,14 @@ func (c *Config) Validate() error {
 	if err := oneOf("provision.sriov.nicTools (NIC_TOOLS)", c.NICTools, ToolsKernel, ToolsOpenSource, ToolsVendor); err != "" {
 		errs = append(errs, err)
 	}
+	if err := oneOf("provision.sriov.verifyReboot (SRIOV_VERIFY_REBOOT)", c.VerifyReboot, VerifyRebootOn, VerifyRebootOff); err != "" {
+		errs = append(errs, err)
+	}
+	for _, d := range c.UplinkVFDrivers {
+		if !driverRe.MatchString(d) {
+			errs = append(errs, fmt.Sprintf("provision.sriov.uplinkVFDrivers (SRIOV_UPLINK_VF_DRIVERS) %q is not a driver name", d))
+		}
+	}
 	seen := map[string]bool{}
 	for i := range c.Profiles {
 		p := &c.Profiles[i]
@@ -211,6 +228,27 @@ func (c *Config) DriftAction(p *Profile) string {
 	}
 	return OnDriftWarn
 }
+
+// UplinkVFDriverList returns the drivers that may change the VF count of
+// a port in use.
+func (c *Config) UplinkVFDriverList() []string {
+	if len(c.UplinkVFDrivers) > 0 {
+		return c.UplinkVFDrivers
+	}
+	return DefaultUplinkVFDrivers
+}
+
+// VerifyRebootEnabled reports whether the verify reboot is on (the
+// default).
+func (c *Config) VerifyRebootEnabled() bool {
+	return c.VerifyReboot != VerifyRebootOff
+}
+
+// Values of Config.VerifyReboot.
+const (
+	VerifyRebootOn  = "on"
+	VerifyRebootOff = "off"
+)
 
 // Tools returns the allowed tool class.
 func (c *Config) Tools() string {
