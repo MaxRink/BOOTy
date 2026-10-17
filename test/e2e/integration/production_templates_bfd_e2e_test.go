@@ -139,13 +139,13 @@ func TestProdTplBFDFailover(t *testing.T) {
 	for _, node := range prodtplServers {
 		ctx, cancel := context.WithTimeout(context.Background(), prodtplTimeout)
 		port := node.leafPorts[0]
-		waitRoutes(t, node, prodtplRoutesVia("ens1f0np0", "ens1f1np1"))
+		waitRoutes(t, node, prodtplRoutesVia(prodtplUplinks...))
 		start := time.Now()
 		if out, err := prodtplExec(ctx, prodtplLeaf, "tc", "qdisc", "add", "dev", port, "root", "netem", "loss", "100%"); err != nil {
 			cancel()
 			t.Fatalf("leaf %s loss: %v\n%s", port, err, out)
 		}
-		want := prodtplRoutesVia("ens1f1np1")
+		want := prodtplRoutesVia(prodtplUplinks[1:]...)
 		for {
 			got, err := prodtplRoutes(ctx, node)
 			if err == nil && reflect.DeepEqual(got, want) {
@@ -164,7 +164,7 @@ func TestProdTplBFDFailover(t *testing.T) {
 			t.Fatalf("leaf %s restore: %v\n%s", port, err, out)
 		}
 		cancel()
-		d := waitRoutesWithin(t, node, prodtplRoutesVia("ens1f0np0", "ens1f1np1"), maxRestore)
+		d := waitRoutesWithin(t, node, prodtplRoutesVia(prodtplUplinks...), maxRestore)
 		t.Logf("%s: ECMP back %s after the leaf sends again", node.name, d.Round(10*time.Millisecond))
 	}
 }
@@ -184,13 +184,13 @@ func TestProdTplCarrierLossPastBFD(t *testing.T) {
 					t.Fatalf("leaf %s %s: %v\n%s", port, state, err, out)
 				}
 			}
-			waitRoutes(t, node, prodtplRoutesVia("ens1f0np0", "ens1f1np1"))
+			waitRoutes(t, node, prodtplRoutesVia(prodtplUplinks...))
 			link("down")
 			t.Cleanup(func() { link("up") })
-			waitRoutesWithin(t, node, prodtplRoutesVia("ens1f1np1"), 5*time.Second)
+			waitRoutesWithin(t, node, prodtplRoutesVia(prodtplUplinks[1:]...), 5*time.Second)
 			time.Sleep(3 * time.Second) // past the 900 ms BFD detection time
 			link("up")
-			d := waitRoutesWithin(t, node, prodtplRoutesVia("ens1f0np0", "ens1f1np1"), maxRestore)
+			d := waitRoutesWithin(t, node, prodtplRoutesVia(prodtplUplinks...), maxRestore)
 			t.Logf("%s: ECMP back %s after the carrier came back", node.name, d.Round(10*time.Millisecond))
 		})
 	}

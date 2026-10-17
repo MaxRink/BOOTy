@@ -1,0 +1,42 @@
+# Production template lab, variant "native-model": the native server runs
+# the native model of the templates: NETWORK_DEVICES (the netplan section),
+# BGP_SESSIONS with BGP_PEER_GROUPS and BFD_PROFILES (the frr.conf neighbors)
+# instead of the scalar device and peer keys. ebgp-requires-policy stays on;
+# every session has route-maps in both directions.
+export IMAGE_ALLOW_INSECURE_HTTP="true"
+export IMAGE="http://172.31.250.10/images/test.img.gz"
+export HOSTNAME="native-prodtpl-e2e"
+export TOKEN="e2e-prodtpl-native-token"
+export INSECURE_TRANSPORT="true"
+export MODE="standby"
+export MIN_DISK_SIZE_GB="1"
+export LOG_URL="http://172.31.250.10/log"
+export INIT_URL="http://172.31.250.10/status/init"
+export ERROR_URL="http://172.31.250.10/status/error"
+export SUCCESS_URL="http://172.31.250.10/status/success"
+export DEBUG_URL="http://172.31.250.10/debug"
+export HEARTBEAT_URL="http://172.31.250.10/status/heartbeat"
+export COMMANDS_URL="http://172.31.250.10/commands"
+export NETWORK_MODE="gobgp"
+export asn_server="4210000017"
+export underlay_ip="192.0.2.19"
+export provision_vni="3000"
+export EVPN_RT_IMPORT="65169:3000"
+export EVPN_RT_EXPORT="65169:3000"
+export BGP_ROUTE_MAPS='[{"name":"TAG-FABRIC-IN","entries":[{"seq":10,"setLocalPreference":90,"setCommunities":["65169:200"],"setCommunityAdditive":true}]},{"name":"DENY-TAG-FABRIC-OUT","entries":[{"seq":10,"deny":true,"matchCommunity":"cm-received-fabric"},{"seq":20}]}]'
+export BGP_COMMUNITY_LISTS='[{"name":"cm-received-fabric","entries":[{"communities":["65169:200"]}]}]'
+export EVPN_TYPE5_ONLY="true"
+export VRF_NAME="Vrf_underlay"
+export VRF_TABLE_ID="10"
+export BRIDGE_NAME="br.provision"
+export BGP_MULTIPATH_RELAX="true"
+export BGP_INSTALL_ROUTES="true"
+export BGP_FAST_EXTERNAL_FAILOVER="true"
+export BLACKHOLE_ROUTES="2001:db8:40a:5481::/64"
+export EVPN_TYPE5_NETWORKS="2001:db8:40a:5481::19/128,2001:db8:40a:5481::/64"
+export IP_FORWARDING="false"
+export NETWORK_DEVICES='{"version":2,"ethernets":{"ens1f0np0":{"accept-ra":false,"emit-lldp":true,"link-local":["ipv6"],"mtu":9100,"ipv6-address-generation":"eui64"},"ens1f1np1":{"accept-ra":false,"emit-lldp":true,"link-local":["ipv6"],"mtu":9100,"ipv6-address-generation":"eui64"},"lo":{"addresses":["2001:db8:40a:5481::19/128"]}},"vrfs":{"Vrf_underlay":{"table":10,"interfaces":["ens1f0np0","ens1f1np1","dum.underlay"]}},"dummy-devices":{"dum.underlay":{"addresses":["192.0.2.19/32"],"mtu":9100}},"tunnels":{"vx.3000":{"mode":"vxlan","mtu":9000,"link-local":[],"link":"dum.underlay","id":3000,"local":"192.0.2.19","macaddress":"02:54:c0:00:02:13","hairpin":true,"port":4789,"accept-ra":false,"mac-learning":false,"arp-proxy":false,"port-mac-learning":false}},"bridges":{"br.provision":{"mtu":9000,"link-local":[],"parameters":{"stp":false},"macaddress":"02:54:c0:00:02:13","interfaces":["vx.3000"],"accept-ra":false}}}'
+export BGP_DEFAULTS="traditional"
+export BGP_PEER_GROUPS='[{"name":"leaf","vrf":"Vrf_underlay","remoteAS":"65500","localAS":65501,"bfd":true,"bfdProfile":"fabric","keepalive":30,"hold":90,"families":["ipv4-unicast"],"allowASIn":3,"routeMaps":[{"family":"ipv4-unicast","in":"TAG-FABRIC-IN","out":"DENY-TAG-FABRIC-OUT"}]},{"name":"dcgw","vrf":"Vrf_underlay","remoteAS":"internal","bfd":true,"bfdProfile":"fabric","keepalive":30,"hold":90,"connectRetry":5,"families":["l2vpn-evpn"],"allowASIn":3,"routeMaps":[{"family":"l2vpn-evpn","in":"TAG-FABRIC-IN","out":"DENY-TAG-FABRIC-OUT"}]}]'
+export BGP_SESSIONS='[{"name":"ens1f0np0","interface":true,"vrf":"Vrf_underlay","peerGroup":"leaf"},{"name":"ens1f1np1","interface":true,"vrf":"Vrf_underlay","peerGroup":"leaf"},{"name":"198.51.100.1","vrf":"Vrf_underlay","peerGroup":"dcgw"},{"name":"198.51.100.2","vrf":"Vrf_underlay","peerGroup":"dcgw"}]'
+export BFD_PROFILES='[{"name":"fabric","transmitInterval":150,"receiveInterval":150}]'

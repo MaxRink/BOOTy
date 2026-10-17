@@ -409,13 +409,14 @@ risk: a skipped statement that changes routing in FRR (for example
 `maximum-paths`) has no effect in BOOTy, and only the warning shows it.
 
 Accepted `frr.conf` statements, per node. "Accepted" means parsed and
-validated. Of these, this release applies: `router bgp` (ASN and VRF),
-`bgp router-id`, the neighbors with peer-groups, `remote-as`, `local-as`,
-`timers`, `timers connect` and the activated address families (see
-[BGP sessions](#bgp-sessions)), `[no] bgp default ipv4-unicast`, `frr
-defaults`, `address-family l2vpn evpn` with `advertise-all-vni`, and the
-L3VNIs from `vni N`. BOOTy reads the other statements into its model;
-later releases apply them, and this list grows with them.
+validated. GoBGP mode applies all routing statements among them, also
+`frr defaults` (the session timer profile), `[no] bgp default
+ipv4-unicast` and `[no] bgp ebgp-requires-policy` (see
+[BGP sessions](#bgp-sessions)), except these, which are parsed and
+validated only: `redistribute connected`,
+`neighbor X soft-reconfiguration inbound`, `advertise-default-gw`,
+`[no] bgp suppress-duplicates`, `rd` and `route-target` of an L2VNI block
+and `hostname`. FRR mode passes the file to FRR.
 
 | Node | Statements |
 |---|---|

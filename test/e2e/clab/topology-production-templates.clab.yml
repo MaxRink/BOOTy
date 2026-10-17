@@ -1,5 +1,11 @@
 # Production template lab (#630 slice b).
 #
+# The template variant (#630 section 4.3 matrix) is selected with
+# PRODTPL_BOOTY_FS, PRODTPL_SHADOW_FRR, PRODTPL_SHADOW_SETUP,
+# PRODTPL_LEAF_SETUP and PRODTPL_NATIVE_VARS; unset means the two-uplink template. For the
+# one-uplink template, test/e2e/clab/prodtpl-variant.sh one-uplink prints
+# them. The tests read PRODTPL_VARIANT.
+#
 # BOOTy gets the rendered bm4x-operator templates (data/fs-prodtpl-booty,
 # a copy of pkg/network/frrconf/testdata/bm4x/two-uplinks). A shadow FRR
 # node gets the same template rendered for 192.0.2.18
@@ -33,9 +39,10 @@ topology:
       image: quay.io/frrouting/frr:10.3.1
       binds:
         - prodtpl-leaf01.frr.conf:/etc/frr/frr.conf:ro
+        - ${PRODTPL_LEAF_SETUP:=prodtpl-leaf-setup.sh}:/setup.sh:ro
         - daemons:/etc/frr/daemons:ro
       exec:
-        - sh -c 'for i in 1 2 3 4 5 6 7 8 9 10; do ip link set dev eth$i mtu 9100 up; done'
+        - sh /setup.sh
 
     dcgw01:
       kind: linux
@@ -69,33 +76,13 @@ topology:
       kind: linux
       image: quay.io/frrouting/frr:10.3.1
       binds:
-        - prodtpl-shadow.frr.conf:/etc/frr/frr.conf:ro
+        - ${PRODTPL_SHADOW_FRR:=prodtpl-shadow.frr.conf}:/etc/frr/frr.conf:ro
+        - ${PRODTPL_SHADOW_SETUP:=prodtpl-shadow-setup.sh}:/setup.sh:ro
         - daemons:/etc/frr/daemons:ro
         # A machine ID, like systemd creates on the legacy ramdisk.
         - data/machine-id-shadow:/etc/machine-id:ro
       exec:
-        - ip link add Vrf_underlay type vrf table 10
-        - ip link set Vrf_underlay up
-        - ip link set ens1f0np0 master Vrf_underlay mtu 9100 up
-        - ip link set ens1f1np1 master Vrf_underlay mtu 9100 up
-        - ip link set ens1f2np2 master Vrf_underlay mtu 9100 up
-        - ip link set ens1f3np3 mtu 9100 up
-        - ip link add dum.underlay type dummy
-        - ip link set dum.underlay master Vrf_underlay mtu 9100 up
-        - ip addr add 192.0.2.18/32 dev dum.underlay
-        - ip -6 addr add 2001:db8:40a:5481::18/128 dev lo
-        # What netplan/networkd makes of the template: link-local: [] is
-        # addrgenmode none, accept-ra: false is accept_ra 0, hairpin and
-        # port-mac-learning are bridge port flags.
-        - sh -c 'for d in ens1f0np0 ens1f1np1 ens1f2np2 ens1f3np3; do sysctl -qw net.ipv6.conf.$d.accept_ra=0; done'
-        - ip link add vx.3000 type vxlan id 3000 local 192.0.2.18 dstport 4789 nolearning noproxy dev dum.underlay
-        - ip link add br.provision address 02:54:c0:00:02:12 type bridge stp_state 0
-        - ip link set vx.3000 addrgenmode none
-        - ip link set br.provision addrgenmode none
-        - sh -c 'for d in vx.3000 br.provision; do echo 0 > /proc/sys/net/ipv6/conf/$d/accept_ra; done'
-        - ip link set vx.3000 address 02:54:c0:00:02:12 master br.provision mtu 9000 up
-        - bridge link set dev vx.3000 hairpin on learning off
-        - ip link set br.provision mtu 9000 up
+        - sh /setup.sh
 
     booty:
       kind: linux
@@ -103,7 +90,7 @@ topology:
       startup-delay: 20
       binds:
         - data/vars-prodtpl-booty:/deploy/vars:ro
-        - data/fs-prodtpl-booty:/deploy/file-system:ro
+        - ${PRODTPL_BOOTY_FS:=data/fs-prodtpl-booty}:/deploy/file-system:ro
       env:
         BOOTY_NO_REBOOT: "1"
       exec:
@@ -141,7 +128,7 @@ topology:
       image: booty-gobgp-test:latest
       startup-delay: 20
       binds:
-        - data/vars-prodtpl-native:/deploy/vars:ro
+        - ${PRODTPL_NATIVE_VARS:=data/vars-prodtpl-native}:/deploy/vars:ro
       env:
         BOOTY_NO_REBOOT: "1"
 

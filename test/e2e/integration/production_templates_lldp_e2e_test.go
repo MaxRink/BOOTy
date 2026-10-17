@@ -94,7 +94,7 @@ func TestProdTplLLDP(t *testing.T) {
 		if !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(id) {
 			t.Fatalf("%s machine ID %q, want 32 hex digits", node.name, id)
 		}
-		for i, nic := range []string{"ens1f0np0", "ens1f1np1"} {
+		for i, nic := range prodtplUplinks {
 			mac, err := prodtplExec(context.Background(), c, "cat", "/sys/class/net/"+nic+"/address")
 			if err != nil {
 				t.Fatalf("%s %s MAC: %v", node.name, nic, err)

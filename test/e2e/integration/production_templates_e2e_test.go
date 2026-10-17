@@ -204,7 +204,7 @@ func TestProdTplLocalASReplaceASPath(t *testing.T) {
 		}
 		return s, nil
 	}
-	want := []string{"65501", "65501"} // one path per uplink
+	want := slices.Repeat([]string{"65501"}, len(prodtplUplinks)) // one path per uplink
 	for _, node := range prodtplServers {
 		for {
 			got, err := paths(node.underlay + "/32")
@@ -269,6 +269,9 @@ func prodtplRoutes(ctx context.Context, node prodtplNode) (map[string][]string, 
 		Via     struct {
 			Host string `json:"host"`
 		} `json:"via"`
+	}
+	if strings.TrimSpace(out) == "" {
+		out = "[]"
 	}
 	var routes []struct {
 		Dst    string `json:"dst"`
@@ -358,6 +361,10 @@ func waitRoutes(t *testing.T, node prodtplNode, want map[string][]string) {
 // other servers and the leaf route with the local-as 3 times (allowed by
 // allowas-in 3). The leaf route with the local-as 4 times is rejected.
 func prodtplRoutesVia(devs ...string) map[string][]string {
+	if len(devs) == 0 {
+		// The only uplink is down: no BGP route is left.
+		return map[string][]string{}
+	}
 	hops := make([]string, 0, len(devs))
 	for _, d := range devs {
 		// Like zebra: the leaf link-local gateway (RFC 5549) and metric 20.
@@ -369,7 +376,7 @@ func prodtplRoutesVia(devs ...string) map[string][]string {
 // The learned routes are in the VRF table with ECMP over both uplinks,
 // like zebra installs them on the shadow node (C17, C10).
 func TestProdTplFIBRoutes(t *testing.T) {
-	want := prodtplRoutesVia("ens1f0np0", "ens1f1np1")
+	want := prodtplRoutesVia(prodtplUplinks...)
 	for _, node := range prodtplServers {
 		waitRoutes(t, node, want)
 	}
@@ -392,9 +399,9 @@ func TestProdTplFIBWithdraw(t *testing.T) {
 	for _, node := range prodtplServers {
 		port := node.leafPorts[0]
 		leafShutdown(port, true)
-		waitRoutes(t, node, prodtplRoutesVia("ens1f1np1"))
+		waitRoutes(t, node, prodtplRoutesVia(prodtplUplinks[1:]...))
 		leafShutdown(port, false)
-		waitRoutes(t, node, prodtplRoutesVia("ens1f0np0", "ens1f1np1"))
+		waitRoutes(t, node, prodtplRoutesVia(prodtplUplinks...))
 	}
 }
 
@@ -412,7 +419,7 @@ func TestProdTplUplinkCarrierLoss(t *testing.T) {
 			cancel()
 			t.Fatalf("leaf %s down: %v\n%s", port, err, out)
 		}
-		want := prodtplRoutesVia("ens1f1np1")
+		want := prodtplRoutesVia(prodtplUplinks[1:]...)
 		for {
 			got, err := prodtplRoutes(ctx, node)
 			if err == nil && reflect.DeepEqual(got, want) {
@@ -430,7 +437,7 @@ func TestProdTplUplinkCarrierLoss(t *testing.T) {
 			t.Fatalf("leaf %s up: %v\n%s", port, err, out)
 		}
 		cancel()
-		waitRoutes(t, node, prodtplRoutesVia("ens1f0np0", "ens1f1np1"))
+		waitRoutes(t, node, prodtplRoutesVia(prodtplUplinks...))
 	}
 }
 
@@ -445,7 +452,7 @@ func TestProdTplNativeVRFNameFIB(t *testing.T) {
 	for _, port := range node.leafPorts {
 		waitView(t, prodtplLeaf, port, session)
 	}
-	want := prodtplRoutesVia("ens1f0np0", "ens1f1np1")
+	want := prodtplRoutesVia(prodtplUplinks...)
 	waitRoutes(t, prodtplShadowNode, want)
 	waitRoutes(t, node, want)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -542,6 +549,6 @@ func prodtplInbound(t *testing.T, node prodtplNode) {
 // must do the same (#630 C6, C11).
 func TestProdTplLocalASLoopCheck(t *testing.T) {
 	for _, node := range prodtplServers {
-		waitRoutes(t, node, prodtplRoutesVia("ens1f0np0", "ens1f1np1"))
+		waitRoutes(t, node, prodtplRoutesVia(prodtplUplinks...))
 	}
 }

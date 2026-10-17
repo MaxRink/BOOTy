@@ -306,8 +306,8 @@ Kept current as slices land.
 | C1, C4, C5, C6, C7, C8 | `TestProdTplLeafSessions`, `TestProdTplLocalASReplaceASPath`, `TestProdTplRRSessions` (peer-group members, local-as, timers, per-peer AFs; each also against the shadow FRR node) | E2E Production Templates | all fail on slice a (sessions from first-match heuristics), see the slice b PR |
 | C6 local-as loop check | `TestProdTplLocalASLoopCheck` (the leaf sends 203.0.113.0/24 with the local-as 65501 four times and 203.0.113.128/25 three times; allowas-in 3 keeps only the /25, for BOOTy, the vars-only server and the shadow node), `TestPolicyInGoBGP` with two GoBGP peers | same | without the check the GoBGP test imports the /24, see the slice e PR |
 | C3 VRF-bound RR sessions, both directions | `TestProdTplRRSessionVRFOutbound`, `TestProdTplRRSessionVRFInbound` | same | both fail on slice a, see the slice b PR |
-| C5 RFC 5549 routes | lab `unnumbered_rfc5549_routes` | same | planned |
-| C9 | lab `ebgp_requires_policy` | same | planned |
+| C5 RFC 5549 routes | `TestProdTplRFC5549Routes`: every BGP route of the underlay VRF goes via an IPv6 link-local next hop on the uplinks, for BOOTy and the vars-only server as for the shadow node | same | parity check of the template |
+| C9 | `TestProdTplEBGPWithoutPolicy`: with `no bgp ebgp-requires-policy` the tester route (no inbound route-map) is in the VRF table of BOOTy and of the shadow node | same | parity check of the template |
 | N1, N3 devices | `TestProdTplKernelDevices`: `ip -d -j link`, `ip -j addr`, bridge port flags, `accept_ra` and `ip_forward` of BOOTy and the vars-only server equal the shadow node, which applies the template like networkd | same | without the device settings: `ip_forward=1`, MTU 9050, link-local addresses, `accept_ra` 2 and 1, hairpin off and learning on, a random VXLAN MAC, see #668 |
 | N1 `emit-lldp` | `TestProdTplLLDP`: on both uplinks of BOOTy and the vars-only server the leaf receives networkd frames (nearest-bridge, chassis ID, interface name as port ID, TTL 120, hostname, capabilities); frame layout in `pkg/network/lldp` unit tests | same | without the sender no frame reaches the leaf within 180 s, see #668 |
 | C10, C17, C11 | `TestProdTplFIBRoutes` (ECMP over both uplinks, also against the shadow node), `TestProdTplFIBWithdraw` (uplink session down and up), `TestProdTplRRSessions` (RRs reachable only over FIB routes with the router AS in the path); fault `drop_uplink` (link down) in slice f | same | fail on slice b, see the slice c PR |
@@ -320,7 +320,11 @@ Kept current as slices land.
 | C19 | `TestProdTplBFDSessions` (leaf: single-hop sessions Up with the "fabric" profile 150/150/3 of every server; RRs: multihop sessions Up), `TestProdTplBFDFailover` (the leaf stops sending on one uplink with the carrier up; the next hop leaves the VRF table within 2.5 s instead of the 90 s hold time), each for BOOTy, the vars-only server and the shadow node; state machine, detection time and Poll/Final in `pkg/network/bfd` unit tests | same | without BOOTy BFD (slice n image) both tests fail for BOOTy and the vars-only server, see the BFD PR |
 | C20 | existing `E2E Pure Type-5 Fabric`, `E2E EVPN Boot (vrnetlab)` plus the new matrix | existing and new | existing |
 | VLAN, bond | existing `E2E ContainerLab` (LACP topology), VLAN unit and lab tests | existing | existing |
-| Full template set | differential lab + KVM ISO run | same + KVM | planned |
+| Template matrix: 1 and 2 uplinks | the whole lab for the two-uplink template (`E2E Production Templates`) and for the one-uplink template (`E2E Production Templates (one uplink)`, `test/e2e/clab/prodtpl-variant.sh`) | both | the one-uplink run uses the same assertions with one next hop |
+| Native model | the native server with `NETWORK_DEVICES`, `BGP_SESSIONS`, `BGP_PEER_GROUPS` and `BFD_PROFILES` instead of the scalar keys (`E2E Production Templates (native model)`, `prodtpl-variant.sh native-model`) | native | the same assertions as the two-uplink run; `bgp ebgp-requires-policy` stays on, every session has route-maps |
+| Template matrix: 1 and 3 route reflectors, `IsLayer2` port | golden and mutation tests over `testdata/bm4x/two-uplinks-one-rr` and `two-uplinks-layer2` (3 RRs and an `IsLayer2` port, which the template leaves out) | `Test` | the mutation test fails for every removed statement |
+| Type-2/3 + Type-5 | the bm4x templates always map the provision VNI to an L3VNI, so there is no Type-2/3 template; existing `E2E EVPN Boot (vrnetlab)` and `E2E Pure Type-5 Fabric` cover the modes | existing | existing |
+| Full template set | differential lab + KVM ISO run | same + KVM | KVM run planned |
 
 ## 5. Slices (one PR each, at most four not ready at a time)
 

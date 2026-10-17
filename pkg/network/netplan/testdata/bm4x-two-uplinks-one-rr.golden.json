@@ -1,0 +1,250 @@
+{
+  "Interfaces": [
+    "auto-detect",
+    "auto-detect"
+  ],
+  "LegacyFRRRecovery": false,
+  "UnderlaySubnet": "",
+  "UnderlayIP": "192.0.2.17",
+  "OverlaySubnet": "",
+  "IPMISubnet": "",
+  "IPMIMAC": "",
+  "IPMIIP": "",
+  "ASN": 4210000017,
+  "ProvisionVNI": 3000,
+  "ProvisionIP": "",
+  "ProvisionGateway": "",
+  "DNSResolvers": "",
+  "DCGWIPs": "",
+  "LeafASN": 0,
+  "LocalASN": 65501,
+  "OverlayAggregate": "",
+  "VPNRT": "",
+  "StaticIP": "",
+  "StaticGateway": "",
+  "StaticIface": "",
+  "StaticMatch": null,
+  "LinkRenames": null,
+  "InterfaceNames": [
+    "ens1f0np0",
+    "ens1f1np1",
+    "ens1f0np0",
+    "ens1f1np1"
+  ],
+  "BondInterfaces": "",
+  "BondMode": "",
+  "VRFTableID": 10,
+  "OverlayVRFTableID": 0,
+  "BGPKeepalive": 0,
+  "BGPHold": 0,
+  "BFDTransmitMS": 0,
+  "BFDReceiveMS": 0,
+  "BFDDetectMult": 0,
+  "BGPPeerMode": "unnumbered",
+  "BGPInterfaces": "",
+  "BGPNeighbors": "",
+  "BGPRemoteASN": 0,
+  "BGPUnderlayAF": "",
+  "BGPOverlayType": "",
+  "BGPAuthPassword": "",
+  "BGPMinPeers": 0,
+  "BGPSessions": [
+    {
+      "Name": "ens1f0np0",
+      "Interface": true,
+      "VRF": "Vrf_underlay",
+      "Internal": false,
+      "RemoteASN": 65500,
+      "LocalASN": 65501,
+      "KeepaliveTime": 30,
+      "HoldTime": 90,
+      "ConnectRetry": 30,
+      "ConnectRetrySet": false,
+      "IPv4Unicast": true,
+      "IPv6Unicast": false,
+      "L2VPNEVPN": false,
+      "AllowASIn": 3,
+      "FastExternalFailover": true,
+      "BFD": true,
+      "BFDProfile": "fabric",
+      "BFDTransmitMS": 150,
+      "BFDReceiveMS": 150,
+      "BFDDetectMult": 3,
+      "RouteMaps": [
+        {
+          "family": "ipv4-unicast",
+          "in": "TAG-FABRIC-IN",
+          "out": "DENY-TAG-FABRIC-OUT"
+        }
+      ],
+      "EBGPRequiresPolicy": false
+    },
+    {
+      "Name": "ens1f1np1",
+      "Interface": true,
+      "VRF": "Vrf_underlay",
+      "Internal": false,
+      "RemoteASN": 65500,
+      "LocalASN": 65501,
+      "KeepaliveTime": 30,
+      "HoldTime": 90,
+      "ConnectRetry": 30,
+      "ConnectRetrySet": false,
+      "IPv4Unicast": true,
+      "IPv6Unicast": false,
+      "L2VPNEVPN": false,
+      "AllowASIn": 3,
+      "FastExternalFailover": true,
+      "BFD": true,
+      "BFDProfile": "fabric",
+      "BFDTransmitMS": 150,
+      "BFDReceiveMS": 150,
+      "BFDDetectMult": 3,
+      "RouteMaps": [
+        {
+          "family": "ipv4-unicast",
+          "in": "TAG-FABRIC-IN",
+          "out": "DENY-TAG-FABRIC-OUT"
+        }
+      ],
+      "EBGPRequiresPolicy": false
+    },
+    {
+      "Name": "198.51.100.1",
+      "Interface": false,
+      "VRF": "Vrf_underlay",
+      "Internal": true,
+      "RemoteASN": 4210000017,
+      "LocalASN": 0,
+      "KeepaliveTime": 30,
+      "HoldTime": 90,
+      "ConnectRetry": 5,
+      "ConnectRetrySet": true,
+      "IPv4Unicast": false,
+      "IPv6Unicast": false,
+      "L2VPNEVPN": true,
+      "AllowASIn": 3,
+      "FastExternalFailover": true,
+      "BFD": true,
+      "BFDProfile": "fabric",
+      "BFDTransmitMS": 150,
+      "BFDReceiveMS": 150,
+      "BFDDetectMult": 3,
+      "RouteMaps": [
+        {
+          "family": "l2vpn-evpn",
+          "in": "TAG-FABRIC-IN",
+          "out": "DENY-TAG-FABRIC-OUT"
+        }
+      ],
+      "EBGPRequiresPolicy": false
+    }
+  ],
+  "BGPMultipathRelax": true,
+  "BGPRouteMaps": [
+    {
+      "name": "TAG-FABRIC-IN",
+      "entries": [
+        {
+          "seq": 10,
+          "setLocalPreference": 90,
+          "setCommunities": [
+            "65169:200"
+          ],
+          "setCommunityAdditive": true
+        }
+      ]
+    },
+    {
+      "name": "DENY-TAG-FABRIC-OUT",
+      "entries": [
+        {
+          "seq": 10,
+          "deny": true,
+          "matchCommunity": "cm-received-fabric"
+        },
+        {
+          "seq": 20
+        }
+      ]
+    }
+  ],
+  "BGPCommunityLists": [
+    {
+      "name": "cm-received-fabric",
+      "entries": [
+        {
+          "communities": [
+            "65169:200"
+          ]
+        }
+      ]
+    }
+  ],
+  "BGPRouteMapIn": "",
+  "BGPRouteMapOut": "",
+  "BGPEBGPRequiresPolicy": false,
+  "BGPLocalAS": 0,
+  "BGPNeighborVRF": "",
+  "BGPConnectRetry": 0,
+  "BGPAllowASIn": 0,
+  "BGPInstallRoutes": false,
+  "BGPFastExternalFailover": null,
+  "BridgeName": "br.provision",
+  "BridgeMAC": "02:54:c0:00:02:11",
+  "VRFName": "Vrf_underlay",
+  "OverlayVRFName": "",
+  "OverlayVRFSet": true,
+  "UnderlayDummyName": "dum.underlay",
+  "VXLANLink": "dum.underlay",
+  "VXLANName": "vx.3000",
+  "MTU": 9100,
+  "NetworkMode": "gobgp",
+  "EVPNL2Enabled": false,
+  "EVPNType5Only": true,
+  "EVPNType5OnlySet": false,
+  "EVPNL3VNIs": [
+    3000
+  ],
+  "LoopbackAddrs": [
+    "2001:db8:40a:5481::17/128"
+  ],
+  "BlackholeRoutes": [
+    "2001:db8:40a:5481::/64"
+  ],
+  "EVPNImportRTs": [
+    "65169:3000"
+  ],
+  "EVPNExportRTs": [
+    "65169:3000"
+  ],
+  "Type5Networks": [
+    "2001:db8:40a:5481::17/128",
+    "2001:db8:40a:5481::/64"
+  ],
+  "OverlayDevices": {
+    "vxlanMTU": 9000,
+    "vxlanMAC": "02:54:c0:00:02:11",
+    "vxlanLearning": false,
+    "vxlanARPProxy": false,
+    "portHairpin": true,
+    "portLearning": false,
+    "vxlanLinkLocal": false,
+    "bridgeLinkLocal": false,
+    "vxlanAcceptRA": false,
+    "bridgeAcceptRA": false,
+    "bridgeMTU": 9000,
+    "bridgeSTP": false
+  },
+  "NoAcceptRA": [
+    "ens1f0np0",
+    "ens1f1np1"
+  ],
+  "EmitLLDP": [
+    "ens1f0np0",
+    "ens1f1np1"
+  ],
+  "IPForwarding": false,
+  "IPv6Forwarding": null,
+  "VLANs": null
+}

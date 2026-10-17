@@ -17,6 +17,9 @@ import (
 )
 
 // prodtplDevices are the devices of the template that every server has.
+// A NIC that the template does not configure (the second NIC of the
+// one-uplink variant) is left out: in the lab ContainerLab sets it up,
+// on a server nothing does.
 var prodtplDevices = []string{"Vrf_underlay", "dum.underlay", "vx.3000", "br.provision", "ens1f0np0", "ens1f1np1"}
 
 // prodtplDeviceView returns one line per device setting, with the values

@@ -209,6 +209,12 @@ jobs:
             test_regex: "^TestUEFIEFIBootEntry"
             privileged: true
             setup: ""
+          - scenario: production-templates
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestProdTplTemplatesQEMU$"
+            privileged: true
+            setup: ""
           - scenario: bootloader-smoke
             qemu_extra: ""
             test_tag: e2e
@@ -329,10 +335,21 @@ jobs:
           sudo find /etc/apt/sources.list.d -type f \( -iname '*microsoft*' -o -iname '*azure-cli*' \) -delete
           apt_opts=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
           sudo apt-get "${apt_opts[@]}" update
-          # No linux-image-generic: it pulled about 850 MB of linux-firmware, and the
-          # tests boot the runner kernel (/boot/vmlinuz-*-azure sorts first). The
-          # "Prepare kernel" step downloads a kernel package if /boot has none.
+          # Keep the runner kernel (the /boot/vmlinuz-*-azure image sorts first).
+          # The "Prepare kernel" step downloads a kernel package if /boot has none.
           sudo DEBIAN_FRONTEND=noninteractive apt-get "${apt_opts[@]}" install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools cpio zstd busybox-static xorriso isolinux syslinux-common fdisk util-linux e2fsprogs dosfstools parted mdadm lvm2 gdisk cloud-guest-utils efibootmgr
+
+      - name: Load KVM network modules
+        run: |
+          # The production-template guest boots the runner kernel directly and
+          # receives its module files through addProdTplModules. Ensure the
+          # host has the matching VRF/VXLAN modules available for that copy.
+          if ! sudo modprobe vrf; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq "linux-modules-extra-$(uname -r)"
+            sudo modprobe vrf
+          fi
+          sudo modprobe vxlan
 
       - name: Cache mirror OS image
         if: matrix.mirror_os_image != ''
@@ -403,6 +420,9 @@ jobs:
             dpkg-deb -x linux-image*.deb /tmp/kernel-extract
             KERNEL=$(ls /tmp/kernel-extract/boot/vmlinuz-* | head -1)
           fi
+          KERNEL_RELEASE=$(basename "$KERNEL" | sed 's/^vmlinuz-//')
+          test -n "$KERNEL_RELEASE"
+          echo "BOOTY_KERNEL_RELEASE=$KERNEL_RELEASE" >> "$GITHUB_ENV"
           sudo cp "$KERNEL" vmlinuz
           sudo chmod 644 vmlinuz
 
