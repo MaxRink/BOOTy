@@ -311,7 +311,61 @@ BOOTy skips kexec and reboots when one of these is true:
 - `DISABLE_KEXEC=true`,
 - `SECUREBOOT_REENABLE=true`,
 - a step changed firmware values, for example the Mellanox SR-IOV setup,
-- the installed root has no usable `/boot/grub/grub.cfg` entry.
+- the installed root has no usable GRUB entry (see below).
+
+BOOTy kexecs the entry that GRUB would boot, and only when it is sure:
+any doubt, reboot. It does not emulate GRUB; it accepts the shapes that
+`grub-mkconfig` generates on Debian and Ubuntu (`kexec.DefaultEntry`):
+
+- `grub.cfg` from `/boot/grub`, then `/boot/grub2`.
+- The default is an unconditional `set default`, or the generated
+  `if [ "${next_entry}" ] ; then ... else set default=X fi` block.
+  `${saved_entry}` comes from `grubenv` (`GRUB_DEFAULT=saved`); an empty
+  default is entry 0.
+- Submenu paths by number, id or title (`1>2`,
+  `gnulinux-advanced-...>gnulinux-...`).
+- Entries of the generated commands only: `insmod`, `echo`, `recordfail`,
+  `load_video`, `gfxmode`, `set root=`, `search --set=root`, one `linux`
+  and at most one `initrd` with one file, both outside conditions. The one
+  exception is the initrdless boot fallback of Ubuntu cloud images
+  (`GRUB_FORCE_PARTUUID`): `if [ "${initrdfail}" = 1 ]` with `linux` and
+  `initrd` in the then branch and, in the else branch, the same `linux`
+  line plus one trailing `panic=-1` and no `initrd`; any other difference
+  reboots. GRUB boots the initrdless branch while `grubenv` has no
+  `initrdfail`; BOOTy kexecs the initrd branch, GRUB's own fallback for
+  the same kernel and root, because kexec needs an initrd and that branch
+  boots on every image. `grubenv` stays as it is.
+- Outside entries only the generated commands: `set`, assignments,
+  `export`, `insmod`, `load_env` (not `-f`), `save_env`, `terminal_input`,
+  `terminal_output`, `terminal`, `serial`, `font`, `loadfont`,
+  `load_video`, `background_image`, `echo`, `true`, `search`,
+  `fwsetup --is-supported`, the generated `unset` of
+  `initrdless_boot_fallback_triggered`, the `41_custom` source line, and
+  `if`, `function`, `menuentry` and `submenu` blocks. Function bodies get
+  the same allow-list plus the entry helpers and may not set the default,
+  `source` a file or run `linux` or `initrd`.
+- `grubenv` variables count as unknown wherever they are used, because
+  `load_env` imports them where it runs; a `default` in `grubenv` reboots.
+- The default is matched like GRUB: a plain decimal number (no sign, no
+  leading zero) is a position; otherwise the first entry whose id or title
+  matches, in order.
+- Variables that `grub.cfg` sets once and unconditionally at the top level
+  are expanded like GRUB, when they are set (`set a=$b` takes the value
+  of `b` at that line) (no expansion in single quotes, a backslash
+  escapes, an unquoted value splits into words); `$vt_handoff` is dropped.
+  A kernel argument with blanks is quoted for the kernel.
+
+BOOTy reboots instead when `grubenv` sets `next_entry` (GRUB boots it once
+and clears it), `prev_saved_entry`, `initrdfail` or `prev_entry` (the
+Ubuntu initrdless fallback); for any other conditional default; for a
+default entry inside a condition or a number after one; for any other
+command in the entry (`set`, `search`/`probe`/`regexp --set` of another
+variable, `source`, an unknown function); for `eval`, `regexp`, `probe`,
+`unset`, `load_env -f` or any unknown command outside entries; for a `linux` or `initrd` inside
+a condition; for BLS (`blscfg`, RHEL-likes), Flatcar (`configfile`, gptprio
+kernel), any `source` or `configfile` (except the `41_custom` line when
+the image has no `custom.cfg`); for an unknown or conditional variable,
+several initrds, or a kernel argument with a double quote.
 
 An A/B upgrade with `AB_PRESERVE_EXISTING=true` needs kexec. If kexec does
 not happen, BOOTy powers off instead of a reboot. `SUCCESS_ACTION=poweroff`

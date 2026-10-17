@@ -1734,25 +1734,15 @@ func tryKexec(cfg *config.MachineConfig, firmwareChanged bool, releaseTarget fun
 		return false
 	}
 
-	const grubPath = installedRootPath + "/boot/grub/grub.cfg"
-	f, err := os.Open(grubPath)
+	// The entry that GRUB would boot: default, grubenv, submenus. When only
+	// GRUB can tell (BLS, conditional kernel lines, variables set at boot),
+	// reboot through the firmware instead of guessing.
+	entry, err := kexec.DefaultEntry(installedRootPath)
 	if err != nil {
-		slog.Warn("cannot open grub.cfg, skipping kexec", "error", err)
+		slog.Warn("no kexec boot entry, rebooting instead", "error", err)
 		return false
 	}
-	entries, err := kexec.ParseGrubCfg(f)
-	// Close grub.cfg now: an open file keeps its filesystem busy, and the
-	// target is unmounted before kexec.
-	_ = f.Close()
-	if err != nil {
-		slog.Warn("failed to parse grub.cfg", "error", err)
-		return false
-	}
-	entry, err := kexec.GetDefaultEntry(entries)
-	if err != nil {
-		slog.Warn("no default boot entry found", "error", err)
-		return false
-	}
+	slog.Info("kexec boot entry", "entry", entry.Name)
 
 	kernel := resolveKexecPath(installedRootPath, entry.Kernel)
 	initrd := resolveKexecPath(installedRootPath, entry.Initramfs)
