@@ -543,7 +543,7 @@ func runCAPRF(ctx context.Context) {
 	if cfg.Transport.LogURL != "" {
 		originalSlogHandler = slog.Default().Handler()
 		remoteInner := slog.NewTextHandler(os.Stderr, nil)
-		caprfRemoteLogHandler = caprf.NewRemoteHandler(client, remoteInner, slog.LevelInfo, 256)
+		caprfRemoteLogHandler = caprf.NewRemoteHandler(client, remoteInner, slog.LevelInfo, 8192)
 		defer flushObservability()
 		slog.SetDefault(slog.New(caprfRemoteLogHandler))
 	}

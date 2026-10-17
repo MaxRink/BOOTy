@@ -1,5 +1,7 @@
 package config
 
+import "time"
+
 // TransportConfig defines how BOOTy communicates with the CAPRF provisioning
 // server. It holds authentication tokens, status reporting URLs, and transport
 // security settings. Used by all operating modes that report status.
@@ -59,6 +61,13 @@ type TransportConfig struct {
 	// Default: ""
 	LogURL string `yaml:"logURL" json:"logURL"`
 
+	// LogFlushTimeoutSec bounds how long BOOTy waits before kexec, reboot,
+	// power off or the rescue shell for the buffered LogURL lines to reach
+	// the server. 0 sends nothing more. nil means
+	// DefaultLogFlushTimeoutSec.
+	// Default: nil (5)
+	LogFlushTimeoutSec *int `yaml:"logFlushTimeoutSec,omitempty" json:"logFlushTimeoutSec,omitempty"`
+
 	// InitURL is the endpoint to report provisioning start.
 	// Also used as the primary connectivity check target.
 	// Default: ""
@@ -98,4 +107,20 @@ type TransportConfig struct {
 	// Preset by legacyCompat: true.
 	// Default: nil (false)
 	ExportVars *bool `yaml:"exportVars,omitempty" json:"exportVars,omitempty"`
+}
+
+// DefaultLogFlushTimeoutSec is the LogFlushTimeoutSec default.
+const DefaultLogFlushTimeoutSec = 5
+
+// MaxLogFlushTimeoutSec caps LogFlushTimeoutSec, so a slow log server can
+// not hold the handoff for long.
+const MaxLogFlushTimeoutSec = 60
+
+// LogFlushTimeout returns LogFlushTimeoutSec as a duration, with the default
+// for an unset value.
+func (t *TransportConfig) LogFlushTimeout() time.Duration {
+	if t.LogFlushTimeoutSec == nil {
+		return DefaultLogFlushTimeoutSec * time.Second
+	}
+	return time.Duration(*t.LogFlushTimeoutSec) * time.Second
 }

@@ -323,6 +323,9 @@ transport:
   successURL: "https://caprf.example.com/status/success"
   errorURL:   "https://caprf.example.com/status/error"
   logURL:     "https://caprf.example.com/logs"
+
+  # logFlushTimeoutSec (LOG_FLUSH_TIMEOUT_SEC): wait for queued log lines before a handoff, 0-60 (default: 5)
+  logFlushTimeoutSec: 8
   debugURL:   ""
 
   # insecure: allow bearer token over plain HTTP — TESTING ONLY, never in production

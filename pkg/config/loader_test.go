@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadYAML(t *testing.T) {
@@ -570,6 +571,7 @@ func TestLoadFullYAMLReference(t *testing.T) {
 		{"Transport.TokenRenewMarginSeconds", cfg.Transport.TokenRenewMarginSeconds, 120},
 		{"Transport.TokenRenewRetries", cfg.Transport.TokenRenewRetries, 7},
 		{"Transport.TokenRenewBackoffSeconds", cfg.Transport.TokenRenewBackoffSeconds, 2},
+		{"Transport.LogFlushTimeout", cfg.Transport.LogFlushTimeout(), 8 * time.Second},
 		{"Transport.InitURL", cfg.Transport.InitURL, "https://caprf.example.com/status/init"},
 		{"Health.Enabled", cfg.Health.Enabled, true},
 		{"Health.MinMemoryGB", cfg.Health.MinMemoryGB, 16},

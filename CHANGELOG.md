@@ -184,6 +184,14 @@ behaviour.
   (sysfs vendor `ATA`), `sg_sanitize` or `sg_format` for SAS disks, which took
   the `hdparm` path before. The ATA frozen check no longer reads `not frozen`
   as frozen. The plain wipe and `CAPRF_LEGACY_COMPAT` do not change (#704)
+- `LOG_URL`: when CAPRF is slow or down, BOOTy drops `DEBUG` and `INFO` lines
+  first and keeps `WARN` and `ERROR` (at most 8192 lines and 4 MiB queued), and
+  posts one `BOOTY-LOG-001` line with the dropped lines per level when CAPRF
+  answers again. Lines arrive in order. Tokens, passwords, JWTs, private keys
+  and LUKS keys in a line are redacted before it is queued. Before kexec,
+  reboot, power off or the rescue shell, BOOTy waits up to the new
+  `LOG_FLUSH_TIMEOUT_SEC` (default 5, `0` to 60) for the queued lines to arrive
+  (#711).
 
 ### Behaviour behind `CAPRF_LEGACY_COMPAT=true`
 

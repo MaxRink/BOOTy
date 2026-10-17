@@ -2,13 +2,17 @@ package caprf
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 	"unicode"
+
+	"github.com/telekom/BOOTy/pkg/logging"
 )
 
 // dropWarnEvery controls how often we emit a warning about dropped messages.
@@ -147,53 +151,6 @@ func isSensitiveKey(key string) bool {
 	return false
 }
 
-// RemoteHandler is a slog.Handler that ships log lines to the CAPRF /log endpoint.
-// It wraps another handler so logs appear both in the console and remotely.
-type RemoteHandler struct {
-	client   *Client
-	inner    slog.Handler
-	level    slog.Leveler
-	buf      chan string
-	attrs    []slog.Attr
-	groups   []string
-	done     chan struct{}
-	once     *sync.Once
-	cancel   context.CancelFunc
-	dropped  *atomic.Int64 // counts messages dropped due to full buffer
-	reported *atomic.Int64 // counts drops already reported in periodic warnings
-	gate     *sendGate     // shared by derived handlers; stops sends after Close
-}
-
-// sendGate lets Close close buf while derived handlers may still log.
-type sendGate struct {
-	mu     sync.RWMutex
-	closed bool
-}
-
-// NewRemoteHandler creates a handler that sends logs to the CAPRF server.
-// The inner handler is used for local console output. Buffer capacity controls
-// how many log lines can be queued before dropping.
-func NewRemoteHandler(client *Client, inner slog.Handler, level slog.Leveler, bufSize int) *RemoteHandler {
-	if bufSize <= 0 {
-		bufSize = 1000
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	h := &RemoteHandler{
-		client:   client,
-		inner:    inner,
-		level:    level,
-		buf:      make(chan string, bufSize),
-		done:     make(chan struct{}),
-		once:     &sync.Once{},
-		cancel:   cancel,
-		dropped:  &atomic.Int64{},
-		reported: &atomic.Int64{},
-		gate:     &sendGate{},
-	}
-	go h.startWorkers(ctx)
-	return h
-}
-
 // redactAttr replaces sensitive attribute values with [REDACTED].
 // It recurses into slog groups so nested keys are also protected.
 func redactAttr(a slog.Attr) slog.Attr {
@@ -236,17 +193,208 @@ func redactRecord(r *slog.Record) slog.Record {
 	return redacted
 }
 
+// defaultBufferBytes bounds the bytes of the queued log lines.
+const defaultBufferBytes = 4 << 20
+
+// shipTimeout bounds one POST of a log line, retries included.
+const shipTimeout = 10 * time.Second
+
+// dropSummaryCode marks the record that reports dropped lines.
+const dropSummaryCode = "BOOTY-LOG-001"
+
+// levelNames names the drop counters by rank (see levelRank).
+var levelNames = [4]string{"debug", "info", "warn", "error"}
+
+// levelRank maps a level to its eviction rank: 0 DEBUG (and below),
+// 1 INFO, 2 WARN, 3 ERROR (and above).
+func levelRank(l slog.Level) int {
+	switch {
+	case l < slog.LevelInfo:
+		return 0
+	case l < slog.LevelWarn:
+		return 1
+	case l < slog.LevelError:
+		return 2
+	default:
+		return 3
+	}
+}
+
+type ringEntry struct {
+	rank int
+	line string
+}
+
+// logRing is the bounded FIFO between Handle and the sender goroutine. It
+// is bounded by line count and by bytes. When it is full, it evicts the
+// oldest line of the lowest rank, so DEBUG goes first, then INFO, and
+// WARN and ERROR stay as long as lower lines are left. It counts every
+// lost line per rank.
+type logRing struct {
+	mu       sync.Mutex
+	cond     sync.Cond
+	entries  []ringEntry
+	bytes    int
+	maxLines int
+	maxBytes int
+	closed   bool
+	dropped  [4]int64
+}
+
+func newLogRing(maxLines, maxBytes int) *logRing {
+	r := &logRing{maxLines: max(maxLines, 1), maxBytes: max(maxBytes, 1)}
+	r.cond.L = &r.mu
+	return r
+}
+
+// push queues line. A line above the byte bound is cut to it. When the
+// ring is full and every queued line ranks above the new one, the new
+// line is dropped instead. After close, push drops the line without a
+// count: the handoff has started.
+func (r *logRing) push(rank int, line string) {
+	if len(line) > r.maxBytes {
+		line = strings.ToValidUTF8(line[:r.maxBytes], "")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return
+	}
+	for len(r.entries) >= r.maxLines || r.bytes+len(line) > r.maxBytes {
+		// ponytail: linear scan per eviction; keep one queue per rank if
+		// the ring ever holds more than a few thousand lines.
+		victim := 0
+		for i, e := range r.entries {
+			if e.rank < r.entries[victim].rank {
+				victim = i
+			}
+		}
+		if r.entries[victim].rank > rank {
+			r.dropped[rank]++
+			return
+		}
+		r.dropped[r.entries[victim].rank]++
+		r.bytes -= len(r.entries[victim].line)
+		r.entries = slices.Delete(r.entries, victim, victim+1)
+	}
+	r.entries = append(r.entries, ringEntry{rank: rank, line: line})
+	r.bytes += len(line)
+	r.cond.Signal()
+}
+
+// pop returns the oldest line. It waits while the ring is empty and open,
+// and returns false when the ring is closed and empty.
+func (r *logRing) pop() (ringEntry, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for len(r.entries) == 0 && !r.closed {
+		r.cond.Wait()
+	}
+	if len(r.entries) == 0 {
+		return ringEntry{}, false
+	}
+	e := r.entries[0]
+	r.entries[0] = ringEntry{}
+	r.entries = r.entries[1:]
+	r.bytes -= len(e.line)
+	return e, true
+}
+
+// drop counts a line that left the ring but did not reach the server.
+func (r *logRing) drop(rank int) {
+	r.mu.Lock()
+	r.dropped[rank]++
+	r.mu.Unlock()
+}
+
+func (r *logRing) drops() [4]int64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.dropped
+}
+
+func (r *logRing) droppedTotal() int64 {
+	d := r.drops()
+	return d[0] + d[1] + d[2] + d[3]
+}
+
+func (r *logRing) len() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.entries)
+}
+
+func (r *logRing) close() {
+	r.mu.Lock()
+	r.closed = true
+	r.mu.Unlock()
+	r.cond.Broadcast()
+}
+
+// remoteSink is the state that a RemoteHandler shares with the handlers
+// derived from it by WithAttrs and WithGroup.
+type remoteSink struct {
+	client       *Client
+	ring         *logRing
+	flushTimeout time.Duration
+	done         chan struct{}
+	cancel       context.CancelFunc
+	once         sync.Once
+	reported     atomic.Int64 // drops already warned about on the console
+}
+
+// RemoteHandler is a slog.Handler that ships log lines to the CAPRF /log
+// endpoint. It wraps another handler so logs appear both in the console
+// and remotely. One sender goroutine ships the lines in order.
+type RemoteHandler struct {
+	sink   *remoteSink
+	inner  slog.Handler
+	level  slog.Leveler
+	attrs  []slog.Attr
+	groups []string
+}
+
+// NewRemoteHandler creates a handler that sends logs to the CAPRF server.
+// The inner handler is used for local console output. bufSize bounds the
+// queued lines (default 1000); the queued bytes are bounded to 4 MiB.
+// Close waits up to the LOG_FLUSH_TIMEOUT_SEC of the client config.
+func NewRemoteHandler(client *Client, inner slog.Handler, level slog.Leveler, bufSize int) *RemoteHandler {
+	return newRemoteHandler(client, inner, level, bufSize, defaultBufferBytes)
+}
+
+func newRemoteHandler(client *Client, inner slog.Handler, level slog.Leveler, maxLines, maxBytes int) *RemoteHandler {
+	if maxLines <= 0 {
+		maxLines = 1000
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	h := &RemoteHandler{
+		sink: &remoteSink{
+			client:       client,
+			ring:         newLogRing(maxLines, maxBytes),
+			flushTimeout: client.cfg.Transport.LogFlushTimeout(),
+			done:         make(chan struct{}),
+			cancel:       cancel,
+		},
+		inner: inner,
+		level: level,
+	}
+	go h.send(ctx)
+	return h
+}
+
 // Enabled reports whether the handler handles records at the given level.
 func (h *RemoteHandler) Enabled(_ context.Context, level slog.Level) bool {
 	return level >= h.level.Level()
 }
 
-// DroppedCount returns the total number of log entries dropped due to a full buffer.
+// DroppedCount returns the number of log lines that did not reach the
+// server: evicted from the full buffer, or failed to ship.
 func (h *RemoteHandler) DroppedCount() int64 {
-	return h.dropped.Load()
+	return h.sink.ring.droppedTotal()
 }
 
-// Handle sends the log record to both the inner handler and the remote buffer.
+// Handle writes the record to the inner handler and queues it for the
+// server. Secret values are redacted before the line is queued.
 func (h *RemoteHandler) Handle(ctx context.Context, r slog.Record) error { //nolint:gocritic // slog.Handler interface requires value receiver
 	redactedRecord := redactRecord(&r)
 	if err := h.inner.Handle(ctx, redactedRecord); err != nil {
@@ -281,39 +429,18 @@ func (h *RemoteHandler) Handle(ctx context.Context, r slog.Record) error { //nol
 		return true
 	})
 
-	h.enqueue(sb.String())
+	h.sink.ring.push(levelRank(r.Level), logging.RedactText(sb.String()))
+	h.maybeWarnDropped(h.sink.ring.droppedTotal())
 	return nil
 }
 
-// enqueue queues a line for shipping. After Close it drops the line, so a
-// late log from a derived logger cannot send on the closed buffer.
-func (h *RemoteHandler) enqueue(line string) {
-	h.gate.mu.RLock()
-	closed, sent := h.gate.closed, false
-	if !closed {
-		select {
-		case h.buf <- line:
-			sent = true
-		default:
-		}
-	}
-	h.gate.mu.RUnlock()
-
-	// Warn outside the lock: the inner handler may block, and Close must
-	// still be able to take the write lock.
-	if !closed && !sent {
-		h.maybeWarnDropped(h.dropped.Add(1))
-	}
-}
-
-// maybeWarnDropped emits a periodic warning every dropWarnEvery drops.
-// It uses h.inner directly to avoid re-entering RemoteHandler when it is the
-// default slog handler, which would attempt to send to a (potentially full)
-// channel from within Handle itself.
+// maybeWarnDropped emits a console warning every dropWarnEvery drops.
+// It uses h.inner directly to avoid re-entering RemoteHandler when it is
+// the default slog handler.
 func (h *RemoteHandler) maybeWarnDropped(total int64) {
-	prev := h.reported.Load()
+	prev := h.sink.reported.Load()
 	if total-prev >= dropWarnEvery {
-		if h.reported.CompareAndSwap(prev, total) {
+		if h.sink.reported.CompareAndSwap(prev, total) {
 			h.warnViaInner("remote log handler is dropping entries: buffer full",
 				slog.Int64("total_dropped", total))
 		}
@@ -321,7 +448,7 @@ func (h *RemoteHandler) maybeWarnDropped(total int64) {
 }
 
 // warnViaInner emits a Warn-level record directly through the inner handler,
-// bypassing RemoteHandler.Handle to prevent re-entry into the buffer channel.
+// bypassing RemoteHandler.Handle to prevent re-entry into the buffer.
 func (h *RemoteHandler) warnViaInner(msg string, attrs ...slog.Attr) {
 	ctx := context.Background()
 	if h.inner == nil || !h.inner.Enabled(ctx, slog.LevelWarn) {
@@ -338,87 +465,96 @@ func (h *RemoteHandler) warnViaInner(msg string, attrs ...slog.Attr) {
 func (h *RemoteHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	redactedAttrs := redactAttrs(attrs)
 	return &RemoteHandler{
-		client:   h.client,
-		inner:    h.inner.WithAttrs(redactedAttrs),
-		level:    h.level,
-		buf:      h.buf,
-		attrs:    append(append([]slog.Attr{}, h.attrs...), redactedAttrs...),
-		groups:   h.groups,
-		done:     h.done,
-		once:     h.once,
-		cancel:   h.cancel,
-		dropped:  h.dropped,
-		reported: h.reported,
-		gate:     h.gate,
+		sink:   h.sink,
+		inner:  h.inner.WithAttrs(redactedAttrs),
+		level:  h.level,
+		attrs:  append(append([]slog.Attr{}, h.attrs...), redactedAttrs...),
+		groups: h.groups,
 	}
 }
 
 // WithGroup returns a new handler with the given group name.
 func (h *RemoteHandler) WithGroup(name string) slog.Handler {
 	return &RemoteHandler{
-		client:   h.client,
-		inner:    h.inner.WithGroup(name),
-		level:    h.level,
-		buf:      h.buf,
-		attrs:    h.attrs,
-		groups:   append(append([]string{}, h.groups...), name),
-		done:     h.done,
-		once:     h.once,
-		cancel:   h.cancel,
-		dropped:  h.dropped,
-		reported: h.reported,
-		gate:     h.gate,
+		sink:   h.sink,
+		inner:  h.inner.WithGroup(name),
+		level:  h.level,
+		attrs:  h.attrs,
+		groups: append(append([]string{}, h.groups...), name),
 	}
 }
 
-// Close stops the background drain goroutine and flushes remaining logs.
-// It closes the buffer to signal drain to finish, then waits up to 5s.
-// If drain does not finish in time, the context is canceled to abort
-// any in-flight HTTP requests.
+// Close stops new lines and flushes the queued lines, the drop summary
+// last, before a handoff. It waits up to the flush timeout, then cancels
+// the POST in flight and reports the lines left behind on the console.
+// Later calls, also through derived handlers, do nothing.
 func (h *RemoteHandler) Close() {
-	if h.once == nil {
-		h.once = &sync.Once{}
-	}
-	h.once.Do(func() {
-		if n := h.dropped.Load(); n > 0 {
+	s := h.sink
+	s.once.Do(func() {
+		if n := s.ring.droppedTotal(); n > 0 {
 			h.warnViaInner("remote log handler: entries were dropped during session",
 				slog.Int64("total_dropped", n))
 		}
-		h.gate.mu.Lock()
-		h.gate.closed = true
-		close(h.buf)
-		h.gate.mu.Unlock()
+		s.ring.close()
+		timer := time.NewTimer(s.flushTimeout)
+		defer timer.Stop()
 		select {
-		case <-h.done:
-		case <-time.After(5 * time.Second): //nolint:mnd // fixed drain timeout
-			totalDropped := h.dropped.Load()
-			h.warnViaInner("log handler drain timed out after 5s", slog.Int64("total_dropped", totalDropped))
-			if h.cancel != nil {
-				h.cancel()
-			}
+		case <-s.done:
+		case <-timer.C:
+			s.cancel()
+			// The canceled line in flight counts as dropped, not
+			// as undelivered.
+			h.warnViaInner("remote log flush deadline reached; the canceled line in flight counts as dropped",
+				slog.Duration("timeout", s.flushTimeout),
+				slog.Int("undelivered", s.ring.len()))
 		}
 	})
 }
 
-func (h *RemoteHandler) startWorkers(ctx context.Context) {
-	defer close(h.done)
-	var wg sync.WaitGroup
-	for i := 0; i < 4; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			h.drainWorker(ctx)
-		}()
+// send ships the queued lines in order until the ring is closed and empty
+// or the flush deadline cancels ctx. A failed line counts as dropped. The
+// first success after drops ships one summary record with the drops per
+// level since the previous summary; the end of the flush tries once more.
+func (h *RemoteHandler) send(ctx context.Context) {
+	defer close(h.sink.done)
+	var reported [4]int64
+	for ctx.Err() == nil {
+		e, ok := h.sink.ring.pop()
+		if !ok {
+			h.shipDropSummary(ctx, &reported)
+			return
+		}
+		if !h.ship(ctx, e.line) {
+			h.sink.ring.drop(e.rank)
+			continue
+		}
+		h.shipDropSummary(ctx, &reported)
 	}
-	wg.Wait()
 }
 
-func (h *RemoteHandler) drainWorker(ctx context.Context) {
-	for msg := range h.buf {
-		shipCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		if err := h.client.ShipLog(shipCtx, msg); err != nil {
-			h.warnViaInner("failed to ship log to caprf", slog.Any("error", err))
-		}
-		cancel()
+func (h *RemoteHandler) ship(ctx context.Context, line string) bool {
+	shipCtx, cancel := context.WithTimeout(ctx, shipTimeout)
+	defer cancel()
+	if err := h.sink.client.ShipLog(shipCtx, line); err != nil {
+		h.warnViaInner("failed to ship log to caprf", slog.Any("error", err))
+		return false
+	}
+	return true
+}
+
+// shipDropSummary ships the drops counted since reported, if any, and
+// advances reported when the summary arrived.
+func (h *RemoteHandler) shipDropSummary(ctx context.Context, reported *[4]int64) {
+	now := h.sink.ring.drops()
+	if now == *reported || ctx.Err() != nil {
+		return
+	}
+	var sb strings.Builder
+	sb.WriteString("[WARN] remote log handler dropped lines code=" + dropSummaryCode)
+	for i, name := range levelNames {
+		fmt.Fprintf(&sb, " %s=%d", name, now[i]-reported[i])
+	}
+	if h.ship(ctx, sb.String()) {
+		*reported = now
 	}
 }

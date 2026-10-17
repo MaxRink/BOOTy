@@ -1146,7 +1146,25 @@ func applyVar(cfg *config.MachineConfig, key, value string) error {
 	if handled, err := applyTokenVar(cfg, key, value); handled {
 		return err
 	}
+	if key == "LOG_FLUSH_TIMEOUT_SEC" {
+		return applyLogFlushTimeoutVar(cfg, value)
+	}
 	return applySpecialVar(cfg, key, value)
+}
+
+// applyLogFlushTimeoutVar keeps an explicit 0 (no flush) apart from an
+// unset value; an empty value is unset (default 5 s).
+func applyLogFlushTimeoutVar(cfg *config.MachineConfig, value string) error {
+	cfg.Transport.LogFlushTimeoutSec = nil
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	var n int
+	if err := setIntField(&n, value); err != nil {
+		return fmt.Errorf("invalid LOG_FLUSH_TIMEOUT_SEC: %w", err)
+	}
+	cfg.Transport.LogFlushTimeoutSec = &n
+	return nil
 }
 
 func applyStringVar(cfg *config.MachineConfig, key, value string) bool {

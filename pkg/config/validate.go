@@ -1246,6 +1246,9 @@ func validateTokenRenewal(t *TransportConfig) []string {
 			errs = append(errs, f.name+" must not be negative")
 		}
 	}
+	if v := t.LogFlushTimeoutSec; v != nil && (*v < 0 || *v > MaxLogFlushTimeoutSec) {
+		errs = append(errs, fmt.Sprintf("transport.logFlushTimeoutSec (LOG_FLUSH_TIMEOUT_SEC) must be between 0 and %d, got %d", MaxLogFlushTimeoutSec, *v))
+	}
 	if t.TokenRenewRetries > MaxTokenRenewRetries {
 		errs = append(errs, fmt.Sprintf("transport.tokenRenewRetries (TOKEN_RENEW_RETRIES) must be at most %d", MaxTokenRenewRetries))
 	}

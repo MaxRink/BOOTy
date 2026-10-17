@@ -383,6 +383,7 @@ root is mounted.
 | `SUCCESS_URL` | — | CAPRF success status endpoint |
 | `ERROR_URL` | — | CAPRF error status endpoint |
 | `LOG_URL` | — | CAPRF structured log endpoint |
+| `LOG_FLUSH_TIMEOUT_SEC` | `5` | Seconds (0-60) to wait before kexec, reboot or power off for the queued `LOG_URL` lines |
 | `DEBUG_URL` | — | CAPRF debug payload endpoint |
 | `HEARTBEAT_URL` | — | Standby mode: URL for periodic keepalives |
 | `COMMANDS_URL` | — | Standby mode: URL to poll for pending commands |
