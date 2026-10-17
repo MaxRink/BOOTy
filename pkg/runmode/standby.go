@@ -40,8 +40,17 @@ type skippedDiskReporter interface {
 	SkippedDisks() []string
 }
 
-// The orchestrator must keep the capability, or the ACK loses the note.
-var _ skippedDiskReporter = (*provision.Orchestrator)(nil)
+// eraseFallbackReporter is the optional deprovisioner capability that names
+// the disks that got the plain wipe instead of the secure erase.
+type eraseFallbackReporter interface {
+	SecureEraseFallbacks() []string
+}
+
+// The orchestrator must keep the capabilities, or the ACK loses the notes.
+var (
+	_ skippedDiskReporter   = (*provision.Orchestrator)(nil)
+	_ eraseFallbackReporter = (*provision.Orchestrator)(nil)
+)
 
 // Name returns the mode identifier.
 func (m *StandbyMode) Name() string { return "standby" }
@@ -336,6 +345,9 @@ func (m *StandbyMode) handleDeprovision(ctx context.Context, cmd config.Command,
 	message := ackMessage("deprovisioning complete", keys)
 	if s, ok := orch.(skippedDiskReporter); ok {
 		message += provision.NotWipedNote(s.SkippedDisks())
+	}
+	if r, ok := orch.(eraseFallbackReporter); ok {
+		message += provision.EraseFallbackNote(r.SecureEraseFallbacks())
 	}
 	m.ack(ctx, cmd.ID, "completed", message)
 	if cfg.Agent.DeprovisionSuccessAction == config.AgentDeprovisionStandby {

@@ -293,13 +293,35 @@ func renameGRUBConfig(cfg, bak string) (bool, error) {
 }
 
 func (o *Orchestrator) reportDeprovisionSuccess(ctx context.Context) error {
-	return o.reportTerminalSuccess(ctx, "deprovisioning", "deprovisioning complete"+NotWipedNote(o.skippedDisks))
+	return o.reportTerminalSuccess(ctx, "deprovisioning", "deprovisioning complete"+NotWipedNote(o.skippedDisks)+o.eraseFallbackNote())
 }
 
 // SkippedDisks returns the disks in use that the wipe of all disks of the
 // last run skipped.
 func (o *Orchestrator) SkippedDisks() []string {
 	return slices.Clone(o.skippedDisks)
+}
+
+// SecureEraseFallbacks returns the disks of the last run that got the plain
+// wipe instead of the secure erase (SECURE_ERASE_FALLBACK=wipe).
+func (o *Orchestrator) SecureEraseFallbacks() []string {
+	if o.disk == nil {
+		return nil
+	}
+	return o.disk.SecureEraseFallbacks()
+}
+
+func (o *Orchestrator) eraseFallbackNote() string {
+	return EraseFallbackNote(o.SecureEraseFallbacks())
+}
+
+// EraseFallbackNote is the status and ACK suffix that names the disks that
+// got the plain wipe instead of the secure erase, or "" when there are none.
+func EraseFallbackNote(disks []string) string {
+	if len(disks) == 0 {
+		return ""
+	}
+	return "; secure erase not done, wiped instead (SECURE_ERASE_FALLBACK=wipe): " + strings.Join(disks, ", ")
 }
 
 // NotWipedNote is the status and ACK suffix that names skipped disks, or

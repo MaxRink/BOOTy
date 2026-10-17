@@ -283,13 +283,38 @@ partitions.
 modes read `deprovision.secureErase`, which the vars file cannot set (see
 [Configuration Sources](#configuration-sources)).
 
-| Drive | Erase method | Fallback |
-| --- | --- | --- |
-| NVMe | `nvme format <dev> --ses=1 --force` (User Data Erase) | `wipefs -af` if the format fails |
-| SATA/SAS | ATA Security Erase with `hdparm` and a temporary password | `wipefs -af` if the drive has no ATA security feature set or is frozen |
+BOOTy selects the erase method by the media type. A SCSI disk (`sd*`) with
+the vendor `ATA` in `/sys/block/<disk>/device/vendor` is an ATA disk, also
+behind a SAS HBA; other SCSI disks are SAS disks.
 
-A missing `nvme` or `hdparm` tool is fatal. A failed ATA erase command is also
-fatal. BOOTy then tries to clear the temporary password.
+| Drive | Erase method | Error when |
+| --- | --- | --- |
+| NVMe | `nvme format <dev> --ses=1 --force` (User Data Erase) | the format fails, or `nvme` is missing |
+| ATA (SATA) | ATA Security Erase with `hdparm` and a temporary password | the drive has no ATA security feature set, is security-frozen, or a `hdparm` command fails; `hdparm` is missing |
+| SAS | SCSI `SANITIZE` with `sg_sanitize --quick`: crypto erase, then block erase, then overwrite with zeros; then `FORMAT UNIT` with `sg_format --format --quick` | the drive rejects every method, or a method fails; `sg_sanitize` and `sg_format` are missing |
+| Other (virtio, unknown vendor) | none | always |
+
+A failed or unsupported secure erase fails the run by default. BOOTy does not
+fall back to a signature wipe on its own. After a failed ATA erase BOOTy tries
+to clear the temporary password.
+
+The release initramfs ships `nvme` and `hdparm`, but not `sg_sanitize` and
+`sg_format` (sg3-utils). A SAS secure erase fails there with
+`sg_sanitize is not in the initramfs, sg_format is not in the initramfs`. Add
+sg3-utils to a custom initramfs, or use `SECURE_ERASE_FALLBACK=wipe`.
+
+`SECURE_ERASE_FALLBACK=wipe` (YAML `provision.disk.secureEraseFallback`)
+allows the fallback: BOOTy logs a `WARN` line with the erase error, wipes the
+disk like without `SECURE_ERASE` (`WIPE_DEPTH`) and adds
+`; secure erase not done, wiped instead (SECURE_ERASE_FALLBACK=wipe): <disks>`
+to the success status and the standby deprovision ACK. A wipe is not an
+erase: the data stays on the media. The default `fail` (or no value) fails
+the run.
+
+`CAPRF_LEGACY_COMPAT` does not depend on the fallback: its preset
+`WIPE_ALL_DISKS=true` wipes every disk and ignores `SECURE_ERASE`, like the
+legacy `wipe_all_disks`. The plain wipe (`SECURE_ERASE=false`, the default)
+does not change.
 
 ### Failed Image Writes
 

@@ -161,6 +161,15 @@ behaviour.
   firmware refuses the new entry. Deprovisioning removes the entries before it
   wipes a disk. In a container BOOTy skips the EFI steps. `MODE=decommission`
   stays best effort. The slim flavor now ships `efibootmgr` (#669).
+- `SECURE_ERASE=true` (and the YAML `deprovision.secureErase`) no longer
+  falls back to a signature wipe on its own. A failed erase, a security-frozen
+  or unsupported drive, a disk without an erase method and a missing erase tool
+  fail the run with the reason. The new `SECURE_ERASE_FALLBACK=wipe` allows the
+  wipe, logs it at `WARN` and names the disk in the success status. The method
+  follows the media type: `nvme format` for NVMe, `hdparm` only for ATA disks
+  (sysfs vendor `ATA`), `sg_sanitize` or `sg_format` for SAS disks, which took
+  the `hdparm` path before. The ATA frozen check no longer reads `not frozen`
+  as frozen. The plain wipe and `CAPRF_LEGACY_COMPAT` do not change (#704)
 
 ### Behaviour behind `CAPRF_LEGACY_COMPAT=true`
 

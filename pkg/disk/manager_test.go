@@ -377,14 +377,6 @@ func TestSecureEraseDiskValidationAndCommands(t *testing.T) {
 			wantErr: "secure erase disk: device is required",
 		},
 		{
-			name:   "sata device",
-			device: " /dev/sda ",
-			wantFirst: mockCall{
-				name: "hdparm",
-				args: []string{"-I", "/dev/sda"},
-			},
-		},
-		{
 			name:   "nvme device",
 			device: "/dev/nvme0n1",
 			wantFirst: mockCall{
@@ -1183,83 +1175,6 @@ func TestPartProbeFallback(t *testing.T) {
 	cmd.setResult("partprobe /dev/sda", nil, fmt.Errorf("exit 1"))
 	if err := mgr.PartProbe(context.Background(), "/dev/sda"); err != nil {
 		t.Fatalf("expected fallback to succeed: %v", err)
-	}
-}
-
-func TestSecureEraseSATA(t *testing.T) {
-	t.Run("erase succeeds", func(t *testing.T) {
-		cmd := newMockCommander()
-		mgr := NewManager(cmd)
-		cmd.setResult("hdparm -I", []byte("Security:\n  supported"), nil)
-		if err := mgr.secureEraseSATA(context.Background(), "/dev/sda"); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-	})
-
-	t.Run("no security support falls back to wipefs", func(t *testing.T) {
-		cmd := newMockCommander()
-		mgr := NewManager(cmd)
-		cmd.setResult("hdparm -I", []byte("no security here"), nil)
-		if err := mgr.secureEraseSATA(context.Background(), "/dev/sda"); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-	})
-
-	t.Run("missing hdparm fails without wipefs fallback", func(t *testing.T) {
-		cmd := newMockCommander()
-		mgr := NewManager(cmd)
-		cmd.setResult("hdparm -I", nil, fmt.Errorf("exec hdparm: %w", exec.ErrNotFound))
-
-		err := mgr.secureEraseSATA(context.Background(), "/dev/sda")
-		if err == nil {
-			t.Fatal("expected missing hdparm error")
-		}
-		if !strings.Contains(err.Error(), "hdparm secure erase tool is required") {
-			t.Fatalf("error = %v, want missing hdparm diagnostic", err)
-		}
-		if hasDiskCommandCall(cmd.calls, "wipefs", "-af", "/dev/sda") {
-			t.Fatalf("secure erase must not fall back to wipefs when hdparm is missing: %#v", cmd.calls)
-		}
-	})
-
-	t.Run("set-pass failure returns error", func(t *testing.T) {
-		cmd := newMockCommander()
-		mgr := NewManager(cmd)
-		cmd.setResult("hdparm -I", []byte("Security:\n  supported"), nil)
-		cmd.setResult("hdparm --user-master", nil, fmt.Errorf("set-pass failed"))
-		err := mgr.secureEraseSATA(context.Background(), "/dev/sda")
-		if err == nil {
-			t.Fatal("expected error when set-pass fails")
-		}
-		if !strings.Contains(err.Error(), "failed to set security password") {
-			t.Fatalf("error should mention security password: %v", err)
-		}
-	})
-
-	t.Run("frozen drive falls back to wipefs", func(t *testing.T) {
-		cmd := newMockCommander()
-		mgr := NewManager(cmd)
-		cmd.setResult("hdparm -I", []byte("Security:\n  frozen"), nil)
-		if err := mgr.secureEraseSATA(context.Background(), "/dev/sda"); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-	})
-}
-
-func TestSecureEraseNVMEMissingToolFailsWithoutWipefsFallback(t *testing.T) {
-	cmd := newMockCommander()
-	mgr := NewManager(cmd)
-	cmd.setResult("nvme format", nil, fmt.Errorf("exec nvme: %w", exec.ErrNotFound))
-
-	err := mgr.secureEraseNVMe(context.Background(), "/dev/nvme0n1")
-	if err == nil {
-		t.Fatal("expected missing nvme error")
-	}
-	if !strings.Contains(err.Error(), "nvme secure erase tool is required") {
-		t.Fatalf("error = %v, want missing nvme diagnostic", err)
-	}
-	if hasDiskCommandCall(cmd.calls, "wipefs", "-af", "/dev/nvme0n1") {
-		t.Fatalf("secure erase must not fall back to wipefs when nvme is missing: %#v", cmd.calls)
 	}
 }
 

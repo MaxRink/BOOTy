@@ -119,6 +119,7 @@ func NewOrchestrator(cfg *config.MachineConfig, provider config.Provider, diskMg
 		// shared manager does not change and the next run
 		// starts from its own config.
 		diskMgr.SetLegacyCAPRFSelection(cfg.Provision.Disk.Selection == config.DiskSelectionLsblk)
+		diskMgr.SetSecureEraseFallbackWipe(cfg.Provision.Disk.SecureEraseFallback == config.SecureEraseFallbackWipe)
 	}
 	return &Orchestrator{
 		cfg:       cfg,
@@ -3306,7 +3307,7 @@ func (o *Orchestrator) logHealthCheckResults(results []health.CheckResult) {
 }
 
 func (o *Orchestrator) reportSuccess(ctx context.Context) error {
-	return o.reportTerminalSuccess(ctx, "provisioning", successStatusMessage(o.cfg))
+	return o.reportTerminalSuccess(ctx, "provisioning", successStatusMessage(o.cfg)+o.eraseFallbackNote())
 }
 
 func (o *Orchestrator) reportTerminalSuccess(ctx context.Context, operation, message string) error {

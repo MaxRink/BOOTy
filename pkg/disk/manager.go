@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -50,6 +51,12 @@ type Manager struct {
 	quickWipe bool
 	// procDir replaces /proc in tests. See CheckNotInUse.
 	procDir string
+	// eraseFallbackWipe allows the plain wipe when a secure erase fails.
+	// See SetSecureEraseFallbackWipe.
+	eraseFallbackWipe bool
+	// eraseFallbacks are the disks that got the plain wipe instead of the
+	// secure erase.
+	eraseFallbacks []string
 }
 
 // SetLegacyCAPRFSelection makes DetectDisk select the target disk like
@@ -285,10 +292,27 @@ func (m *Manager) DiscardNVMeDisks(ctx context.Context) {
 	}
 }
 
-// SecureEraseAllDisks performs hardware-level secure erase on all disks.
-// For NVMe drives: uses nvme format (User Data Erase).
-// For SATA/SAS drives: uses ATA SECURITY ERASE UNIT via hdparm.
-// Falls back to quick erase (wipefs) if secure erase is not supported.
+// ErrSecureEraseUnsupported reports that a requested secure erase cannot run
+// on a disk: the drive or its transport has no supported erase method, the
+// drive is security-frozen, or the erase tool is not in the initramfs.
+var ErrSecureEraseUnsupported = errors.New("secure erase not supported")
+
+// SetSecureEraseFallbackWipe allows a disk whose secure erase fails, or is
+// not supported, to get the plain wipe instead (SECURE_ERASE_FALLBACK=wipe).
+// Without it a failed secure erase is an error. SecureEraseFallbacks lists
+// the disks that got the fallback.
+func (m *Manager) SetSecureEraseFallbackWipe(enabled bool) {
+	m.eraseFallbackWipe = enabled
+}
+
+// SecureEraseFallbacks returns the disks that got the plain wipe instead of
+// the requested secure erase (see SetSecureEraseFallbackWipe).
+func (m *Manager) SecureEraseFallbacks() []string {
+	return slices.Clone(m.eraseFallbacks)
+}
+
+// SecureEraseAllDisks erases every disk with the method for its media type
+// (see SecureEraseDisk). It skips disks in use and returns them.
 func (m *Manager) SecureEraseAllDisks(ctx context.Context) (skipped []string, err error) {
 	slog.Info("performing secure erase on all disks")
 	blockDir := filepath.Join(m.sysfsRoot, "block")
@@ -315,11 +339,7 @@ func (m *Manager) SecureEraseAllDisks(ctx context.Context) (skipped []string, er
 			skipped = append(skipped, dev)
 			continue
 		}
-		erase := m.secureEraseSATA
-		if strings.HasPrefix(name, "nvme") {
-			erase = m.secureEraseNVMe
-		}
-		if err := erase(ctx, dev); err != nil {
+		if err := m.secureErase(ctx, dev); err != nil {
 			errs = append(errs, err)
 		} else {
 			erased++
@@ -328,78 +348,116 @@ func (m *Manager) SecureEraseAllDisks(ctx context.Context) (skipped []string, er
 	return skipped, allDisksResult("secure erase", erased, skipped, errs)
 }
 
-// SecureEraseDisk performs hardware-level secure erase on a single disk.
-// It falls back to quick erase when the device does not support secure erase.
+// SecureEraseDisk erases a single disk in hardware with the method for its
+// media type: NVMe Format (User Data Erase) for NVMe, ATA Security Erase
+// for ATA disks (also behind a SAS HBA), SCSI SANITIZE or FORMAT UNIT for
+// other SCSI disks. A failed, frozen or unsupported erase is an error,
+// unless SetSecureEraseFallbackWipe allows the plain wipe.
 func (m *Manager) SecureEraseDisk(ctx context.Context, device string) error {
 	device = strings.TrimSpace(device)
 	if device == "" {
 		return fmt.Errorf("secure erase disk: device is required")
 	}
-
-	checkPath := device
-	erasePath := device
 	if resolved, err := filepath.EvalSymlinks(device); err == nil {
-		checkPath = resolved
-		erasePath = resolved
+		device = resolved
 	}
-	if strings.HasPrefix(filepath.Base(checkPath), "nvme") {
-		return m.secureEraseNVMe(ctx, erasePath)
+	return m.secureErase(ctx, device)
+}
+
+// secureErase runs the erase for the media type of dev and applies the
+// fallback policy.
+func (m *Manager) secureErase(ctx context.Context, dev string) error {
+	if err := m.CheckNotInUse(dev); err != nil {
+		return err
 	}
-	return m.secureEraseSATA(ctx, erasePath)
+	var err error
+	switch media := m.eraseMedia(dev); media {
+	case eraseMediaNVMe:
+		err = m.secureEraseNVMe(ctx, dev)
+	case eraseMediaATA:
+		err = m.secureEraseATA(ctx, dev)
+	case eraseMediaSCSI:
+		err = m.secureEraseSCSI(ctx, dev)
+	default:
+		err = fmt.Errorf("%s: %w: no secure erase method for this device type", dev, ErrSecureEraseUnsupported)
+	}
+	if err == nil || !m.eraseFallbackWipe || ctx.Err() != nil {
+		return err
+	}
+	slog.Warn("secure erase failed, SECURE_ERASE_FALLBACK=wipe: wiping the disk instead; the data is not erased",
+		"device", dev, "error", err)
+	if werr := m.wipeDevice(ctx, dev); werr != nil {
+		return fmt.Errorf("%w; wipe fallback failed: %w", err, werr)
+	}
+	m.eraseFallbacks = append(m.eraseFallbacks, dev)
+	return nil
+}
+
+// Media types for the secure erase method.
+const (
+	eraseMediaUnknown = iota
+	eraseMediaNVMe
+	eraseMediaATA
+	eraseMediaSCSI
+)
+
+// eraseMedia returns the media type of dev. SCSI disks with the vendor
+// "ATA" in sysfs are ATA disks behind libata or a SAS HBA (SCSI-ATA
+// translation), which take ATA commands through hdparm.
+func (m *Manager) eraseMedia(dev string) int {
+	name := filepath.Base(dev)
+	switch {
+	case strings.HasPrefix(name, "nvme"):
+		return eraseMediaNVMe
+	case strings.HasPrefix(name, "sd"):
+		vendor, err := os.ReadFile(filepath.Join(m.sysfsRoot, "block", name, "device", "vendor"))
+		if err != nil {
+			slog.Warn("cannot read the disk vendor for the secure erase method", "device", dev, "error", err)
+			return eraseMediaUnknown
+		}
+		if strings.TrimSpace(string(vendor)) == "ATA" {
+			return eraseMediaATA
+		}
+		return eraseMediaSCSI
+	}
+	return eraseMediaUnknown
 }
 
 // secureEraseNVMe performs NVMe User Data Erase via nvme format command.
 func (m *Manager) secureEraseNVMe(ctx context.Context, dev string) error {
-	if err := m.CheckNotInUse(dev); err != nil {
-		return err
-	}
 	slog.Info("NVMe secure erase", "device", dev)
 	// ses=1: User Data Erase, ses=2: Crypto Erase (not all drives support it).
 	out, err := m.cmd.Run(ctx, "nvme", "format", dev, "--ses=1", "--force")
 	if err != nil {
 		if isExecNotFound(err) {
-			return fmt.Errorf("%s: nvme secure erase tool is required when secure erase is enabled: %w", dev, err)
+			return fmt.Errorf("%s: %w: the nvme tool is not in the initramfs: %w", dev, ErrSecureEraseUnsupported, err)
 		}
-		slog.Warn("NVMe secure erase failed, falling back to wipefs",
-			"device", dev, "output", string(out), "error", err)
-		if out, err := m.cmd.Run(ctx, "wipefs", "-af", dev); err != nil {
-			return fmt.Errorf("%s: nvme format and wipefs fallback failed: %s: %w", dev, string(out), err)
-		}
+		return fmt.Errorf("%s: nvme format --ses=1 failed: %s: %w", dev, strings.TrimSpace(string(out)), err)
 	}
 	return nil
 }
 
-// secureEraseSATA performs ATA SECURITY ERASE UNIT via hdparm.
-func (m *Manager) secureEraseSATA(ctx context.Context, dev string) error {
-	if err := m.CheckNotInUse(dev); err != nil {
-		return err
+// secureEraseATA performs ATA SECURITY ERASE UNIT via hdparm.
+func (m *Manager) secureEraseATA(ctx context.Context, dev string) error {
+	slog.Info("ATA secure erase", "device", dev)
+	out, err := m.cmd.Run(ctx, "hdparm", "-I", dev)
+	if err != nil {
+		if isExecNotFound(err) {
+			return fmt.Errorf("%s: %w: the hdparm tool is not in the initramfs: %w", dev, ErrSecureEraseUnsupported, err)
+		}
+		return fmt.Errorf("%s: hdparm -I failed: %s: %w", dev, strings.TrimSpace(string(out)), err)
 	}
-	slog.Info("SATA secure erase", "device", dev)
+	supported, frozen := ataSecurityState(string(out))
+	if !supported {
+		return fmt.Errorf("%s: %w: the drive has no ATA security feature set", dev, ErrSecureEraseUnsupported)
+	}
+	if frozen {
+		return fmt.Errorf("%s: %w: the drive is security-frozen (power-cycle or suspend it to unfreeze)", dev, ErrSecureEraseUnsupported)
+	}
 	pwd, err := temporaryErasePassword()
 	if err != nil {
 		return fmt.Errorf("generate temporary erase password for %s: %w", dev, err)
 	}
-
-	// Step 1: Check if security is supported.
-	out, err := m.cmd.Run(ctx, "hdparm", "-I", dev)
-	if err != nil && isExecNotFound(err) {
-		return fmt.Errorf("%s: hdparm secure erase tool is required when secure erase is enabled: %w", dev, err)
-	}
-	if err != nil || !strings.Contains(string(out), "Security:") {
-		slog.Info("drive does not support ATA security, using wipefs", "device", dev)
-		if out, err := m.cmd.Run(ctx, "wipefs", "-af", dev); err != nil {
-			return fmt.Errorf("%s: hdparm and wipefs fallback failed: %s: %w", dev, string(out), err)
-		}
-		return nil
-	}
-	if strings.Contains(string(out), "frozen") {
-		slog.Warn("drive is security-frozen, cannot secure erase, using wipefs", "device", dev)
-		if out, err := m.cmd.Run(ctx, "wipefs", "-af", dev); err != nil {
-			return fmt.Errorf("%s: frozen drive wipefs fallback failed: %s: %w", dev, string(out), err)
-		}
-		return nil
-	}
-	// Step 2: Set a temporary password and issue secure erase.
 	if out, err := m.cmd.Run(ctx, "hdparm", "--user-master", "u", "--security-set-pass", pwd, dev); err != nil {
 		return fmt.Errorf("%s: failed to set security password: %s: %w", dev, string(out), err)
 	}
@@ -415,6 +473,87 @@ func (m *Manager) secureEraseSATA(ctx context.Context, dev string) error {
 		slog.Warn("failed to clear temporary security password after erase", "device", dev, "output", string(out), "error", err)
 	}
 	return nil
+}
+
+// ataSecurityState reads the Security section of `hdparm -I`. Its state
+// lines are "supported" or "not<TAB>supported", "frozen" or
+// "not<TAB>frozen"; the section ends at the next unindented line.
+func ataSecurityState(identify string) (supported, frozen bool) {
+	inSection := false
+	for line := range strings.Lines(identify) {
+		if strings.HasPrefix(line, "Security:") {
+			inSection = true
+			continue
+		}
+		if !inSection {
+			continue
+		}
+		if line != "" && line[0] != ' ' && line[0] != '\t' {
+			break
+		}
+		switch strings.Join(strings.Fields(line), " ") {
+		case "supported":
+			supported = true
+		case "frozen":
+			frozen = true
+		}
+	}
+	return supported, frozen
+}
+
+// sg3_utils exit codes for a command that the device rejects:
+// ILLEGAL REQUEST (5) and invalid operation code (9).
+const (
+	sgExitIllegalRequest = 5
+	sgExitInvalidOp      = 9
+)
+
+// secureEraseSCSI erases a SCSI (SAS) disk with SANITIZE (crypto, block,
+// then overwrite with zeros) through sg_sanitize, and with FORMAT UNIT
+// through sg_format when the drive rejects every SANITIZE action.
+func (m *Manager) secureEraseSCSI(ctx context.Context, dev string) error {
+	slog.Info("SCSI secure erase", "device", dev)
+	var rejected []string
+	for _, action := range [][]string{{"--crypto"}, {"--block"}, {"--overwrite", "--zero"}} {
+		args := append(append([]string{"--quick"}, action...), dev)
+		out, err := m.cmd.Run(ctx, "sg_sanitize", args...)
+		if err == nil {
+			slog.Info("SCSI SANITIZE complete", "device", dev, "action", action[0])
+			return nil
+		}
+		if isExecNotFound(err) {
+			rejected = append(rejected, "sg_sanitize is not in the initramfs")
+			break
+		}
+		if !sgRejected(err) {
+			return fmt.Errorf("%s: sg_sanitize %s failed: %s: %w", dev, action[0], strings.TrimSpace(string(out)), err)
+		}
+		rejected = append(rejected, "SANITIZE "+action[0]+" rejected")
+	}
+	out, err := m.cmd.Run(ctx, "sg_format", "--format", "--quick", dev)
+	switch {
+	case err == nil:
+		slog.Info("SCSI FORMAT UNIT complete", "device", dev)
+		return nil
+	case isExecNotFound(err):
+		rejected = append(rejected, "sg_format is not in the initramfs")
+	case sgRejected(err):
+		rejected = append(rejected, "FORMAT UNIT rejected")
+	default:
+		return fmt.Errorf("%s: sg_format --format failed: %s: %w", dev, strings.TrimSpace(string(out)), err)
+	}
+	return fmt.Errorf("%s: %w: %s", dev, ErrSecureEraseUnsupported, strings.Join(rejected, ", "))
+}
+
+// sgRejected reports whether an sg3_utils command failed because the device
+// does not support the command.
+func sgRejected(err error) bool {
+	var exitErr *executil.ExitError
+	if !errors.As(err, &exitErr) {
+		return false
+	}
+	code := exitErr.ExitCode()
+	return code == sgExitIllegalRequest || code == sgExitInvalidOp
 }
 
 func temporaryErasePassword() (string, error) {

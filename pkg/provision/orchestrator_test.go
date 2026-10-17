@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -2245,6 +2246,36 @@ func TestDeprovisionHardScopesSecureEraseToConfiguredDevice(t *testing.T) {
 	cfg.Deprovision.SecureErase = true
 	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
 	withMockBlockDevices(t, "/dev/sdb")
+	withATADisks(t, o, "sdb")
+
+	if err := o.selectDeprovisionDisk(context.Background()); err != nil {
+		t.Fatalf("selectDeprovisionDisk: %v", err)
+	}
+	// The mock drive has no ATA security feature set: without
+	// SECURE_ERASE_FALLBACK=wipe that fails the run, with no wipe.
+	err := o.wipeOrSecureEraseDisks(context.Background())
+	if !errors.Is(err, disk.ErrSecureEraseUnsupported) {
+		t.Fatalf("wipeOrSecureEraseDisks() = %v, want ErrSecureEraseUnsupported", err)
+	}
+	if !hasCommandCall(cmd.calls, "hdparm", "-I", "/dev/sdb") {
+		t.Fatalf("expected secure erase probe to target /dev/sdb, got %#v", cmd.calls)
+	}
+	if hasCommandName(cmd.calls, "wipefs") {
+		t.Fatalf("secure erase fell back to a wipe without SECURE_ERASE_FALLBACK=wipe: %#v", cmd.calls)
+	}
+}
+
+// SECURE_ERASE_FALLBACK=wipe wipes the disk that cannot be erased and the
+// success status names it.
+func TestDeprovisionSecureEraseFallbackWipeIsReported(t *testing.T) {
+	cfg := &config.MachineConfig{Mode: "deprovision"}
+	cfg.Deprovision.Device = "/dev/sdb"
+	cfg.Deprovision.SecureErase = true
+	cfg.Provision.Disk.SecureEraseFallback = config.SecureEraseFallbackWipe
+	provider := &mockProvider{}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, provider)
+	withMockBlockDevices(t, "/dev/sdb")
+	withATADisks(t, o, "sdb")
 
 	if err := o.selectDeprovisionDisk(context.Background()); err != nil {
 		t.Fatalf("selectDeprovisionDisk: %v", err)
@@ -2252,17 +2283,32 @@ func TestDeprovisionHardScopesSecureEraseToConfiguredDevice(t *testing.T) {
 	if err := o.wipeOrSecureEraseDisks(context.Background()); err != nil {
 		t.Fatalf("wipeOrSecureEraseDisks: %v", err)
 	}
-
-	if !hasCommandCall(cmd.calls, "hdparm", "-I", "/dev/sdb") {
-		t.Fatalf("expected secure erase probe to target /dev/sdb, got %#v", cmd.calls)
-	}
 	if !hasCommandCall(cmd.calls, "wipefs", "-af", "/dev/sdb") {
-		t.Fatalf("expected secure erase fallback to target /dev/sdb, got %#v", cmd.calls)
+		t.Fatalf("expected the fallback wipe of /dev/sdb, got %#v", cmd.calls)
 	}
-	if hasCommandCall(cmd.calls, "hdparm", "-I", "/dev/sda") ||
-		hasCommandCall(cmd.calls, "wipefs", "-af", "/dev/sda") {
-		t.Fatalf("secure erase should not target provision disk, got %#v", cmd.calls)
+	if err := o.reportDeprovisionSuccess(context.Background()); err != nil {
+		t.Fatalf("reportDeprovisionSuccess: %v", err)
 	}
+	want := "deprovisioning complete; secure erase not done, wiped instead (SECURE_ERASE_FALLBACK=wipe): /dev/sdb"
+	if got := provider.statuses[len(provider.statuses)-1].message; got != want {
+		t.Fatalf("success status = %q, want %q", got, want)
+	}
+}
+
+// withATADisks makes the disk manager of o see names as ATA disks.
+func withATADisks(t *testing.T, o *Orchestrator, names ...string) {
+	t.Helper()
+	sys := t.TempDir()
+	for _, name := range names {
+		dir := filepath.Join(sys, "block", name, "device")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "vendor"), []byte("ATA     \n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	o.disk.SetSysfsRoot(sys)
 }
 
 func TestDeprovisionHardRejectsInvalidConfiguredDevice(t *testing.T) {
@@ -2374,8 +2420,10 @@ func TestWipeOrSecureEraseDisksScopesQuickEraseToTargetDisk(t *testing.T) {
 func TestWipeOrSecureEraseDisksScopesSecureEraseToTargetDisk(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Provision.Disk.SecureErase = true
+	cfg.Provision.Disk.SecureEraseFallback = config.SecureEraseFallbackWipe
 	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
 	o.targetDisk = "/dev/sda"
+	withATADisks(t, o, "sda")
 
 	if err := o.wipeOrSecureEraseDisks(context.Background()); err != nil {
 		t.Fatalf("wipeOrSecureEraseDisks: %v", err)
@@ -2386,6 +2434,17 @@ func TestWipeOrSecureEraseDisksScopesSecureEraseToTargetDisk(t *testing.T) {
 	}
 	if !hasCommandCall(cmd.calls, "wipefs", "-af", "/dev/sda") {
 		t.Fatalf("expected secure erase fallback to target /dev/sda, got %#v", cmd.calls)
+	}
+	if got := o.SecureEraseFallbacks(); !slices.Equal(got, []string{"/dev/sda"}) {
+		t.Fatalf("SecureEraseFallbacks() = %v, want [/dev/sda]", got)
+	}
+	if err := o.reportSuccess(context.Background()); err != nil {
+		t.Fatalf("reportSuccess: %v", err)
+	}
+	provider := o.provider.(*mockProvider)
+	want := "provisioning complete; secure erase not done, wiped instead (SECURE_ERASE_FALLBACK=wipe): /dev/sda"
+	if got := provider.statuses[len(provider.statuses)-1].message; got != want {
+		t.Fatalf("success status = %q, want %q", got, want)
 	}
 }
 
@@ -2420,8 +2479,10 @@ func TestWipeOrSecureEraseDisksKeepsSecureEraseForNonRAIDTarget(t *testing.T) {
 		Level:   1,
 		Devices: []string{"/dev/sda", "/dev/sdb"},
 	}}
+	cfg.Provision.Disk.SecureEraseFallback = config.SecureEraseFallbackWipe
 	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
 	o.targetDisk = "/dev/sda"
+	withATADisks(t, o, "sda")
 
 	if err := o.wipeOrSecureEraseDisks(context.Background()); err != nil {
 		t.Fatalf("wipeOrSecureEraseDisks: %v", err)

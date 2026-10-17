@@ -173,11 +173,13 @@ func TestStandbyCommandConfigIsADeepCopy(t *testing.T) {
 	}
 }
 
-// skippingDeprovisioner reports disks in use that its wipe skipped.
-type skippingDeprovisioner struct{ skipped []string }
+// skippingDeprovisioner reports disks in use that its wipe skipped and
+// disks that got the wipe instead of the secure erase.
+type skippingDeprovisioner struct{ skipped, fallbacks []string }
 
 func (skippingDeprovisioner) Deprovision(context.Context) error { return nil }
 func (s skippingDeprovisioner) SkippedDisks() []string          { return s.skipped }
+func (s skippingDeprovisioner) SecureEraseFallbacks() []string  { return s.fallbacks }
 
 // The completed ACK names the disks in use that the wipe of all disks
 // skipped, like the success status.
@@ -186,11 +188,12 @@ func TestStandbyDeprovisionAckNamesSkippedDisks(t *testing.T) {
 		func(*config.MachineConfig) error { return nil })
 	mode.deps.Cfg.Agent.DeprovisionSuccessAction = ""
 	mode.newDeprovisioner = func(*config.MachineConfig) standbyDeprovisioner {
-		return skippingDeprovisioner{skipped: []string{"/dev/sdc", "/dev/sdd"}}
+		return skippingDeprovisioner{skipped: []string{"/dev/sdc", "/dev/sdd"}, fallbacks: []string{"/dev/sda"}}
 	}
 
 	_ = mode.Run(context.Background())
-	want := "deprovisioning complete with payload keys HOSTNAME; not wiped, in use: /dev/sdc, /dev/sdd"
+	want := "deprovisioning complete with payload keys HOSTNAME; not wiped, in use: /dev/sdc, /dev/sdd" +
+		"; secure erase not done, wiped instead (SECURE_ERASE_FALLBACK=wipe): /dev/sda"
 	if provider.ackMessages[0] != want {
 		t.Fatalf("ack message = %q, want %q", provider.ackMessages[0], want)
 	}

@@ -118,6 +118,17 @@ type DiskConfig struct {
 	// Default: false (use wipefs)
 	SecureErase bool `yaml:"secureErase" json:"secureErase"`
 
+	// SecureEraseFallback selects what happens when a requested secure erase
+	// fails or the disk does not support it (no erase method for the media
+	// type, a security-frozen ATA drive, a missing erase tool).
+	// "fail": the run fails.
+	// "wipe": BOOTy logs a warning, wipes the disk like without SecureErase
+	// (WipeDepth) and names the disk in the success status.
+	// Applies to the provision and the deprovision secure erase.
+	// Valid values: "fail", "wipe".
+	// Default: "" (fail)
+	SecureEraseFallback string `yaml:"secureEraseFallback" json:"secureEraseFallback"`
+
 	// NumVFs is the number of SR-IOV Virtual Functions to create on Mellanox NICs.
 	// Applied during the Mellanox firmware configuration step.
 	// Default: 0 (skip SR-IOV firmware changes)

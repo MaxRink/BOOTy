@@ -3013,3 +3013,13 @@ IPV6_FORWARDING=true
 		t.Error("BRIDGE_MTU=big parsed without error")
 	}
 }
+
+func TestParseVarsSecureEraseFallback(t *testing.T) {
+	cfg, err := ParseVars(strings.NewReader("SECURE_ERASE=\"true\"\nSECURE_ERASE_FALLBACK=\"wipe\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Provision.Disk.SecureEraseFallback; got != "wipe" {
+		t.Fatalf("SecureEraseFallback = %q, want wipe", got)
+	}
+}

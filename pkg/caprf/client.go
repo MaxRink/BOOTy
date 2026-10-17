@@ -1196,6 +1196,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"DISK_SERIAL":                 &cfg.Provision.Disk.SerialNumber,
 		"DISK_SERIAL_NUMBER":          &cfg.Provision.Disk.SerialNumber,
 		"DISK_MIRRORING_MODE":         &cfg.Provision.Disk.MirroringMode,
+		"SECURE_ERASE_FALLBACK":       &cfg.Provision.Disk.SecureEraseFallback,
 		"ROOT_PARTITION_LABEL":        &cfg.Provision.Disk.RootPartitionLabel,
 		"INVENTORY_URL":               &cfg.Provision.Inventory.URL,
 		"FIRMWARE_URL":                &cfg.Provision.Firmware.URL,

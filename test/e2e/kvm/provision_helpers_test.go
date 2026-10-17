@@ -368,6 +368,8 @@ func buildProvisionInitramfsWithFiles(t *testing.T, vars, files map[string]strin
 		// Root disk mirroring: resizepart for growpart and efibootmgr for
 		// the boot entries on UEFI runs.
 		"resizepart", "efibootmgr",
+		// SECURE_ERASE: NVMe Format and ATA Security Erase.
+		"nvme", "hdparm",
 	}
 	for _, tool := range essentialTools {
 		toolPath, err := exec.LookPath(tool)

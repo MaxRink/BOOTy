@@ -128,8 +128,15 @@ func TestWipesSkipDisksInUse(t *testing.T) {
 	if err := m.WipeDisk(context.Background(), "/dev/sda"); err == nil || !strings.Contains(err.Error(), "refusing to wipe /dev/sda") {
 		t.Fatalf("WipeDisk(/dev/sda) = %v", err)
 	}
-	if err := m.SecureEraseDisk(context.Background(), "/dev/sdc"); err == nil {
-		t.Fatal("SecureEraseDisk(/dev/sdc) = nil, want the in-use error")
+	// An ATA vendor: without the in-use check the erase would run hdparm.
+	if err := os.MkdirAll(filepath.Join(m.sysfsRoot, "devices", "sdc", "device"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(m.sysfsRoot, "devices", "sdc", "device", "vendor"), []byte("ATA\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SecureEraseDisk(context.Background(), "/dev/sdc"); err == nil || errors.Is(err, ErrSecureEraseUnsupported) {
+		t.Fatalf("SecureEraseDisk(/dev/sdc) = %v, want the in-use error", err)
 	}
 	if len(cmd.calls) != 0 {
 		t.Fatalf("commands ran on busy disks: %v", callList(cmd.calls))

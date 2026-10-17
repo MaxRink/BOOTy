@@ -46,6 +46,12 @@ const (
 	WipeDepthQuick    = "quick"
 )
 
+// Values of DiskConfig.SecureEraseFallback.
+const (
+	SecureEraseFallbackFail = "fail"
+	SecureEraseFallbackWipe = "wipe"
+)
+
 // Values of DiskConfig.RAIDSuperblockClear.
 const (
 	RAIDSuperblockClearWiped = "wiped"

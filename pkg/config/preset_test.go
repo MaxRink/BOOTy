@@ -316,10 +316,32 @@ func TestParityOptionErrorsNameBothKeys(t *testing.T) {
 		"provision.disk.growPartition (GROW_PARTITION)":              {Provision: ProvisionConfig{Disk: DiskConfig{GrowPartition: "x"}}},
 		"provision.disk.wipeDepth (WIPE_DEPTH)":                      {Provision: ProvisionConfig{Disk: DiskConfig{WipeDepth: "x"}}},
 		"provision.disk.raidSuperblockClear (RAID_SUPERBLOCK_CLEAR)": {Provision: ProvisionConfig{Disk: DiskConfig{RAIDSuperblockClear: "x"}}},
+		"provision.disk.secureEraseFallback (SECURE_ERASE_FALLBACK)": {Provision: ProvisionConfig{Disk: DiskConfig{SecureEraseFallback: "x"}}},
 	} {
 		err := cfg.Validate()
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("Validate() = %v, want an error naming %q", err, want)
 		}
+	}
+}
+
+// SECURE_ERASE_FALLBACK accepts fail and wipe in any case, and the legacy
+// preset does not set it: CAPRF_LEGACY_COMPAT wipes every disk instead.
+func TestSecureEraseFallbackValues(t *testing.T) {
+	for in, want := range map[string]string{"": "", "fail": SecureEraseFallbackFail, " Wipe ": SecureEraseFallbackWipe} {
+		cfg := Config{Provision: ProvisionConfig{Disk: DiskConfig{SecureEraseFallback: in}}}
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("Validate(%q) = %v", in, err)
+		}
+		if got := cfg.Provision.Disk.SecureEraseFallback; got != want {
+			t.Fatalf("secureEraseFallback %q = %q after Validate, want %q", in, got, want)
+		}
+	}
+	legacy := Config{LegacyCompat: true}
+	if err := legacy.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if got := legacy.Provision.Disk.SecureEraseFallback; got != "" {
+		t.Fatalf("legacy preset sets secureEraseFallback = %q", got)
 	}
 }
