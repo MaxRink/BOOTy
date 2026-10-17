@@ -47,6 +47,9 @@ network:
 
   # loopbackAddresses: comma-separated CIDRs that GoBGP adds to lo, like
   # netplan "lo: addresses".
+  # mtu: fabric NIC and underlay dummy MTU (GoBGP, default 9000)
+  mtu: 9100
+
   loopbackAddresses: "2001:db8:40a:5481::17/128"
 
   # blackholeRoutes: comma-separated prefixes installed as blackhole routes
@@ -91,9 +94,6 @@ network:
     # peerMode, interfaces, neighbors, remoteASN, keepalive and hold do not apply.
     # defaults: timer profile, traditional (60/180/30) | datacenter (3/9/10, default)
     defaults: traditional
-    # multipathRelax (BGP_MULTIPATH_RELAX): "bgp bestpath as-path multipath-relax";
-    # set, it overrides the frr.conf value
-    multipathRelax: true
     peerGroups:
       - name: leaf
         vrf: Vrf_underlay
@@ -121,6 +121,19 @@ network:
     # GoBGP does not support BFD; use keepalive/hold timers for faster failure detection.
     bfdTransmitMS: 0
     bfdReceiveMS: 0
+
+    # connectRetry/localAS/neighborVRF: native peer options (GoBGP), like
+    # FRR "timers connect", "local-as N no-prepend replace-as" and
+    # "router bgp N vrf NAME". Explicit values also replace frr.conf values.
+    connectRetry: 5
+    localAS: 65501
+    neighborVRF: "Vrf_underlay"
+    # allowASIn/multipathRelax/installRoutes/fastExternalFailover: unset keeps
+    # the frr.conf behaviour (FRR defaults) or off without frr.conf.
+    allowASIn: 3
+    multipathRelax: true
+    installRoutes: true
+    fastExternalFailover: true
 
   evpn:
     # underlaySubnet: IPv4 subnet for loopback IP derivation (e.g. "192.168.4.0/24")
@@ -157,6 +170,11 @@ network:
     bridgeName: "br.provision"
     vxlanName: "vx.100"
 
+    # bridgeMAC/vxlanLink/underlayDummyName: provision devices (GoBGP)
+    bridgeMAC: "02:54:c0:00:02:11"
+    vxlanLink: "dum.underlay"
+    underlayDummyName: "dum.underlay"
+
     # dcgwIPs: comma-separated Data Center Gateway IPs (OneFabric topologies)
     dcgwIPs: ""
 
@@ -187,6 +205,9 @@ network:
     name: ""
     # tableID: routing table ID for the VRF (default: 1000)
     tableID: 1000
+    # overlayName: VRF of the provision bridge; "default" = default VRF
+    overlayName: "default"
+    overlayTableID: 0
 
   ipmi:
     # subnet: IPMI/BMC management network subnet for underlay IP derivation

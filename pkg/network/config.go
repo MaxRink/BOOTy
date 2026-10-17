@@ -101,6 +101,17 @@ type Config struct {
 	BGPSessions []BGPSession
 	// BGPMultipathRelax is "bgp bestpath as-path multipath-relax".
 	BGPMultipathRelax bool
+	// BGPLocalAS is the local-as of the native unnumbered peers.
+	BGPLocalAS uint32
+	// BGPNeighborVRF binds the native numbered peers to a VRF device.
+	BGPNeighborVRF string
+	// BGPConnectRetry is the connect retry timer of the native peers in
+	// seconds; 0 keeps the GoBGP default.
+	BGPConnectRetry uint32
+	// BGPAllowASIn is the allowas-in count of the native peers.
+	BGPAllowASIn uint32
+	// BGPInstallRoutes installs the learned unicast routes into the kernel.
+	BGPInstallRoutes bool
 	// BGPFastExternalFailover is the native fast-external-failover
 	// setting; nil keeps the session values (FRR default on).
 	BGPFastExternalFailover *bool
@@ -154,6 +165,8 @@ type BGPSession struct {
 	KeepaliveTime uint32
 	HoldTime      uint32
 	ConnectRetry  uint32
+	// ConnectRetrySet is true when the session sets its connect timer.
+	ConnectRetrySet bool
 	// Activated address families.
 	IPv4Unicast bool
 	IPv6Unicast bool

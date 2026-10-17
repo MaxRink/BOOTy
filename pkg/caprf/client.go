@@ -1305,6 +1305,11 @@ func applyNetworkStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"EVPN_TYPE5_NETWORKS": &cfg.Network.EVPN.Type5Networks,
 		"BRIDGE_NAME":         &cfg.Network.EVPN.BridgeName,
 		"VXLAN_NAME":          &cfg.Network.EVPN.VXLANName,
+		"BRIDGE_MAC":          &cfg.Network.EVPN.BridgeMAC,
+		"VXLAN_LINK":          &cfg.Network.EVPN.VXLANLink,
+		"UNDERLAY_DUMMY_NAME": &cfg.Network.EVPN.UnderlayDummyName,
+		"OVERLAY_VRF_NAME":    &cfg.Network.VRF.OverlayName,
+		"BGP_NEIGHBOR_VRF":    &cfg.Network.BGP.NeighborVRF,
 	}
 
 	if ptr, ok := strFields[key]; ok {
@@ -1316,22 +1321,25 @@ func applyNetworkStringVar(cfg *config.MachineConfig, key, value string) bool {
 
 func applyUint32Var(cfg *config.MachineConfig, key, value string) (bool, error) {
 	uint32Fields := map[string]*uint32{
-		"asn_server":      &cfg.Network.BGP.ASN,
-		"provision_vni":   &cfg.Network.EVPN.ProvisionVNI,
-		"leaf_asn":        &cfg.Network.EVPN.LeafASN,
-		"local_asn":       &cfg.Network.EVPN.LocalASN,
-		"VRF_TABLE_ID":    &cfg.Network.VRF.TableID,
-		"vrf_table_id":    &cfg.Network.VRF.TableID,
-		"BGP_KEEPALIVE":   &cfg.Network.BGP.Keepalive,
-		"bgp_keepalive":   &cfg.Network.BGP.Keepalive,
-		"BGP_HOLD":        &cfg.Network.BGP.Hold,
-		"bgp_hold":        &cfg.Network.BGP.Hold,
-		"BFD_TRANSMIT_MS": &cfg.Network.BGP.BFDTransmitMS,
-		"bfd_transmit_ms": &cfg.Network.BGP.BFDTransmitMS,
-		"BFD_RECEIVE_MS":  &cfg.Network.BGP.BFDReceiveMS,
-		"bfd_receive_ms":  &cfg.Network.BGP.BFDReceiveMS,
-		"BGP_REMOTE_ASN":  &cfg.Network.BGP.RemoteASN,
-		"bgp_remote_asn":  &cfg.Network.BGP.RemoteASN,
+		"asn_server":           &cfg.Network.BGP.ASN,
+		"provision_vni":        &cfg.Network.EVPN.ProvisionVNI,
+		"leaf_asn":             &cfg.Network.EVPN.LeafASN,
+		"local_asn":            &cfg.Network.EVPN.LocalASN,
+		"VRF_TABLE_ID":         &cfg.Network.VRF.TableID,
+		"vrf_table_id":         &cfg.Network.VRF.TableID,
+		"BGP_KEEPALIVE":        &cfg.Network.BGP.Keepalive,
+		"bgp_keepalive":        &cfg.Network.BGP.Keepalive,
+		"BGP_HOLD":             &cfg.Network.BGP.Hold,
+		"bgp_hold":             &cfg.Network.BGP.Hold,
+		"BFD_TRANSMIT_MS":      &cfg.Network.BGP.BFDTransmitMS,
+		"bfd_transmit_ms":      &cfg.Network.BGP.BFDTransmitMS,
+		"BFD_RECEIVE_MS":       &cfg.Network.BGP.BFDReceiveMS,
+		"bfd_receive_ms":       &cfg.Network.BGP.BFDReceiveMS,
+		"BGP_REMOTE_ASN":       &cfg.Network.BGP.RemoteASN,
+		"bgp_remote_asn":       &cfg.Network.BGP.RemoteASN,
+		"BGP_LOCAL_AS":         &cfg.Network.BGP.LocalAS,
+		"BGP_CONNECT_RETRY":    &cfg.Network.BGP.ConnectRetry,
+		"OVERLAY_VRF_TABLE_ID": &cfg.Network.VRF.OverlayTableID,
 	}
 
 	if ptr, ok := uint32Fields[key]; ok {
@@ -1679,6 +1687,28 @@ func applyFeatureToggle(cfg *config.MachineConfig, key, value string) (bool, err
 		cfg.Network.BGP.UnderlayAF = value
 	case "BGP_OVERLAY_TYPE":
 		cfg.Network.BGP.OverlayType = value
+	default:
+		return applyNetworkOptionVar(cfg, key, value)
+	}
+	return true, nil
+}
+
+// applyNetworkOptionVar handles the native options of values that the
+// provisioner frr.conf can also set. Unset options stay nil.
+func applyNetworkOptionVar(cfg *config.MachineConfig, key, value string) (bool, error) {
+	switch key {
+	case "BGP_INSTALL_ROUTES":
+		cfg.Network.BGP.InstallRoutes = new(parseBoolVar(value))
+	case "BGP_ALLOWAS_IN":
+		n, err := strconv.ParseUint(value, 10, 32)
+		if err != nil {
+			return true, fmt.Errorf("invalid %s: %w", key, err)
+		}
+		cfg.Network.BGP.AllowASIn = new(uint32(n))
+	case "MTU":
+		if err := setIntField(&cfg.Network.MTU, value); err != nil {
+			return true, fmt.Errorf("invalid %s: %w", key, err)
+		}
 	default:
 		return false, nil
 	}

@@ -167,26 +167,13 @@ its connected gateway (zebra next hop tracking) and again on every kernel
 route change. BOOTy takes the one gateway the kernel uses for it; zebra
 installs every ECMP member of the resolving route. A next hop that does
 not resolve is skipped with a warning at most once a minute. The first
-event of a burst updates the kernel at once, the rest 200 ms later, and every 30 s BOOTy reinstalls all routes,
-so routes the kernel dropped come back. The session NICs get
-`ignore_routes_with_linkdown=1`, so a dead ECMP member is skipped at once.
+event of a burst updates the kernel at once, the rest 200 ms later, and
+every 30 s BOOTy reinstalls all routes, so routes the kernel dropped come
+back. The session NICs get `ignore_routes_with_linkdown=1`, so a dead ECMP
+member is skipped at once.
 
-Merge rules for these keys (a set native value wins, a non-empty native
-list replaces the parsed list as a whole with one info log line):
-
-| Key | Parsed source | Native | Rule |
-|-----|---------------|--------|------|
-| `BGP_SESSIONS`, `BGP_PEER_GROUPS` | `frr.conf` neighbors | `network.bgp.sessions`, `network.bgp.peerGroups` | list replaces |
-| `BGP_DEFAULTS` | `frr defaults` | `network.bgp.defaults` | native only (timer profile of the native sessions) |
-| `allowASIn` (session field) | `neighbor X allowas-in [N]` | `network.bgp.sessions[].allowASIn` | part of the session list |
-| `BGP_MULTIPATH_RELAX` | `bgp bestpath as-path multipath-relax` | `network.bgp.multipathRelax` | native wins |
-| `BGP_FAST_EXTERNAL_FAILOVER` | `[no] bgp fast-external-failover` | `network.bgp.fastExternalFailover` | native wins, for every session |
-| `EVPN_TYPE5_ONLY` | provision VNI is an `frr.conf` L3VNI | `network.evpn.type5Only` | an explicit value wins |
-| `LOOPBACK_ADDRESSES` | netplan `lo` addresses | `network.loopbackAddresses` | list replaces |
-| `BLACKHOLE_ROUTES` | `frr.conf` `ip[v6] route P blackhole` | `network.blackholeRoutes` | list replaces |
-| `EVPN_TYPE5_NETWORKS` | `frr.conf` `network` with `advertise ipv4\|ipv6 unicast` | `network.evpn.type5Networks` | list replaces |
-| `VXLAN_NAME` | netplan tunnel name | `network.evpn.vxlanName` | native wins |
-| `BRIDGE_NAME` | netplan bridge name | `network.evpn.bridgeName` | native wins |
+The merge rule of each key is in the table at the end of
+[Netplan and FRR config input](#netplan-and-frr-config-input).
 
 With these sessions, the vars `BGP_PEER_MODE`, `BGP_INTERFACES`,
 `BGP_NEIGHBORS`, `BGP_REMOTE_ASN`, `BGP_KEEPALIVE` and `BGP_HOLD` no longer
@@ -232,13 +219,42 @@ compatibility: a value from netplan overrides the same value from the
 vars, and an empty netplan value keeps the vars value. A key that this
 release adds follows the native rule: a set native value wins, and a
 non-empty native list replaces the parsed list as a whole (one info log
-line). The table under [BGP sessions](#bgp-sessions) lists the keys of
-this release with their rule.
+line).
 
 `VLANS` is the exception: BOOTy parses it after the netplan merge, so
 `VLANS` from the vars replaces the netplan VLANs. When netplan and the FRR
 config give an ASN and a VNI, BOOTy sets the stack to GoBGP. This overrides
 `NETWORK_MODE`.
+
+The peer keys `BGP_LOCAL_AS`, `BGP_NEIGHBOR_VRF`, `BGP_CONNECT_RETRY` and
+`BGP_ALLOWAS_IN` are defaults: they fill only the session fields that the
+`frr.conf` or `BGP_SESSIONS` session and its peer-group do not set. The
+rule of every key:
+
+| Key | Parsed source | Native | Rule |
+|-----|---------------|--------|------|
+| `NETWORK_MODE`, `asn_server`, `provision_vni`, `underlay_ip`, `provision_ip`, `dns_resolver`, `STATIC_*`, `BOND_*`, `VRF_NAME`, `VRF_TABLE_ID`, `BGP_PEER_MODE`, `BGP_NEIGHBORS`, `BGP_REMOTE_ASN`, `EVPN_L2_ENABLED` | netplan, `frr.conf` | vars keys of earlier releases | netplan or `frr.conf` wins |
+| `BGP_SESSIONS`, `BGP_PEER_GROUPS` | `frr.conf` neighbors | `network.bgp.sessions`, `network.bgp.peerGroups` | list replaces |
+| `BGP_DEFAULTS` | `frr defaults` | `network.bgp.defaults` | timer profile of the native sessions |
+| `allowASIn` (session field) | `neighbor X allowas-in [N]` | `network.bgp.sessions[].allowASIn` | part of the session list |
+| `BGP_MULTIPATH_RELAX` | `bgp bestpath as-path multipath-relax` | `network.bgp.multipathRelax` | native wins |
+| `BGP_FAST_EXTERNAL_FAILOVER` | `[no] bgp fast-external-failover` | `network.bgp.fastExternalFailover` | native wins, for every session and the `BGP_PEER_MODE` peers (off for them when unset) |
+| `EVPN_TYPE5_ONLY` | provision VNI is an `frr.conf` L3VNI | `network.evpn.type5Only` | an explicit value wins |
+| `LOOPBACK_ADDRESSES` | netplan `lo` addresses | `network.loopbackAddresses` | list replaces |
+| `BLACKHOLE_ROUTES` | `frr.conf` `ip[v6] route P blackhole` | `network.blackholeRoutes` | list replaces |
+| `EVPN_TYPE5_NETWORKS` | `frr.conf` `network` with `advertise ipv4\|ipv6 unicast` | `network.evpn.type5Networks` | list replaces |
+| `VXLAN_NAME` | netplan tunnel name | `network.evpn.vxlanName` | native wins |
+| `BRIDGE_NAME` | netplan bridge name | `network.evpn.bridgeName` | native wins |
+| `BRIDGE_MAC` | netplan bridge `macaddress` | `network.evpn.bridgeMAC` | native wins |
+| `VXLAN_LINK` | netplan tunnel `link` | `network.evpn.vxlanLink` | native wins |
+| `UNDERLAY_DUMMY_NAME` | netplan dummy device | `network.evpn.underlayDummyName` | native wins |
+| `MTU` | the largest netplan `mtu` | `network.mtu` | native wins |
+| `OVERLAY_VRF_NAME`, `OVERLAY_VRF_TABLE_ID` | netplan VRF of the bridge | `network.vrf.overlayName`, `network.vrf.overlayTableID` | native wins |
+| `BGP_INSTALL_ROUTES` | none: a BOOTy setting, zebra always installs | `network.bgp.installRoutes` | native only; unset is on with sessions, off without |
+| `BGP_LOCAL_AS` | `neighbor X local-as N` | `network.bgp.localAS` | session default |
+| `BGP_NEIGHBOR_VRF` | `router bgp N vrf X` | `network.bgp.neighborVRF` | session default |
+| `BGP_CONNECT_RETRY` | `neighbor X timers connect N` | `network.bgp.connectRetry` | session default |
+| `BGP_ALLOWAS_IN` | `neighbor X allowas-in N` | `network.bgp.allowASIn` | session default |
 
 ### Strict input and the accepted grammar
 

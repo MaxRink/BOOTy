@@ -44,6 +44,8 @@ func prodtplContainer(node prodtplNode) string {
 		return prodtplShadow
 	case "native":
 		return prodtplNative
+	case "native-vrf":
+		return prodtplNativeVRF
 	}
 	return prodtplBooty
 }

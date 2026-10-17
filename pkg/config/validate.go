@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"net/netip"
 	"net/url"
 	"path"
@@ -42,6 +43,8 @@ import (
 //   - Transport.TokenAlgorithm: "RS256", "ES256"
 //   - Network.LoopbackAddresses, Network.BlackholeRoutes, Network.EVPN.Type5Networks:
 //     comma-separated CIDRs
+//   - Network.BGP.AllowASIn: 0 to 10; Network.EVPN.BridgeMAC: 48-bit MAC;
+//     Network.MTU: 0 or 626 to 65535
 //   - Cross-field: Network.BGP.Neighbors required when PeerMode is "dual" or "numbered"
 //
 // Validate also calls normalize(), which lowercases/uppercases case-insensitive
@@ -226,14 +229,10 @@ func collectValidationErrors(validators []func() string) []string {
 	return errs
 }
 
-func (c *Config) validateBGP() []string {
-	bfdTransmit := c.Network.BGP.BFDTransmitMS
-	bfdReceive := c.Network.BGP.BFDReceiveMS
-
-	errs := c.validateSessions()
-	if n := c.Network.WaitMaxAttempts; strings.EqualFold(strings.TrimSpace(c.Network.WaitMode), NetworkWaitRounds) && n != nil && (*n < 0 || *n > MaxNetworkWaitAttempts) {
-		errs = append(errs, fmt.Sprintf("network.waitMaxAttempts (NETWORK_WAIT_MAX_ATTEMPTS) must be 0-%d", MaxNetworkWaitAttempts))
-	}
+// validateNetworkOptions checks the native options of values that the
+// provisioner netplan and frr.conf can also set.
+func (c *Config) validateNetworkOptions() []string {
+	var errs []string
 	for _, list := range []struct{ name, value string }{
 		{"network.loopbackAddresses", c.Network.LoopbackAddresses},
 		{"network.blackholeRoutes", c.Network.BlackholeRoutes},
@@ -247,6 +246,28 @@ func (c *Config) validateBGP() []string {
 				errs = append(errs, fmt.Sprintf("%s: %q is not a CIDR", list.name, p))
 			}
 		}
+	}
+	if n := c.Network.BGP.AllowASIn; n != nil && *n > 10 {
+		errs = append(errs, fmt.Sprintf("network.bgp.allowASIn %d must be 0 to 10", *n))
+	}
+	if mac := strings.TrimSpace(c.Network.EVPN.BridgeMAC); mac != "" {
+		if hw, err := net.ParseMAC(mac); err != nil || len(hw) != 6 {
+			errs = append(errs, fmt.Sprintf("network.evpn.bridgeMAC %q is not a 48-bit MAC address", mac))
+		}
+	}
+	if mtu := c.Network.MTU; mtu != 0 && (mtu < 626 || mtu > 65535) {
+		errs = append(errs, fmt.Sprintf("network.mtu %d must be 626 to 65535 (576 IP + 50 VXLAN)", mtu))
+	}
+	return errs
+}
+
+func (c *Config) validateBGP() []string {
+	bfdTransmit := c.Network.BGP.BFDTransmitMS
+	bfdReceive := c.Network.BGP.BFDReceiveMS
+
+	errs := append(c.validateNetworkOptions(), c.validateSessions()...)
+	if n := c.Network.WaitMaxAttempts; strings.EqualFold(strings.TrimSpace(c.Network.WaitMode), NetworkWaitRounds) && n != nil && (*n < 0 || *n > MaxNetworkWaitAttempts) {
+		errs = append(errs, fmt.Sprintf("network.waitMaxAttempts (NETWORK_WAIT_MAX_ATTEMPTS) must be 0-%d", MaxNetworkWaitAttempts))
 	}
 	if (bfdTransmit == 0) != (bfdReceive == 0) {
 		errs = append(errs, "network.bgp.bfdTransmitMS and network.bgp.bfdReceiveMS must be set together")

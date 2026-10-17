@@ -159,6 +159,7 @@ func toBGPSession(s *frrconf.Session) network.BGPSession {
 		KeepaliveTime:        s.KeepaliveTime,
 		HoldTime:             s.HoldTime,
 		ConnectRetry:         s.ConnectRetry,
+		ConnectRetrySet:      s.ConnectRetrySet,
 		IPv4Unicast:          slices.Contains(s.Families, frrconf.FamilyIPv4Unicast),
 		IPv6Unicast:          slices.Contains(s.Families, frrconf.FamilyIPv6Unicast),
 		L2VPNEVPN:            slices.Contains(s.Families, frrconf.FamilyL2VPNEVPN),

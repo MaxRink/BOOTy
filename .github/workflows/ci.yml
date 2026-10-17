@@ -1685,6 +1685,7 @@ jobs:
             TestProdTplFIBRoutes \
             TestProdTplFIBWithdraw \
             TestProdTplUplinkCarrierLoss \
+            TestProdTplNativeVRFNameFIB \
             TestProdTplRRSessionVRFInbound \
             TestProdTplType5IPv6Install \
             TestProdTplType5Origination \
@@ -1704,7 +1705,7 @@ jobs:
         timeout-minutes: 5
         run: |
           mkdir -p prodtpl-logs
-          for node in leaf01 dcgw01 dcgw02 shadow booty native caprf-mock caprf6; do
+          for node in leaf01 dcgw01 dcgw02 shadow booty native native-vrf caprf-mock caprf6; do
             name="clab-booty-prodtpl-lab-${node}"
             timeout 30 sudo docker logs "${name}" > "prodtpl-logs/${node}.log" 2>&1 || true
             {

@@ -32,6 +32,9 @@ type Session struct {
 	KeepaliveTime uint32
 	HoldTime      uint32
 	ConnectRetry  uint32
+	// ConnectRetrySet is true when the peer or its group sets
+	// "timers connect"; else ConnectRetry is the profile default.
+	ConnectRetrySet bool
 	// Families are the activated address families.
 	Families []string
 	// AllowASIn is the "allowas-in" count of the activated address
@@ -108,6 +111,7 @@ func (c *Config) session(r *Router, n *Neighbor) (Session, error) {
 	s.KeepaliveTime = pick(n.KeepaliveTime, g, func(x *Neighbor) *uint32 { return x.KeepaliveTime }, keepalive)
 	s.HoldTime = pick(n.HoldTime, g, func(x *Neighbor) *uint32 { return x.HoldTime }, hold)
 	s.ConnectRetry = pick(n.ConnectRetry, g, func(x *Neighbor) *uint32 { return x.ConnectRetry }, connect)
+	s.ConnectRetrySet = n.ConnectRetry != nil || g != nil && g.ConnectRetry != nil
 
 	s.BFD, s.BFDProfile = n.BFD, n.BFDProfile
 	if g != nil {

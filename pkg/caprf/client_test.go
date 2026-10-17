@@ -2900,3 +2900,38 @@ BGP_MULTIPATH_RELAX=true
 		t.Fatal("BGP_SESSIONS with broken JSON parsed without error")
 	}
 }
+
+func TestParseVarsNativeBGPAndDeviceOptions(t *testing.T) {
+	cfg, err := ParseVars(strings.NewReader(`BGP_LOCAL_AS=65501
+BGP_NEIGHBOR_VRF=Vrf_underlay
+BGP_CONNECT_RETRY=5
+BGP_ALLOWAS_IN=0
+BGP_MULTIPATH_RELAX=true
+BGP_INSTALL_ROUTES=false
+BGP_FAST_EXTERNAL_FAILOVER=true
+BRIDGE_MAC=02:54:c0:00:02:13
+VXLAN_LINK=dum.underlay
+UNDERLAY_DUMMY_NAME=dum.underlay
+MTU=9100
+OVERLAY_VRF_NAME=default
+OVERLAY_VRF_TABLE_ID=20
+`))
+	if err != nil {
+		t.Fatalf("ParseVars() error = %v", err)
+	}
+	b, e := cfg.Network.BGP, cfg.Network.EVPN
+	if b.LocalAS != 65501 || b.NeighborVRF != "Vrf_underlay" || b.ConnectRetry != 5 {
+		t.Errorf("BGP = local-as %d, VRF %q, connect %d", b.LocalAS, b.NeighborVRF, b.ConnectRetry)
+	}
+	// An explicit 0 and an explicit false are set, not unset.
+	if b.AllowASIn == nil || *b.AllowASIn != 0 || b.InstallRoutes == nil || *b.InstallRoutes ||
+		b.MultipathRelax == nil || !*b.MultipathRelax || b.FastExternalFailover == nil || !*b.FastExternalFailover {
+		t.Errorf("BGP options = %v %v %v %v", b.AllowASIn, b.InstallRoutes, b.MultipathRelax, b.FastExternalFailover)
+	}
+	if e.BridgeMAC != "02:54:c0:00:02:13" || e.VXLANLink != "dum.underlay" || e.UnderlayDummyName != "dum.underlay" {
+		t.Errorf("EVPN devices = %q %q %q", e.BridgeMAC, e.VXLANLink, e.UnderlayDummyName)
+	}
+	if cfg.Network.MTU != 9100 || cfg.Network.VRF.OverlayName != "default" || cfg.Network.VRF.OverlayTableID != 20 {
+		t.Errorf("MTU %d overlay VRF %q table %d", cfg.Network.MTU, cfg.Network.VRF.OverlayName, cfg.Network.VRF.OverlayTableID)
+	}
+}

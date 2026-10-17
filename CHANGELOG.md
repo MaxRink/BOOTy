@@ -191,6 +191,13 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 
 ### Features
 
+- Native vars keys and YAML fields for every provisioner network value of GoBGP
+  mode (`BGP_LOCAL_AS`, `BGP_NEIGHBOR_VRF`, `BGP_CONNECT_RETRY`, `BGP_ALLOWAS_IN`,
+  `BGP_INSTALL_ROUTES`,
+  `BRIDGE_MAC`, `VXLAN_LINK`, `UNDERLAY_DUMMY_NAME`, `MTU`, `OVERLAY_VRF_NAME`,
+  `OVERLAY_VRF_TABLE_ID`). A set value wins over netplan and `frr.conf`; the
+  four peer keys are defaults for the sessions that do not set the value
+  (#654).
 - GoBGP mode installs and originates IPv6 EVPN Type-5 routes like zebra (via the
   IPv4-mapped VTEP), applies netplan `lo` addresses and `frr.conf` blackhole
   routes, and uses Type-5 only for an L3VNI provision VNI. `EVPN_TYPE5_ONLY` can

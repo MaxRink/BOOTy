@@ -35,6 +35,8 @@ const (
 	prodtplBooty  = "clab-booty-prodtpl-lab-booty"
 	prodtplShadow = "clab-booty-prodtpl-lab-shadow"
 	prodtplNative = "clab-booty-prodtpl-lab-native"
+	// prodtplNativeVRF has VRF_NAME but no BGP_NEIGHBOR_VRF.
+	prodtplNativeVRF = "clab-booty-prodtpl-lab-native-vrf"
 
 	prodtplASN     = 4210000017
 	prodtplLocalAS = 65501
@@ -55,12 +57,15 @@ var (
 	// prodtplNativeNode is BOOTy with the L3VNI values from vars keys.
 	prodtplNativeNode = prodtplNode{"native", "192.0.2.19", []string{"eth7", "eth8"}}
 	prodtplServers    = []prodtplNode{prodtplShadowNode, prodtplBootyNode, prodtplNativeNode}
+	// prodtplNativeVRFNode has only the leaf sessions, so it is not in
+	// prodtplServers.
+	prodtplNativeVRFNode = prodtplNode{"native-vrf", "192.0.2.20", []string{"eth9", "eth10"}}
 )
 
 // prodtplOthers returns the underlay addresses of the other servers.
 func prodtplOthers(node prodtplNode) []string {
 	var others []string
-	for _, n := range prodtplServers {
+	for _, n := range append(slices.Clone(prodtplServers), prodtplNativeVRFNode) {
 		if n.name != node.name {
 			others = append(others, n.underlay)
 		}
@@ -164,7 +169,7 @@ func waitView(t *testing.T, container, neighbor string, want sessionView) {
 func TestProdTplLeafSessions(t *testing.T) {
 	want := sessionView{State: "Established", RemoteAS: prodtplLocalAS, LocalAS: 65500,
 		HoldMsecs: 90000, KeepMsecs: 30000, Families: []string{"ipv4Unicast"}}
-	for _, node := range []prodtplNode{prodtplShadowNode, prodtplBootyNode} {
+	for _, node := range prodtplServers {
 		for _, port := range node.leafPorts {
 			t.Run(node.name+"-"+port, func(t *testing.T) {
 				waitView(t, prodtplLeaf, port, want)
@@ -200,7 +205,7 @@ func TestProdTplLocalASReplaceASPath(t *testing.T) {
 		return s, nil
 	}
 	want := []string{"65501", "65501"} // one path per uplink
-	for _, node := range []prodtplNode{prodtplShadowNode, prodtplBootyNode} {
+	for _, node := range prodtplServers {
 		for {
 			got, err := paths(node.underlay + "/32")
 			if err == nil && reflect.DeepEqual(got, want) {
@@ -220,7 +225,7 @@ func TestProdTplLocalASReplaceASPath(t *testing.T) {
 func TestProdTplRRSessions(t *testing.T) {
 	want := sessionView{State: "Established", RemoteAS: prodtplASN, LocalAS: prodtplASN,
 		HoldMsecs: 90000, KeepMsecs: 30000, Families: []string{"l2VpnEvpn"}}
-	for _, node := range []prodtplNode{prodtplShadowNode, prodtplBootyNode} {
+	for _, node := range prodtplServers {
 		for _, rr := range []string{prodtplDCGW1, prodtplDCGW2} {
 			t.Run(node.name+"-"+rr, func(t *testing.T) {
 				waitView(t, rr, node.underlay, want)
@@ -232,7 +237,7 @@ func TestProdTplRRSessions(t *testing.T) {
 // dcgw02 is passive, so its sessions exist only because the servers
 // connect out of Vrf_underlay. Its local port is the BGP port.
 func TestProdTplRRSessionVRFOutbound(t *testing.T) {
-	for _, node := range []prodtplNode{prodtplShadowNode, prodtplBootyNode} {
+	for _, node := range prodtplServers {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		n, err := prodtplNeighbor(ctx, prodtplDCGW2, node.underlay)
 		cancel()
@@ -359,7 +364,7 @@ func prodtplRoutesVia(devs ...string) map[string][]string {
 // like zebra installs them on the shadow node (C17, C10).
 func TestProdTplFIBRoutes(t *testing.T) {
 	want := prodtplRoutesVia("ens1f0np0", "ens1f1np1")
-	for _, node := range []prodtplNode{prodtplShadowNode, prodtplBootyNode} {
+	for _, node := range prodtplServers {
 		waitRoutes(t, node, want)
 	}
 }
@@ -378,7 +383,7 @@ func TestProdTplFIBWithdraw(t *testing.T) {
 			t.Fatalf("leaf %s: %v\n%s", stmt, err, out)
 		}
 	}
-	for _, node := range []prodtplNode{prodtplShadowNode, prodtplBootyNode} {
+	for _, node := range prodtplServers {
 		port := node.leafPorts[0]
 		leafShutdown(port, true)
 		waitRoutes(t, node, prodtplRoutesVia("ens1f1np1"))
@@ -393,7 +398,7 @@ func TestProdTplFIBWithdraw(t *testing.T) {
 // back restores ECMP.
 func TestProdTplUplinkCarrierLoss(t *testing.T) {
 	const maxFailover = 2 * time.Second // includes docker exec latency
-	for _, node := range []prodtplNode{prodtplShadowNode, prodtplBootyNode} {
+	for _, node := range prodtplServers {
 		ctx, cancel := context.WithTimeout(context.Background(), prodtplTimeout)
 		port := node.leafPorts[0]
 		start := time.Now()
@@ -423,29 +428,59 @@ func TestProdTplUplinkCarrierLoss(t *testing.T) {
 	}
 }
 
+// With VRF_NAME and no BGP_NEIGHBOR_VRF, the routes of the peers on the
+// Vrf_underlay NICs go into the Vrf_underlay table, because FRR puts an
+// interface peer of a VRF into the "router bgp" of that VRF (as on the
+// shadow node). The main table gets no BGP routes.
+func TestProdTplNativeVRFNameFIB(t *testing.T) {
+	node := prodtplNativeVRFNode
+	session := sessionView{State: "Established", RemoteAS: prodtplLocalAS, LocalAS: 65500,
+		HoldMsecs: 90000, KeepMsecs: 30000, Families: []string{"ipv4Unicast"}}
+	for _, port := range node.leafPorts {
+		waitView(t, prodtplLeaf, port, session)
+	}
+	want := prodtplRoutesVia("ens1f0np0", "ens1f1np1")
+	waitRoutes(t, prodtplShadowNode, want)
+	waitRoutes(t, node, want)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	out, err := prodtplExec(ctx, prodtplNativeVRF, "ip", "route", "show", "table", "main", "proto", "bgp")
+	if err != nil || strings.TrimSpace(out) != "" {
+		t.Fatalf("%s: BGP routes in the main table: %q (%v), want none", node.name, out, err)
+	}
+}
+
 // With outbound BGP connects from BOOTy dropped, dcgw01 must open the
-// session into Vrf_underlay and the BOOTy listener must accept it.
+// session into Vrf_underlay and the BOOTy listener must accept it. Checked
+// for the frr.conf sessions (booty) and the native numbered peers (native).
 func TestProdTplRRSessionVRFInbound(t *testing.T) {
+	for _, node := range []prodtplNode{prodtplBootyNode, prodtplNativeNode} {
+		t.Run(node.name, func(t *testing.T) { prodtplInbound(t, node) })
+	}
+}
+
+func prodtplInbound(t *testing.T, node prodtplNode) {
 	ctx, cancel := context.WithTimeout(context.Background(), prodtplTimeout)
 	defer cancel()
+	c := prodtplContainer(node)
 	rule := []string{"OUTPUT", "-p", "tcp", "--syn", "-d", "198.51.100.1", "--dport", "179", "-j", "DROP"}
-	if out, err := prodtplExec(ctx, prodtplBooty, append([]string{"iptables", "-I"}, rule...)...); err != nil {
+	if out, err := prodtplExec(ctx, c, append([]string{"iptables", "-I"}, rule...)...); err != nil {
 		t.Fatalf("block outbound connects: %v\n%s", err, out)
 	}
-	t.Cleanup(func() {
-		_, _ = prodtplExec(context.Background(), prodtplBooty, append([]string{"iptables", "-D"}, rule...)...)
-	})
-	if out, err := prodtplExec(ctx, prodtplDCGW1, "vtysh", "-c", "clear bgp 192.0.2.17"); err != nil {
+	defer func() {
+		_, _ = prodtplExec(context.Background(), c, append([]string{"iptables", "-D"}, rule...)...)
+	}()
+	if out, err := prodtplExec(ctx, prodtplDCGW1, "vtysh", "-c", "clear bgp "+node.underlay); err != nil {
 		t.Fatalf("reset session: %v\n%s", err, out)
 	}
 	for {
-		n, err := prodtplNeighbor(ctx, prodtplDCGW1, prodtplBootyNode.underlay)
+		n, err := prodtplNeighbor(ctx, prodtplDCGW1, node.underlay)
 		if err == nil && n["bgpState"] == "Established" && n["portForeign"] == float64(179) {
 			return
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatalf("dcgw01 -> BOOTy session not opened inbound: %v %v", n, err)
+			t.Fatalf("dcgw01 -> %s session not opened inbound: %v %v", node.name, n, err)
 		case <-time.After(2 * time.Second):
 		}
 	}

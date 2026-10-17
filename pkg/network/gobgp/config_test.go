@@ -1116,3 +1116,25 @@ func TestNewConfigMapsRelaxAndFailover(t *testing.T) {
 		t.Fatalf("FastExternalFailover = %v (%v), want off", cfg.FastExternalFailover, err)
 	}
 }
+
+// The native peers carry the options that frr.conf sessions carry per peer.
+func TestNativePeerOptions(t *testing.T) {
+	cfg := &Config{ASN: 4210000017, LocalAS: 65501, AllowASIn: 3, NeighborVRF: "Vrf_underlay"}
+	ifPeer := buildInterfacePeer(cfg, "eth1", "fe80::1%eth1", ipv4Families())
+	if ifPeer.Conf.LocalAsn != 65501 || ifPeer.Conf.AllowOwnAsn != 3 || ifPeer.Transport.BindInterface != "eth1" {
+		t.Fatalf("interface peer conf %+v transport %+v", ifPeer.Conf, ifPeer.Transport)
+	}
+	numPeer := buildNumberedPeer(cfg, "198.51.100.1", allFamilies())
+	if numPeer.Conf.PeerAsn != 4210000017 || numPeer.Conf.LocalAsn != 0 || numPeer.Conf.AllowOwnAsn != 3 ||
+		numPeer.Transport.BindInterface != "Vrf_underlay" {
+		t.Fatalf("numbered peer conf %+v transport %+v", numPeer.Conf, numPeer.Transport)
+	}
+	u := &UnderlayTier{cfg: cfg}
+	if !u.hasVRFSession() {
+		t.Fatal("BGP_NEIGHBOR_VRF must count as a VRF session (FIB table, tcp_l3mdev_accept)")
+	}
+	u.cfg = &Config{ASN: 65000}
+	if u.hasVRFSession() {
+		t.Fatal("no VRF without BGP_NEIGHBOR_VRF")
+	}
+}

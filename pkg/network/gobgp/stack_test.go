@@ -427,19 +427,19 @@ func TestEnsureVTEPRouteNumberedUsesNeighborEgress(t *testing.T) {
 	}
 }
 
-// With FRR config sessions the FIB writer installs the VTEP routes, so
-// the overlay must not add its own scope-link VTEP routes; without
-// sessions (and without a provision gateway) it does.
+// With the FIB writer (on with FRR config sessions) the learned routes
+// reach the VTEPs, so the overlay must not add its own scope-link VTEP
+// routes; without it (and without a provision gateway) it does.
 func TestStackVTEPRoutesOnlyWithoutSessions(t *testing.T) {
 	for _, tt := range []struct {
-		name     string
-		sessions []network.BGPSession
-		want     bool
+		name    string
+		install bool
+		want    bool
 	}{
-		{"no sessions", nil, true},
-		{"frr.conf sessions", []network.BGPSession{{Name: "192.0.2.1"}}, false},
+		{"FIB writer off", false, true},
+		{"FIB writer on (frr.conf sessions)", true, false},
 	} {
-		s := NewStack(&Config{Sessions: tt.sessions})
+		s := NewStack(&Config{InstallRoutes: tt.install})
 		s.wireVTEPRoutes()
 		if got := s.overlay.ensureVTEPRoute != nil; got != tt.want {
 			t.Errorf("%s: overlay VTEP routes = %v, want %v", tt.name, got, tt.want)

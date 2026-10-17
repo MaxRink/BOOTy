@@ -969,6 +969,7 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 		return nil, err
 	}
 	warnIgnoredPeerVars(netCfg, ignored)
+	applyBGPOptions(&cfg.Network.BGP, netCfg)
 	keepProvisionerResolvConf(cfg, netCfg)
 
 	// Parse VLAN configuration.
@@ -1038,7 +1039,7 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (network.M
 }
 
 func networkConfigFromMachineConfig(cfg *config.MachineConfig) *network.Config {
-	return &network.Config{
+	netCfg := &network.Config{
 		UnderlaySubnet:    cfg.Network.EVPN.UnderlaySubnet,
 		UnderlayIP:        cfg.Network.EVPN.UnderlayIP,
 		OverlaySubnet:     cfg.Network.EVPN.OverlaySubnet,
@@ -1080,9 +1081,64 @@ func networkConfigFromMachineConfig(cfg *config.MachineConfig) *network.Config {
 		BlackholeRoutes:   splitList(cfg.Network.BlackholeRoutes),
 		BridgeName:        cfg.Network.EVPN.BridgeName,
 		VXLANName:         cfg.Network.EVPN.VXLANName,
+		BridgeMAC:         cfg.Network.EVPN.BridgeMAC,
+		VXLANLink:         cfg.Network.EVPN.VXLANLink,
+		UnderlayDummyName: cfg.Network.EVPN.UnderlayDummyName,
+		MTU:               cfg.Network.MTU,
+		OverlayVRFTableID: cfg.Network.VRF.OverlayTableID,
+		BGPLocalAS:        cfg.Network.BGP.LocalAS,
+		BGPNeighborVRF:    cfg.Network.BGP.NeighborVRF,
+		BGPConnectRetry:   cfg.Network.BGP.ConnectRetry,
 		BGPAuthPassword:   cfg.Network.BGP.AuthPassword,
 		BGPMinPeers:       cfg.Network.BGP.MinPeers,
 	}
+	// OVERLAY_VRF_NAME=default keeps the bridge in the default VRF.
+	if name := cfg.Network.VRF.OverlayName; name != "" {
+		netCfg.OverlayVRFSet = true
+		if name != "default" {
+			netCfg.OverlayVRFName = name
+		}
+	}
+	return netCfg
+}
+
+// applyBGPOptions applies the BGP options that frr.conf can also set. With
+// any BGP sessions (frr.conf or network.bgp.sessions) the default is FRR's
+// (routes installed); the BGP_PEER_MODE peers default it off. fast-external-failover is set in
+// applyNativeSessions. An explicit router option wins. The peer options
+// (local-as, VRF, connect retry, allowas-in) are defaults for the sessions
+// that do not set the value themselves.
+func applyBGPOptions(o *config.BGPConfig, n *network.Config) {
+	withSessions := len(n.BGPSessions) > 0
+	n.BGPInstallRoutes = boolOr(o.InstallRoutes, withSessions)
+	if o.MultipathRelax != nil {
+		n.BGPMultipathRelax = *o.MultipathRelax
+	}
+	if o.AllowASIn != nil {
+		n.BGPAllowASIn = *o.AllowASIn
+	}
+	for i := range n.BGPSessions {
+		s := &n.BGPSessions[i]
+		if o.AllowASIn != nil && s.AllowASIn == 0 {
+			s.AllowASIn = int(*o.AllowASIn)
+		}
+		if o.ConnectRetry > 0 && !s.ConnectRetrySet {
+			s.ConnectRetry, s.ConnectRetrySet = o.ConnectRetry, true
+		}
+		if o.LocalAS > 0 && !s.Internal && s.LocalASN == 0 {
+			s.LocalASN = o.LocalAS
+		}
+		if o.NeighborVRF != "" && !s.Interface && s.VRF == "" {
+			s.VRF = o.NeighborVRF
+		}
+	}
+}
+
+func boolOr(v *bool, def bool) bool {
+	if v != nil {
+		return *v
+	}
+	return def
 }
 
 // keepProvisionerResolvConf leaves the provisioner /etc/resolv.conf in the
@@ -1288,8 +1344,8 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	}
 	nativeWins(&dst.BridgeName, src.BridgeName)
 	// The netplan MAC belongs to one bridge. Only use it for that bridge.
-	if src.BridgeMAC != "" && src.BridgeNameOrDefault() == dst.BridgeNameOrDefault() {
-		dst.BridgeMAC = src.BridgeMAC
+	if src.BridgeNameOrDefault() == dst.BridgeNameOrDefault() {
+		nativeWins(&dst.BridgeMAC, src.BridgeMAC)
 	}
 	if src.ProvisionIP != "" {
 		dst.ProvisionIP = mergeProvisionIP(dst.ProvisionIP, src.ProvisionIP)
@@ -1316,32 +1372,24 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	if src.VRFTableID > 0 {
 		dst.VRFTableID = src.VRFTableID
 	}
-	if src.OverlayVRFTableID > 0 {
-		dst.OverlayVRFTableID = src.OverlayVRFTableID
-	}
+	nativeWins(&dst.OverlayVRFTableID, src.OverlayVRFTableID)
 	if src.VRFName != "" {
 		dst.VRFName = src.VRFName
 	}
-	if src.OverlayVRFSet {
+	if src.OverlayVRFSet && !dst.OverlayVRFSet {
 		// Preserve an explicitly empty overlay VRF name: it means the overlay
 		// should stay in the default namespace, not that the value is unset.
 		dst.OverlayVRFName = src.OverlayVRFName
 		dst.OverlayVRFSet = true
 	}
-	if src.UnderlayDummyName != "" {
-		dst.UnderlayDummyName = src.UnderlayDummyName
-	}
-	if src.VXLANLink != "" {
-		dst.VXLANLink = src.VXLANLink
-	}
+	nativeWins(&dst.UnderlayDummyName, src.UnderlayDummyName)
+	nativeWins(&dst.VXLANLink, src.VXLANLink)
 	// Keys that this release adds: a set native value wins.
 	nativeWins(&dst.VXLANName, src.VXLANName)
 	nativeList("network.loopbackAddresses", &dst.LoopbackAddrs, src.LoopbackAddrs)
 	nativeList("network.blackholeRoutes", &dst.BlackholeRoutes, src.BlackholeRoutes)
 	nativeList("network.evpn.type5Networks", &dst.Type5Networks, src.Type5Networks)
-	if src.MTU > 0 {
-		dst.MTU = src.MTU
-	}
+	nativeWins(&dst.MTU, src.MTU)
 	if src.DNSResolvers != "" {
 		dst.DNSResolvers = src.DNSResolvers
 	}
@@ -1674,9 +1722,6 @@ func inputStrictness(cfg *config.MachineConfig) (netplanStrict, frrStrict bool) 
 // applyNativeSessions resolves network.bgp.sessions with the merged ASN.
 // The native list replaces the frr.conf sessions as a whole.
 func applyNativeSessions(bgp *config.BGPConfig, netCfg *network.Config) error {
-	if bgp.MultipathRelax != nil {
-		netCfg.BGPMultipathRelax = *bgp.MultipathRelax
-	}
 	if v := bgp.FastExternalFailover; v != nil {
 		netCfg.BGPFastExternalFailover = v
 		for i := range netCfg.BGPSessions {

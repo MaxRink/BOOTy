@@ -30,11 +30,15 @@ func buildNumberedPeer(cfg *Config, addr string, families []*apipb.AfiSafi) *api
 		Conf: &apipb.PeerConf{
 			NeighborAddress: addr,
 			PeerAsn:         remoteASN,
+			AllowOwnAsn:     cfg.AllowASIn,
 		},
 		Timers:   bgpTimers(cfg),
 		AfiSafis: families,
 		Transport: &apipb.Transport{
 			MtuDiscovery: true,
+			// SO_BINDTODEVICE on the VRF device, like FRR "router bgp N
+			// vrf NAME".
+			BindInterface: cfg.NeighborVRF,
 		},
 	}
 
@@ -51,6 +55,9 @@ func buildInterfacePeer(cfg *Config, iface, addr string, families []*apipb.AfiSa
 		Conf: &apipb.PeerConf{
 			NeighborAddress: addr,
 			PeerAsn:         0, // External peer, ASN learned via open
+			// GoBGP local-as is FRR "local-as N no-prepend replace-as".
+			LocalAsn:    cfg.LocalAS,
+			AllowOwnAsn: cfg.AllowASIn,
 		},
 		Timers:   bgpTimers(cfg),
 		AfiSafis: families,

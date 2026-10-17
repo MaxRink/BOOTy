@@ -390,10 +390,11 @@ func (s *Stack) teardownGatewayRoute() {
 }
 
 // wireVTEPRoutes lets the overlay install a route to each Type-5 VTEP
-// when no provision gateway is set. With FRR config sessions the FIB
-// writer installs the VTEP routes learned from the fabric, like zebra.
+// when no provision gateway is set. With the FIB writer (BGP_INSTALL_ROUTES,
+// on with FRR config sessions) the routes learned from the fabric reach
+// the VTEPs, like zebra.
 func (s *Stack) wireVTEPRoutes() {
-	if s.cfg.ProvisionGateway == "" && len(s.cfg.Sessions) == 0 {
+	if s.cfg.ProvisionGateway == "" && !s.cfg.InstallRoutes {
 		s.overlay.ensureVTEPRoute = s.ensureVTEPRoute
 	}
 }

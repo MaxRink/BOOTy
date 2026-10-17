@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -73,8 +74,15 @@ func TestMergeNetplanConfigPrecedence(t *testing.T) {
 		UnderlayIP: "192.0.2.17", VXLANName: "vx.parsed", BridgeName: "br.parsed",
 		LoopbackAddrs: []string{"2001:db8::17/128", "2001:db8::18/128"},
 	}
-	native := &network.Config{UnderlayIP: "192.0.2.99", VXLANName: "vx.native", BridgeName: "br.native", LoopbackAddrs: []string{"2001:db8::99/128"}}
+	parsed.MTU, parsed.OverlayVRFSet = 9100, true
+	native := &network.Config{
+		UnderlayIP: "192.0.2.99", VXLANName: "vx.native", BridgeName: "br.native", LoopbackAddrs: []string{"2001:db8::99/128"},
+		MTU: 9000, OverlayVRFName: "Vrf_native", OverlayVRFSet: true,
+	}
 	mergeNetplanConfig(native, parsed)
+	if native.MTU != 9000 || native.OverlayVRFName != "Vrf_native" {
+		t.Errorf("native MTU %d, OVERLAY_VRF_NAME %q, want the native values", native.MTU, native.OverlayVRFName)
+	}
 	if native.UnderlayIP != "192.0.2.17" {
 		t.Errorf("legacy underlay_ip = %s, want the netplan value", native.UnderlayIP)
 	}
@@ -89,7 +97,7 @@ func TestMergeNetplanConfigPrecedence(t *testing.T) {
 	if unset.BridgeName != "br.parsed" {
 		t.Errorf("unset BRIDGE_NAME %s, want the netplan bridge", unset.BridgeName)
 	}
-	if unset.VXLANName != "vx.parsed" || len(unset.LoopbackAddrs) != 2 {
+	if unset.VXLANName != "vx.parsed" || len(unset.LoopbackAddrs) != 2 || unset.MTU != 9100 || !unset.OverlayVRFSet || unset.OverlayVRFName != "" {
 		t.Errorf("unset native keys = %s %v, want the parsed values", unset.VXLANName, unset.LoopbackAddrs)
 	}
 }
@@ -1706,17 +1714,13 @@ func TestApplyNativeMultipathRelax(t *testing.T) {
 		t.Fatal(err)
 	}
 	native := &network.Config{}
-	if err := applyNativeSessions(&vars.Network.BGP, native); err != nil {
-		t.Fatal(err)
-	}
+	applyBGPOptions(&vars.Network.BGP, native)
 	if !parsed.MultipathRelax || native.BGPMultipathRelax != parsed.MultipathRelax {
 		t.Fatalf("frr.conf %v, native %v, want both true", parsed.MultipathRelax, native.BGPMultipathRelax)
 	}
 
 	merged := &network.Config{BGPMultipathRelax: true}
-	if err := applyNativeSessions(&config.BGPConfig{MultipathRelax: new(false)}, merged); err != nil {
-		t.Fatal(err)
-	}
+	applyBGPOptions(&config.BGPConfig{MultipathRelax: new(false)}, merged)
 	if merged.BGPMultipathRelax {
 		t.Error("native multipathRelax false did not override the frr.conf value")
 	}
@@ -1894,5 +1898,73 @@ func TestType5KeysEqualBM4XTemplates(t *testing.T) {
 	if !slices.Equal(native.LoopbackAddrs, merged.LoopbackAddrs) || !slices.Equal(native.BlackholeRoutes, merged.BlackholeRoutes) ||
 		!slices.Equal(native.Type5Networks, merged.Type5Networks) || native.VXLANName != merged.VXLANName || native.EVPNType5Only != merged.EVPNType5Only {
 		t.Fatalf("native = lo %v blackholes %v networks %v vxlan %q type5only %v", native.LoopbackAddrs, native.BlackholeRoutes, native.Type5Networks, native.VXLANName, native.EVPNType5Only)
+	}
+}
+
+func TestApplyBGPOptions(t *testing.T) {
+	frrSessions := func() []network.BGPSession {
+		return []network.BGPSession{
+			{Name: "eth1", Interface: true, LocalASN: 65501, AllowASIn: 3, ConnectRetry: 120},
+			{Name: "198.51.100.1", Internal: true, VRF: "Vrf_underlay", AllowASIn: 3, ConnectRetry: 5, ConnectRetrySet: true},
+			{Name: "198.51.100.9", RemoteASN: 65009, ConnectRetry: 120},
+		}
+	}
+	t.Run("frr defaults", func(t *testing.T) {
+		n := &network.Config{BGPSessions: frrSessions(), BGPMultipathRelax: true}
+		applyBGPOptions(&config.BGPConfig{}, n)
+		if !n.BGPInstallRoutes || !n.BGPMultipathRelax {
+			t.Fatalf("frr.conf defaults = %+v", n)
+		}
+		if !reflect.DeepEqual(n.BGPSessions, frrSessions()) {
+			t.Fatalf("sessions changed without explicit options: %+v", n.BGPSessions)
+		}
+	})
+	t.Run("native defaults off", func(t *testing.T) {
+		n := &network.Config{}
+		applyBGPOptions(&config.BGPConfig{}, n)
+		if n.BGPInstallRoutes || n.BGPMultipathRelax || n.BGPAllowASIn != 0 {
+			t.Fatalf("native defaults = %+v", n)
+		}
+	})
+	// The peer options are defaults: a session value wins.
+	t.Run("peer options are session defaults", func(t *testing.T) {
+		n := &network.Config{BGPSessions: frrSessions(), BGPMultipathRelax: true}
+		applyBGPOptions(&config.BGPConfig{
+			InstallRoutes: new(false), FastExternalFailover: new(false), MultipathRelax: new(false),
+			AllowASIn: new(uint32(2)), ConnectRetry: 10, LocalAS: 65999, NeighborVRF: "Vrf_x",
+		}, n)
+		if n.BGPInstallRoutes || n.BGPMultipathRelax {
+			t.Fatalf("explicit false lost: %+v", n)
+		}
+		want := frrSessions()
+		want[2].AllowASIn = 2
+		want[0].ConnectRetry, want[0].ConnectRetrySet = 10, true
+		want[2].ConnectRetry, want[2].ConnectRetrySet, want[2].LocalASN, want[2].VRF = 10, true, 65999, "Vrf_x"
+		if !reflect.DeepEqual(n.BGPSessions, want) {
+			t.Fatalf("sessions = %+v, want %+v", n.BGPSessions, want)
+		}
+	})
+}
+
+func TestNetworkConfigFromMachineConfigOverlayVRF(t *testing.T) {
+	for _, tt := range []struct{ name, wantName string }{{"default", ""}, {"Vrf_cust", "Vrf_cust"}} {
+		cfg := &config.MachineConfig{}
+		cfg.Network.VRF.Name = "Vrf_underlay"
+		cfg.Network.VRF.OverlayName = tt.name
+		n := networkConfigFromMachineConfig(cfg)
+		if !n.OverlayVRFSet || n.OverlayVRFName != tt.wantName {
+			t.Errorf("OVERLAY_VRF_NAME=%s: set %v name %q, want %q", tt.name, n.OverlayVRFSet, n.OverlayVRFName, tt.wantName)
+		}
+	}
+}
+
+// BRIDGE_MAC is a key of this release: a set native MAC wins over the
+// netplan macaddress of the same bridge.
+func TestMergeNetplanConfigNativeBridgeMAC(t *testing.T) {
+	dst := &network.Config{BridgeMAC: "02:00:00:00:aa:01"}
+	src := &network.Config{BridgeMAC: "02:00:00:00:10:01"}
+	mergeNetplanConfig(dst, src)
+	if dst.BridgeMAC != "02:00:00:00:aa:01" {
+		t.Fatalf("BridgeMAC = %q, want the native 02:00:00:00:aa:01", dst.BridgeMAC)
 	}
 }

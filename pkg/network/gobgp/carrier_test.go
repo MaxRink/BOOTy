@@ -94,6 +94,17 @@ func TestCarrierPeers(t *testing.T) {
 	}
 }
 
+// The BGP_PEER_MODE peers: all unnumbered peers when the setting is on.
+func TestCarrierPeersNative(t *testing.T) {
+	iface := map[string]string{"ens1f0np0": "fe80::1%ens1f0np0"}
+	if got := carrierPeers(&Config{FastExternalFailover: true}, iface); got["ens1f0np0"] == "" {
+		t.Errorf("native peers on = %v, want ens1f0np0", got)
+	}
+	if got := carrierPeers(&Config{}, iface); len(got) != 0 {
+		t.Errorf("native peers off = %v, want none", got)
+	}
+}
+
 // ignore_routes_with_linkdown is 1 for IPv4 and IPv6 of every session NIC.
 func TestIgnoreLinkdownRoutes(t *testing.T) {
 	root := t.TempDir()

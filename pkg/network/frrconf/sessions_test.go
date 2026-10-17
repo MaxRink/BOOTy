@@ -56,7 +56,7 @@ exit-address-family
 	}
 	dcgw := func(name string, keepalive, hold uint32, line int) Session {
 		return Session{Name: name, VRF: "Vrf_underlay", Internal: true, RemoteASN: 4210000017,
-			KeepaliveTime: keepalive, HoldTime: hold, ConnectRetry: 5,
+			KeepaliveTime: keepalive, HoldTime: hold, ConnectRetry: 5, ConnectRetrySet: true,
 			Families: []string{FamilyL2VPNEVPN}, FastExternalFailover: true, Line: line}
 	}
 	want := []Session{

@@ -67,6 +67,11 @@ type NetworkConfig struct {
 	// Default: nil (true)
 	PredictableNames *bool `yaml:"predictableNames,omitempty" json:"predictableNames,omitempty"`
 
+	// MTU is the MTU of the fabric NICs and the underlay dummy (GoBGP);
+	// the VXLAN MTU is 50 less. The largest netplan "mtu" wins.
+	// Default: 0 (9000)
+	MTU int `yaml:"mtu" json:"mtu"`
+
 	// LoopbackAddresses is a comma-separated list of CIDR addresses that
 	// GoBGP adds to lo, like netplan "lo: addresses".
 	// Example: "2001:db8::17/128"
@@ -105,15 +110,6 @@ type BGPConfig struct {
 	Sessions   []BGPSessionConfig `yaml:"sessions,omitempty" json:"sessions,omitempty"`
 	PeerGroups []BGPSessionConfig `yaml:"peerGroups,omitempty" json:"peerGroups,omitempty"`
 	Defaults   string             `yaml:"defaults,omitempty" json:"defaults,omitempty"`
-	// MultipathRelax is "bgp bestpath as-path multipath-relax": equal-cost
-	// paths with different AS paths of the same length form one multipath
-	// route. Set, it overrides the frr.conf value.
-	MultipathRelax *bool `yaml:"multipathRelax,omitempty" json:"multipathRelax,omitempty"`
-	// FastExternalFailover is FRR "bgp fast-external-failover": an
-	// unnumbered session stops as soon as its interface loses carrier.
-	// Unset keeps the frr.conf value (on by default, like FRR). Set, it
-	// applies to every session.
-	FastExternalFailover *bool `yaml:"fastExternalFailover,omitempty" json:"fastExternalFailover,omitempty"`
 
 	// PeerMode controls how BGP neighbor sessions are established.
 	// Valid values: "unnumbered" (default), "dual", "numbered"
@@ -166,6 +162,43 @@ type BGPConfig struct {
 	// Hold is the BGP hold timer in seconds.
 	// Default: 0 (use FRR/GoBGP default, typically 180s)
 	Hold uint32 `yaml:"hold" json:"hold"`
+
+	// ConnectRetry is the BGP connect retry timer in seconds (GoBGP). An
+	// explicit value also replaces the connect timer of frr.conf peers.
+	// Default: 0 (5s, or the frr.conf value)
+	ConnectRetry uint32 `yaml:"connectRetry" json:"connectRetry"`
+
+	// LocalAS is the local AS that GoBGP sends to the unnumbered (eBGP)
+	// peers, like FRR "neighbor X local-as N no-prepend replace-as". An
+	// explicit value also replaces the local-as of frr.conf eBGP peers.
+	// Default: 0 (the router ASN, or the frr.conf value)
+	LocalAS uint32 `yaml:"localAS" json:"localAS"`
+
+	// NeighborVRF binds the numbered peers to a VRF device (GoBGP), like
+	// FRR "router bgp N vrf NAME". An explicit value also replaces the VRF
+	// of frr.conf numbered peers.
+	// Default: "" (no VRF, or the frr.conf value)
+	NeighborVRF string `yaml:"neighborVRF" json:"neighborVRF"`
+
+	// AllowASIn is how often the own ASN may be in a received AS path, like
+	// FRR "allowas-in N" (1 to 10, 0 turns it off). Unset (nil) keeps the
+	// frr.conf value, or off without frr.conf.
+	AllowASIn *uint32 `yaml:"allowASIn,omitempty" json:"allowASIn,omitempty"`
+
+	// MultipathRelax is FRR "bgp bestpath as-path multipath-relax": paths
+	// with different AS paths of the same length are equal cost. Unset
+	// (nil) keeps the frr.conf value, or off without frr.conf.
+	MultipathRelax *bool `yaml:"multipathRelax,omitempty" json:"multipathRelax,omitempty"`
+
+	// InstallRoutes installs the learned IPv4/IPv6 unicast routes into the
+	// kernel, like zebra (GoBGP). Unset (nil) means on with frr.conf
+	// sessions and off without them.
+	InstallRoutes *bool `yaml:"installRoutes,omitempty" json:"installRoutes,omitempty"`
+
+	// FastExternalFailover stops an unnumbered session when its interface
+	// loses carrier, like FRR "bgp fast-external-failover" (GoBGP). Unset
+	// (nil) means on with frr.conf sessions and off without them.
+	FastExternalFailover *bool `yaml:"fastExternalFailover,omitempty" json:"fastExternalFailover,omitempty"`
 
 	// BFDTransmitMS is the FRR-only BFD transmit interval in milliseconds.
 	// BFD timers must be configured as a pair and are rejected for GoBGP mode.
@@ -239,6 +272,19 @@ type EVPNConfig struct {
 	// VXLANName is the provision VXLAN device name.
 	// Default: "" ("vx<VNI>")
 	VXLANName string `yaml:"vxlanName" json:"vxlanName"`
+
+	// BridgeMAC is the provision bridge MAC, the EVPN router MAC.
+	// Default: "" (derived per host)
+	BridgeMAC string `yaml:"bridgeMAC" json:"bridgeMAC"`
+
+	// VXLANLink is the device that the VXLAN device sends from, like netplan
+	// tunnel "link".
+	// Default: "" (the underlay dummy with a VRF, else the kernel choice)
+	VXLANLink string `yaml:"vxlanLink" json:"vxlanLink"`
+
+	// UnderlayDummyName is the underlay dummy device name.
+	// Default: "" ("dummy.underlay")
+	UnderlayDummyName string `yaml:"underlayDummyName" json:"underlayDummyName"`
 
 	// DCGWIPs is a comma-separated list of Data Center Gateway IPs.
 	// Used in OneFabric topologies for external routing.
@@ -320,6 +366,15 @@ type VRFConfig struct {
 	// TableID is the routing table ID associated with the VRF.
 	// Default: 1000
 	TableID uint32 `yaml:"tableID" json:"tableID"`
+
+	// OverlayName is the VRF of the provision bridge (GoBGP). "default"
+	// keeps the bridge in the default VRF, like the bm4x netplan.
+	// Default: "" (the underlay VRF Name)
+	OverlayName string `yaml:"overlayName" json:"overlayName"`
+
+	// OverlayTableID is the routing table of OverlayName.
+	// Default: 0 (TableID)
+	OverlayTableID uint32 `yaml:"overlayTableID" json:"overlayTableID"`
 }
 
 // IPMIConfig holds IPMI/BMC management network parameters.
