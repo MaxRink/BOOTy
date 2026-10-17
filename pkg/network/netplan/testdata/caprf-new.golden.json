@@ -30,6 +30,7 @@
       "SetName": "hbn"
     }
   ],
+  "NICWait": 0,
   "InterfaceNames": [
     "hbn"
   ],

@@ -302,8 +302,14 @@ func (c *Config) validateBGP() []string {
 	if n := c.Network.WaitMaxAttempts; strings.EqualFold(strings.TrimSpace(c.Network.WaitMode), NetworkWaitRounds) && n != nil && (*n < 0 || *n > MaxNetworkWaitAttempts) {
 		errs = append(errs, fmt.Sprintf("network.waitMaxAttempts (NETWORK_WAIT_MAX_ATTEMPTS) must be 0-%d", MaxNetworkWaitAttempts))
 	}
+	if n := c.Network.NICWaitSeconds; n < -1 || n > maxNICWaitSeconds {
+		errs = append(errs, fmt.Sprintf("network.nicWaitSeconds (NIC_WAIT_SECONDS) must be -1 (no wait) or 0-%d", maxNICWaitSeconds))
+	}
 	return errs
 }
+
+// maxNICWaitSeconds bounds NIC_WAIT_SECONDS.
+const maxNICWaitSeconds = 3600
 
 // validateBFD checks the BFD timers with the FRR ranges.
 func (c *Config) validateBFD() []string {

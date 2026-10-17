@@ -701,6 +701,23 @@ func TestSetupNetworkModeExplicitGoBGPFailsClosed(t *testing.T) {
 	}
 }
 
+// A setup error that ends before any stack logs it is logged at ERROR
+// (CI: the run ended without a trace after a failed network setup).
+func TestSetupNetworkModeLogsFailure(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	cfg := &config.MachineConfig{}
+	cfg.Network.VLAN.Config = "not-a-vlan"
+	if _, err := setupNetworkMode(context.Background(), cfg); err == nil {
+		t.Fatal("setupNetworkMode accepted an invalid VLAN config")
+	}
+	if !strings.Contains(buf.String(), "level=ERROR msg=\"network setup failed\"") {
+		t.Fatalf("log = %s, want the setup error at ERROR", buf.String())
+	}
+}
+
 func TestStartPID1ChildReaperNoopWhenNotPID1(t *testing.T) {
 	notified := false
 	started := startPID1ChildReaperWith(
@@ -2279,5 +2296,40 @@ func TestNativeDevicesEqualNetplan(t *testing.T) {
 	}
 	if _, err := caprf.ParseVars(strings.NewReader(`NETWORK_DEVICES={"ethernets":{"eth0":{"routes":[{"to":"default","via":"192.0.2.1","metric":50}]}}}` + "\n")); err == nil {
 		t.Error("NETWORK_DEVICES: route metric accepted")
+	}
+}
+
+// NIC_WAIT_SECONDS: 0 is the default 30 s, -1 no wait.
+func TestNICWait(t *testing.T) {
+	for in, want := range map[int]time.Duration{-1: 0, 0: 30 * time.Second, 45: 45 * time.Second} {
+		if got := nicWait(in); got != want {
+			t.Errorf("nicWait(%d) = %s, want %s", in, got, want)
+		}
+	}
+}
+
+// setupNetworkMode waits NIC_WAIT_SECONDS for a configured NIC that does
+// not exist, and not at all with -1 (the NIC detection has its own short
+// settle time, so the two runs are compared).
+func TestSetupNetworkModeNICWait(t *testing.T) {
+	run := func(seconds int) time.Duration {
+		cfg := &config.MachineConfig{}
+		cfg.Network.Mode = "gobgp"
+		cfg.Network.BGP.ASN = 65000
+		cfg.Network.BGP.UnderlayAF = "invalid"
+		cfg.Network.BGP.Interfaces = "ens9f9"
+		cfg.Network.EVPN.UnderlayIP = "10.0.0.1"
+		cfg.Network.EVPN.ProvisionVNI = 4000
+		cfg.Network.EVPN.ProvisionGateway = "10.0.0.254"
+		cfg.Network.NICWaitSeconds = seconds
+		start := time.Now()
+		if _, err := setupNetworkMode(context.Background(), cfg); err == nil {
+			t.Fatal("expected the invalid underlay AF to fail the setup")
+		}
+		return time.Since(start)
+	}
+	none, eight := run(-1), run(8)
+	if eight-none < 4*time.Second {
+		t.Fatalf("NIC_WAIT_SECONDS=8 took %s, -1 took %s; want several seconds more", eight, none)
 	}
 }

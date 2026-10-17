@@ -45,7 +45,7 @@ func (netlinkGatewayRouteOps) LinkByName(name string) (netlink.Link, error) {
 }
 
 func (netlinkGatewayRouteOps) AddrList(link netlink.Link, family int) ([]netlink.Addr, error) {
-	addrs, err := netlink.AddrList(link, family)
+	addrs, err := network.RetryDump(func() ([]netlink.Addr, error) { return netlink.AddrList(link, family) })
 	if err != nil {
 		return nil, fmt.Errorf("address list for %s: %w", link.Attrs().Name, err)
 	}

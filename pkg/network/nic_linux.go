@@ -21,7 +21,7 @@ var excludedPrefixes = []string{
 
 // Package-level function variables allow tests to inject fakes without build constraints.
 var (
-	linkList       = netlink.LinkList
+	linkList       = func() ([]netlink.Link, error) { return RetryDump(netlink.LinkList) }
 	listInterfaces = net.Interfaces
 	ifaceAddrs     = func(iface net.Interface) ([]net.Addr, error) { return iface.Addrs() }
 	sleepFunc      = time.Sleep

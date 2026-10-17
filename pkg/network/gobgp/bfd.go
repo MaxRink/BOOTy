@@ -10,6 +10,7 @@ import (
 	apipb "github.com/osrg/gobgp/v3/api"
 	"github.com/vishvananda/netlink"
 
+	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/bfd"
 )
 
@@ -99,7 +100,7 @@ func (u *UnderlayTier) appendNumberedPeer(peers []bfd.Peer, name, vrf string, in
 // link of the VRF ("" is the default VRF), like FRR shared_network. Host
 // routes do not count.
 func connectedInVRF(addr netip.Addr, vrf string) bool {
-	links, err := netlink.LinkList()
+	links, err := network.RetryDump(netlink.LinkList)
 	if err != nil {
 		return false
 	}
@@ -118,7 +119,7 @@ func connectedInVRF(addr netip.Addr, vrf string) bool {
 		if in != vrf {
 			continue
 		}
-		addrs, err := netlink.AddrList(l, netlink.FAMILY_ALL)
+		addrs, err := network.RetryDump(func() ([]netlink.Addr, error) { return netlink.AddrList(l, netlink.FAMILY_ALL) })
 		if err != nil {
 			continue
 		}

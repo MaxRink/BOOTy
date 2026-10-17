@@ -4,10 +4,12 @@ package network
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/telekom/BOOTy/pkg/network/netname"
 )
@@ -28,25 +30,16 @@ var linkExists = func(name string) bool {
 // configured name is missing, it does nothing (no NIC detection). When a
 // rename fails, the renames done before it are undone.
 func ApplyPredictableNames(ctx context.Context, c *Config) error {
-	var missing []string
-	for _, name := range ConfiguredInterfaceNames(c) {
-		if !linkExists(name) {
-			missing = append(missing, name)
-		}
-	}
+	missing := missingLinks(ConfiguredInterfaceNames(c))
 	if len(missing) == 0 {
 		return nil
 	}
-	links, err := physicalLinks(ctx)
+	plan, err := waitForConfiguredNICs(ctx, c, missing)
 	if err != nil {
 		return err
 	}
-	names := make([]string, 0, len(links))
-	for _, l := range links {
-		names = append(names, l.Name)
-	}
 	var done [][2]string // from, to
-	for _, r := range netname.Plan(predictableSysfs, names, missing) {
+	for _, r := range plan {
 		if err := renameLink(r.From, r.To); err != nil {
 			return undoRenames(done, err)
 		}
@@ -54,6 +47,76 @@ func ApplyPredictableNames(ctx context.Context, c *Config) error {
 		slog.Info("renamed NIC to its predictable name", "from", r.From, "to", r.To)
 	}
 	return nil
+}
+
+func missingLinks(names []string) []string {
+	var missing []string
+	for _, name := range names {
+		if !linkExists(name) {
+			missing = append(missing, name)
+		}
+	}
+	return missing
+}
+
+// nicWaitInterval is the time between two looks for the configured NICs.
+var nicWaitInterval = 500 * time.Millisecond
+
+// producedLinks are the configured names that BOOTy creates or gives
+// itself: the VXLAN link, the bond, and the netplan set-name targets.
+func producedLinks(c *Config) []string {
+	names := []string{c.VXLANLink}
+	if c.IsBondMode() {
+		names = append(names, "bond0")
+	}
+	for _, r := range c.LinkRenames {
+		names = append(names, r.SetName)
+	}
+	return names
+}
+
+// waitForConfiguredNICs waits up to NICWait (NIC_WAIT_SECONDS) until every
+// configured NIC exists or one NIC has it as its predictable name, and
+// returns the renames. NICs can appear after BOOTy starts: a driver brings
+// up its ports late, or containerlab moves the veths into the namespace.
+// The names that BOOTy creates or gives itself (producedLinks) are not
+// waited for. After the wait it goes on with the NICs it has, and the
+// setup reports what is missing.
+func waitForConfiguredNICs(ctx context.Context, c *Config, missing []string) ([]netname.Rename, error) {
+	produced := producedLinks(c)
+	nics := slices.DeleteFunc(slices.Clone(missing), func(n string) bool { return slices.Contains(produced, n) })
+	deadline := time.Now().Add(c.NICWait)
+	for logged := false; ; logged = true {
+		links, err := physicalLinks(ctx)
+		if err != nil {
+			return nil, err
+		}
+		names := make([]string, 0, len(links))
+		for _, l := range links {
+			names = append(names, l.Name)
+		}
+		plan := netname.Plan(predictableSysfs, names, missing)
+		absent := slices.DeleteFunc(missingLinks(nics), func(n string) bool {
+			return slices.ContainsFunc(plan, func(r netname.Rename) bool { return r.To == n })
+		})
+		if len(absent) == 0 {
+			return plan, nil
+		}
+		if !time.Now().Before(deadline) {
+			if len(nics) > 0 {
+				slog.Warn("configured NICs are missing after the wait", "nics", absent, "wait", c.NICWait)
+			}
+			return plan, nil
+		}
+		if !logged {
+			slog.Info("waiting for the configured NICs", "nics", absent, "max", c.NICWait)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("wait for the configured NICs: %w", ctx.Err())
+		case <-time.After(nicWaitInterval):
+		}
+	}
 }
 
 // ConfiguredInterfaceNames returns the interface names of the network

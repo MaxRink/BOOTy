@@ -85,6 +85,7 @@ export PROVIDER_ID="redfish://bmc.example.com/Systems/1"
 export MODE="provision"
 export MIN_DISK_SIZE_GB="100"
 export NETWORK_WAIT_MAX_ATTEMPTS="4"
+export NIC_WAIT_SECONDS="45"
 export DISK_SERIAL_NUMBER="RAID-DISK-1"
 export DISK_MIRRORING_MODE="raid-1"
 export LOG_URL="http://caprf.example.com/log"
@@ -128,6 +129,9 @@ export DEBUG_URL="http://caprf.example.com/debug"
 	}
 	if cfg.Provision.Disk.MinSizeGB != 100 {
 		t.Fatalf("unexpected min disk size: %d", cfg.Provision.Disk.MinSizeGB)
+	}
+	if cfg.Network.NICWaitSeconds != 45 {
+		t.Fatalf("NIC_WAIT_SECONDS = %d, want 45", cfg.Network.NICWaitSeconds)
 	}
 	if cfg.Network.WaitMaxAttempts == nil || *cfg.Network.WaitMaxAttempts != 4 {
 		t.Fatalf("unexpected network wait attempts: %v", cfg.Network.WaitMaxAttempts)

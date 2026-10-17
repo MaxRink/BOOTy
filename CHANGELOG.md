@@ -45,6 +45,11 @@ behaviour.
   (sg3-utils) and all flavors the `sg` module, for the SAS secure erase (#701).
 - The initramfs ships the VF drivers `igbvf` and `ixgbevf` and the NIC drivers
   `qede`, `cxgb4`, `sfc` and `ionic` (#701).
+- The network setup waits up to `NIC_WAIT_SECONDS` (default 30, YAML
+  `network.nicWaitSeconds`) for configured NICs that do not exist yet, and
+  repeats netlink dumps that the kernel interrupted because links changed
+  meanwhile (`NLM_F_DUMP_INTR`). Before, a NIC that appeared a moment after
+  start could end the run at once.
 - Provisioning and hard deprovision zero the superblock of every
   `linux_raid_member` (whole disks and partitions) on the disks they wipe,
   after `stop-raid` stopped the arrays: provisioning on the target and mirror

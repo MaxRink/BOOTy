@@ -429,7 +429,7 @@ func (u *UnderlayTier) configureNICs() error {
 }
 
 func hasDefaultRoute(linkIndex int) bool {
-	routes, err := netlink.RouteList(nil, netlink.FAMILY_V4)
+	routes, err := network.RetryDump(func() ([]netlink.Route, error) { return netlink.RouteList(nil, netlink.FAMILY_V4) })
 	if err != nil {
 		return true // conservative: treat as management NIC on error
 	}
@@ -1180,7 +1180,7 @@ func bgpPortReachable(ctx context.Context, addr, port string) bool {
 // findLinkLocalNeighbors returns non-local link-local IPv6 neighbors on the
 // given interface.
 func findLinkLocalNeighbors(ifi *net.Interface, iface string) []string {
-	neighs, err := netlink.NeighList(ifi.Index, netlink.FAMILY_V6)
+	neighs, err := network.RetryDump(func() ([]netlink.Neigh, error) { return netlink.NeighList(ifi.Index, netlink.FAMILY_V6) })
 	if err != nil {
 		return nil
 	}

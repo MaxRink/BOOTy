@@ -637,6 +637,7 @@ func TestLoadFullYAMLReference(t *testing.T) {
 		{"Provision.DiskLinks", showBool(cfg.Provision.DiskLinks), "false"},
 		{"Provision.KexecUnmountTarget", showBool(cfg.Provision.KexecUnmountTarget), "false"},
 		{"Network.PredictableNames", showBool(cfg.Network.PredictableNames), "false"},
+		{"Network.NICWaitSeconds", cfg.Network.NICWaitSeconds, 45},
 	}
 
 	for _, c := range checks {

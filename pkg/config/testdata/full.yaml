@@ -69,6 +69,9 @@ network:
   # predictableNames (PREDICTABLE_NIC_NAMES): rename NICs to the predictable
   # names that the config uses (default: true)
   predictableNames: false
+  # nicWaitSeconds (NIC_WAIT_SECONDS): longest wait for configured NICs that
+  # do not exist yet; 0 means 30
+  nicWaitSeconds: 45
 
   # overlay: device settings of the provision VXLAN device and bridge
   # (GoBGP), like the netplan tunnel and bridge keys (VXLAN_MTU, VXLAN_MAC,

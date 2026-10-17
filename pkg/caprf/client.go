@@ -1654,6 +1654,7 @@ func applyIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 		"AB_SOURCE_ROOT_PARTITION":           &cfg.Provision.AB.SourceRootPartition,
 		"ROOT_PARTITION_NUMBER":              &cfg.Provision.Disk.RootPartitionNumber,
 		"OVERLAYFS_TIMEOUT_SEC":              &cfg.Provision.OverlayFS.TimeoutSec,
+		"NIC_WAIT_SECONDS":                   &cfg.Network.NICWaitSeconds,
 	}
 
 	if ptr, ok := intFields[key]; ok {

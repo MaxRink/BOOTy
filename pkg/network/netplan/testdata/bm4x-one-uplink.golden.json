@@ -24,6 +24,7 @@
   "StaticIface": "",
   "StaticMatch": null,
   "LinkRenames": null,
+  "NICWait": 0,
   "InterfaceNames": [
     "ens1f0np0",
     "ens1f0np0"

@@ -35,6 +35,10 @@ func TestValidateNetworkOptionRanges(t *testing.T) {
 		{"bridgeMAC", func(c *Config) { c.Network.EVPN.BridgeMAC = "02:00:00:00:10:01" }, ""},
 		{"vxlanMTU 575", func(c *Config) { c.Network.Overlay.VXLANMTU = 575 }, "network.overlay.vxlanMTU 575 must be 576 to 65535"},
 		{"vxlanMTU 576", func(c *Config) { c.Network.Overlay.VXLANMTU = 576 }, ""},
+		{"nicWaitSeconds -2", func(c *Config) { c.Network.NICWaitSeconds = -2 }, "NIC_WAIT_SECONDS) must be -1"},
+		{"nicWaitSeconds -1", func(c *Config) { c.Network.NICWaitSeconds = -1 }, ""},
+		{"nicWaitSeconds 3600", func(c *Config) { c.Network.NICWaitSeconds = 3600 }, ""},
+		{"nicWaitSeconds 3601", func(c *Config) { c.Network.NICWaitSeconds = 3601 }, "NIC_WAIT_SECONDS) must be -1"},
 		{"bridgeMTU 575", func(c *Config) { c.Network.Overlay.BridgeMTU = 575 }, "network.overlay.bridgeMTU 575 must be 576 to 65535"},
 		{"devices route metric", func(c *Config) {
 			c.Network.Devices = &NetworkDevices{Ethernets: map[string]netplan.EthernetConfig{

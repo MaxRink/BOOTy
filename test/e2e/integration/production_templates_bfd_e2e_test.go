@@ -107,8 +107,10 @@ func pick(got, want map[string]bfdView) map[string]bfdView {
 
 // maxRestore bounds the time from a working link to ECMP again. FRR
 // connects 1 s after BFD down (BGP_INIT_START_TIMER); the GoBGP default
-// idle hold time after a reset is 30 s.
-const maxRestore = 10 * time.Second
+// idle hold time after a reset is 30 s. BOOTy takes 3.6 to 4.7 s in CI; the
+// bound leaves room for slow CI runners (one run took 10.02 s, with a BFD
+// session that went down again right after Up, fixed in #703).
+const maxRestore = 15 * time.Second
 
 // waitRoutesWithin waits like waitRoutes, but at most maxWait, and returns
 // how long it took.

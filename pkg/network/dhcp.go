@@ -165,7 +165,7 @@ func replaceLeaseAddr(link netlink.Link, addr *netlink.Addr) error {
 	if err := netlink.AddrReplace(link, addr); err != nil {
 		return err //nolint:wrapcheck // callers add context
 	}
-	existing, err := netlink.AddrList(link, netlink.FAMILY_V4)
+	existing, err := RetryDump(func() ([]netlink.Addr, error) { return netlink.AddrList(link, netlink.FAMILY_V4) })
 	if err != nil {
 		slog.Warn("failed to list addresses for DHCP prefix cleanup", "iface", link.Attrs().Name, "error", err)
 		return nil

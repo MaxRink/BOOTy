@@ -68,6 +68,9 @@ type Config struct {
 	// LinkRenames renames NICs before the network starts, like netplan
 	// set-name.
 	LinkRenames []LinkMatch
+	// NICWait is the longest wait for configured NICs that do not exist
+	// yet (NIC_WAIT_SECONDS).
+	NICWait time.Duration
 
 	// InterfaceNames are the interface names that the netplan files
 	// (ethernet IDs without a match block) and frr.conf ("neighbor X
