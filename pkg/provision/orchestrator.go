@@ -29,6 +29,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/health"
 	"github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/inventory"
+	"github.com/telekom/BOOTy/pkg/kexec"
 	"github.com/telekom/BOOTy/pkg/network"
 	networkpersist "github.com/telekom/BOOTy/pkg/network/persist"
 	"github.com/telekom/BOOTy/pkg/oob"
@@ -3340,7 +3341,46 @@ func (o *Orchestrator) logHealthCheckResults(results []health.CheckResult) {
 }
 
 func (o *Orchestrator) reportSuccess(ctx context.Context) error {
-	return o.reportTerminalSuccess(ctx, "provisioning", successStatusMessage(o.cfg)+o.eraseFallbackNote())
+	// The handoff goes before the notes, which start with "; ".
+	message := successStatusMessage(o.cfg) + " handoff=" + PlannedHandoff(o.cfg, o.firmwareChanged, newroot) + o.eraseFallbackNote()
+	return o.reportTerminalSuccess(ctx, "provisioning", message)
+}
+
+// Handoff methods of the success message (handoff=<method>).
+const (
+	HandoffKexec    = "kexec"
+	HandoffReboot   = "reboot"
+	HandoffPowerOff = "poweroff"
+)
+
+// PlannedHandoff is how BOOTy starts the installed OS after a successful
+// provision, decided like main.go: power off when SUCCESS_ACTION=poweroff,
+// reboot when kexec is disabled, Secure Boot is re-enabled, firmware values
+// changed or GRUB has no entry that BOOTy can resolve (kexec.DefaultEntry),
+// else kexec. A kexec whose load or execute fails becomes a reboot. A/B
+// preserve-existing powers off instead of a reboot. CAPRF power cycles the
+// host only for "poweroff": for kexec and reboot BOOTy starts the OS itself.
+func PlannedHandoff(cfg *config.MachineConfig, firmwareChanged bool, root string) string {
+	switch {
+	case cfg.PowerOffOnSuccess():
+		return HandoffPowerOff
+	case ShouldKeepTargetRootMountedForKexec(cfg, firmwareChanged):
+		if _, err := kexec.DefaultEntry(root); err == nil {
+			return HandoffKexec
+		}
+	}
+	if RequiresABKexec(cfg) {
+		return HandoffPowerOff
+	}
+	return HandoffReboot
+}
+
+// RequiresABKexec reports an A/B preserve-existing provision: the firmware
+// boot path still points at the active slot, so only kexec starts the new
+// one, and without kexec BOOTy powers off instead of a reboot.
+func RequiresABKexec(cfg *config.MachineConfig) bool {
+	return strings.EqualFold(strings.TrimSpace(cfg.Provision.Image.Mode), config.ImageModeAB) &&
+		cfg.Provision.AB.PreserveExisting
 }
 
 func (o *Orchestrator) reportTerminalSuccess(ctx context.Context, operation, message string) error {

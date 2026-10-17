@@ -110,10 +110,41 @@ URL is empty, BOOTy skips the callback.
 | Variable | When BOOTy calls it | Body |
 |----------|---------------------|------|
 | `INIT_URL` | At the start of provision and deprovision (`report-init` step). Standby sends `standby`, check mode sends `health-check`. BOOTy also uses `INIT_URL` as the connectivity check target. | `provisioning started`, or `deprovisioning started` in the deprovision modes |
-| `SUCCESS_URL` | At the end of a successful run (`report-success` step), and for dry-run and check results. | `provisioning complete` or `deprovisioning complete`, or a check summary |
+| `SUCCESS_URL` | At the end of a successful run (`report-success` step), and for dry-run and check results. | `provisioning complete handoff=<method>` or `deprovisioning complete handoff=<method>`, or a check summary. See [Handoff](#handoff). |
 | `ERROR_URL` | When a step fails, when a handoff fails, and, with `FAILURE_ACTION=wait`, when the run fails before or outside a mode. | `step <name> failed [<code>]: <error>` with a [failure code](failure-codes.md), or a short failure message |
 | `LOG_URL` | For every log record at level `INFO` or higher. BOOTy redacts attributes with sensitive names, buffers 256 lines and drops lines when the buffer is full. | One log line |
 | `DEBUG_URL` | Never. BOOTy reads the variable but sends nothing to it. Diagnostic dumps go to the log and through `LOG_URL`. | |
+
+## Handoff
+
+The success message of a provision names how BOOTy starts the installed
+OS: `handoff=kexec`, `handoff=reboot` or `handoff=poweroff`
+(`provision.PlannedHandoff`).
+
+| Method | When | What CAPRF does |
+|--------|------|-----------------|
+| `poweroff` | `SUCCESS_ACTION=poweroff` (also `CAPRF_LEGACY_COMPAT=true`), or A/B preserve-existing without a GRUB entry that BOOTy can resolve | Waits for power off, ejects the media, powers on. |
+| `reboot` | kexec disabled, `SECUREBOOT_REENABLE=true`, firmware values changed, or no GRUB entry that BOOTy can resolve | Ejects the media and does not power cycle: BOOTy reboots. |
+| `kexec` | Otherwise | Ejects the media and does not power cycle: BOOTy kexecs. If the kexec load or execute fails, BOOTy reboots; with A/B preserve-existing it powers off instead, because the firmware still boots the active slot (see below). |
+
+A power cycle after `kexec` or `reboot` would cut the first boot of the
+installed OS (cloud-init, Ignition). Older CAPRF releases ignore the field.
+
+The deprovision success message names its handoff too, before the
+not-wiped note (`deprovisioning complete handoff=reboot; not wiped, ...`):
+
+| Method | When | What CAPRF does |
+|--------|------|-----------------|
+| `standby` | A `deprovision` command of a standby run with `STANDBY_DEPROVISION_SUCCESS_ACTION=standby` (not `MODE=deprovision`) | Leaves the host running: the agent waits for the next command. |
+| `poweroff` | `SUCCESS_ACTION=poweroff` | Waits for the power off. |
+| `reboot` | Otherwise | Powers the host off at once: the disks are wiped, and a wait for a power off that does not come costs the grace period. |
+
+A/B preserve-existing never reboots after a provision: the firmware boot
+path still points at the active slot, so without a kexec BOOTy powers off
+and the host stays off until CAPRF or an operator acts (CAPRF's A/B flow
+leaves the host running for the kexec and does not power cycle).
+
+The kexec limitations and the decision table are in [kexec.md](kexec.md).
 
 ## Agent mode contract
 

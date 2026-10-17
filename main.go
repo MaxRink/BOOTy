@@ -1864,8 +1864,7 @@ func cleanupFailedKexecTarget(diskMgr *disk.Manager) {
 }
 
 func requiresABKexec(cfg *config.MachineConfig) bool {
-	return strings.EqualFold(strings.TrimSpace(cfg.Provision.Image.Mode), config.ImageModeAB) &&
-		cfg.Provision.AB.PreserveExisting
+	return provision.RequiresABKexec(cfg)
 }
 
 // inputStrictness returns NETPLAN_STRICT and FRR_CONFIG_STRICT; unset

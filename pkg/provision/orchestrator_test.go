@@ -2045,7 +2045,8 @@ func TestReportSuccess(t *testing.T) {
 	if provider.statuses[0].status != config.StatusSuccess {
 		t.Errorf("expected StatusSuccess, got %v", provider.statuses[0].status)
 	}
-	if provider.statuses[0].message != "provisioning complete" {
+	// No grub.cfg under /newroot in the test: BOOTy reboots.
+	if provider.statuses[0].message != "provisioning complete handoff=reboot" {
 		t.Errorf("expected default success message, got %q", provider.statuses[0].message)
 	}
 }
@@ -2289,7 +2290,7 @@ func TestDeprovisionSecureEraseFallbackWipeIsReported(t *testing.T) {
 	if err := o.reportDeprovisionSuccess(context.Background()); err != nil {
 		t.Fatalf("reportDeprovisionSuccess: %v", err)
 	}
-	want := "deprovisioning complete; secure erase not done, wiped instead (SECURE_ERASE_FALLBACK=wipe): /dev/sdb"
+	want := "deprovisioning complete handoff=reboot; secure erase not done, wiped instead (SECURE_ERASE_FALLBACK=wipe): /dev/sdb"
 	if got := provider.statuses[len(provider.statuses)-1].message; got != want {
 		t.Fatalf("success status = %q, want %q", got, want)
 	}
@@ -2442,7 +2443,7 @@ func TestWipeOrSecureEraseDisksScopesSecureEraseToTargetDisk(t *testing.T) {
 		t.Fatalf("reportSuccess: %v", err)
 	}
 	provider := o.provider.(*mockProvider)
-	want := "provisioning complete; secure erase not done, wiped instead (SECURE_ERASE_FALLBACK=wipe): /dev/sda"
+	want := "provisioning complete handoff=reboot; secure erase not done, wiped instead (SECURE_ERASE_FALLBACK=wipe): /dev/sda"
 	if got := provider.statuses[len(provider.statuses)-1].message; got != want {
 		t.Fatalf("success status = %q, want %q", got, want)
 	}

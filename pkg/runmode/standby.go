@@ -193,6 +193,7 @@ func (m *StandbyMode) handleRunCommand(ctx context.Context, cmd config.Command) 
 		return nil
 	}
 	runCfg.Mode = cmd.Type
+	runCfg.StandbyCommand = true
 	if len(keys) > 0 {
 		slog.Info("running command with payload", "id", cmd.ID, "type", cmd.Type,
 			"keys", strings.Join(keys, ","), "hostname", runCfg.Hostname)

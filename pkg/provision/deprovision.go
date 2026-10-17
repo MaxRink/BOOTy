@@ -304,7 +304,28 @@ func renameGRUBConfig(cfg, bak string) (bool, error) {
 }
 
 func (o *Orchestrator) reportDeprovisionSuccess(ctx context.Context) error {
-	return o.reportTerminalSuccess(ctx, "deprovisioning", "deprovisioning complete"+NotWipedNote(o.skippedDisks)+o.eraseFallbackNote())
+	message := "deprovisioning complete handoff=" + deprovisionHandoff(o.cfg) + NotWipedNote(o.skippedDisks) + o.eraseFallbackNote()
+	return o.reportTerminalSuccess(ctx, "deprovisioning", message)
+}
+
+// HandoffStandby is the deprovision handoff of a standby agent that stays
+// in the ramdisk (STANDBY_DEPROVISION_SUCCESS_ACTION=standby).
+const HandoffStandby = "standby"
+
+// deprovisionHandoff is what BOOTy does after a successful deprovision:
+// stay in standby (only a command of a standby run: CAPRF renders
+// COMMANDS_URL into every ISO, so the URL says nothing), power off, or
+// reboot. CAPRF waits for a power off, and
+// powers a rebooting host off at once (the disks are wiped).
+func deprovisionHandoff(cfg *config.MachineConfig) string {
+	switch {
+	case cfg.StandbyCommand && cfg.Agent.DeprovisionSuccessAction == config.AgentDeprovisionStandby:
+		return HandoffStandby
+	case cfg.PowerOffOnSuccess():
+		return HandoffPowerOff
+	default:
+		return HandoffReboot
+	}
 }
 
 // SkippedDisks returns the disks in use that the wipe of all disks of the

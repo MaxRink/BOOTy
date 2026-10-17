@@ -100,6 +100,11 @@ type Config struct {
 	Deprovision DeprovisionConfig `yaml:"deprovision" json:"deprovision"`
 	Agent       AgentConfig       `yaml:"agent"       json:"agent"`
 
+	// StandbyCommand is set by standby mode on the config of a command it
+	// runs; it is not configurable. The deprovision handoff reports
+	// "standby" only for such a run.
+	StandbyCommand bool `yaml:"-" json:"-"`
+
 	// ISO-injected file lists (populated by the CAPRF client, not from config files).
 	ProvisionerFiles []string `yaml:"-" json:"-"`
 	MachineFiles     []string `yaml:"-" json:"-"`

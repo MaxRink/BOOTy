@@ -114,7 +114,7 @@ func TestDeprovisionSuccessNamesSkippedDisks(t *testing.T) {
 	if err := o.reportDeprovisionSuccess(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if got := provider.statuses[0].message; got != "deprovisioning complete; not wiped, in use: /dev/sdc" {
+	if got := provider.statuses[0].message; got != "deprovisioning complete handoff=reboot; not wiped, in use: /dev/sdc" {
 		t.Fatalf("success message = %q", got)
 	}
 }

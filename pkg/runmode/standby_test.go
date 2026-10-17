@@ -326,3 +326,23 @@ func TestStandbyProvisionFailureAcksBeforeWait(t *testing.T) {
 		t.Fatal("Run did not return after the context ended")
 	}
 }
+
+// The config of a command says that it runs in standby, so the deprovision
+// handoff can report "standby".
+func TestStandbyMarksCommandConfig(t *testing.T) {
+	var got *config.MachineConfig
+	mode := &StandbyMode{
+		deps: Deps{Cfg: standbyConfig(), Client: &standbyProvider{commands: []config.Command{{ID: "d1", Type: "deprovision"}}}},
+		newDeprovisioner: func(cfg *config.MachineConfig) standbyDeprovisioner {
+			got = cfg
+			return standbyDeprovisionerFunc(func(context.Context) error { return nil })
+		},
+	}
+	_ = mode.Run(context.Background())
+	if got == nil || !got.StandbyCommand || got.Mode != "deprovision" {
+		t.Fatalf("command config = %+v, want StandbyCommand and mode deprovision", got)
+	}
+	if mode.deps.Cfg.StandbyCommand {
+		t.Fatal("the shared base config was marked")
+	}
+}
