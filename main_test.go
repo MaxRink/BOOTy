@@ -1862,6 +1862,44 @@ func TestApplyNativeBFDProfiles(t *testing.T) {
 	}
 }
 
+// The bm4x route-maps and community-list from frr.conf and from the native
+// vars are the same; a native list replaces the frr.conf list as a whole.
+// "set metric" fails in both forms.
+func TestNativeRouteMapsEqualFRRConf(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("pkg", "network", "frrconf", "testdata", "bm4x", "two-uplinks", "frr.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	params, err := netplan.ParseFRRConfigBytes(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed := netplan.ToNetworkConfig(&netplan.Config{}, params)
+	vars, err := caprf.ParseVars(strings.NewReader(`BGP_ROUTE_MAPS=[{"name":"TAG-FABRIC-IN","entries":[{"seq":10,"setLocalPreference":90,"setCommunities":["65169:200"],"setCommunityAdditive":true}]},{"name":"DENY-TAG-FABRIC-OUT","entries":[{"seq":10,"deny":true,"matchCommunity":"cm-received-fabric"},{"seq":20}]}]
+BGP_COMMUNITY_LISTS=[{"name":"cm-received-fabric","entries":[{"communities":["65169:200"]}]}]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	native := networkConfigFromMachineConfig(vars)
+	if !reflect.DeepEqual(native.BGPRouteMaps, parsed.BGPRouteMaps) || !reflect.DeepEqual(native.BGPCommunityLists, parsed.BGPCommunityLists) {
+		t.Fatalf("native %+v %+v\nfrr.conf %+v %+v", native.BGPRouteMaps, native.BGPCommunityLists, parsed.BGPRouteMaps, parsed.BGPCommunityLists)
+	}
+
+	merged := &network.Config{BGPRouteMaps: []network.RouteMap{{Name: "ONLY"}}}
+	mergeBGPPolicy(merged, parsed)
+	if len(merged.BGPRouteMaps) != 1 || merged.BGPRouteMaps[0].Name != "ONLY" || !reflect.DeepEqual(merged.BGPCommunityLists, parsed.BGPCommunityLists) {
+		t.Fatalf("merged route-maps %+v, community-lists %+v", merged.BGPRouteMaps, merged.BGPCommunityLists)
+	}
+
+	if _, err := netplan.ParseFRRConfigBytes([]byte("route-map M permit 10\n set metric 10\nexit\n")); err == nil {
+		t.Error("frr.conf: set metric parsed without error")
+	}
+	if _, err := caprf.ParseVars(strings.NewReader(`BGP_ROUTE_MAPS=[{"name":"M","entries":[{"seq":10,"setMetric":10}]}]` + "\n")); err == nil {
+		t.Error("vars: setMetric parsed without error")
+	}
+}
+
 // The BM4X lab failure (#662): the rendered bm4x templates without
 // provision_gateway must pass the GoBGP config check after the netplan
 // merge, because the L3VNI selects Type-5 only. Chains the real parse,
@@ -1984,6 +2022,40 @@ func TestApplyBGPOptions(t *testing.T) {
 			t.Fatalf("sessions = %+v, want %+v", n.BGPSessions, want)
 		}
 	})
+}
+
+// BGP_ROUTE_MAP_IN alone replaces only the in route-maps; the frr.conf out
+// route-map of each family stays.
+func TestApplyBGPOptionsRouteMapInKeepsOut(t *testing.T) {
+	n := &network.Config{BGPSessions: []network.BGPSession{{Name: "eth1", Interface: true, IPv4Unicast: true,
+		RouteMaps: []network.SessionRouteMaps{{Family: "ipv4-unicast", In: "TAG-FABRIC-IN", Out: "DENY-TAG-FABRIC-OUT"}}}}}
+	applyBGPOptions(&config.BGPConfig{RouteMapIn: "NATIVE-IN"}, n)
+	want := []network.SessionRouteMaps{{Family: "ipv4-unicast", In: "NATIVE-IN", Out: "DENY-TAG-FABRIC-OUT"}}
+	if !reflect.DeepEqual(n.BGPSessions[0].RouteMaps, want) {
+		t.Fatalf("route-maps = %+v, want %+v", n.BGPSessions[0].RouteMaps, want)
+	}
+}
+
+// The frr.conf route targets win over the legacy vpn_rt key, as in FRR;
+// native route target lists win over both; vpn_rt stays for configs
+// without frr.conf route targets.
+func TestMergeBGPPolicyRouteTargets(t *testing.T) {
+	frr := &network.Config{EVPNImportRTs: []string{"65169:3000"}, EVPNExportRTs: []string{"65169:3000"}}
+	dst := &network.Config{VPNRT: "65000:100"}
+	mergeBGPPolicy(dst, frr)
+	if strings.Join(dst.EVPNImportRTs, ",") != "65169:3000" || strings.Join(dst.EVPNExportRTs, ",") != "65169:3000" {
+		t.Fatalf("with vpn_rt: route targets %v / %v, want the frr.conf ones", dst.EVPNImportRTs, dst.EVPNExportRTs)
+	}
+	dst = &network.Config{VPNRT: "65000:100", EVPNImportRTs: []string{"1:1"}}
+	mergeBGPPolicy(dst, frr)
+	if strings.Join(dst.EVPNImportRTs, ",") != "1:1" || len(dst.EVPNExportRTs) != 0 {
+		t.Fatalf("native lists: %v / %v, want the native import list only", dst.EVPNImportRTs, dst.EVPNExportRTs)
+	}
+	dst = &network.Config{VPNRT: "65000:100"}
+	mergeBGPPolicy(dst, &network.Config{})
+	if dst.VPNRT != "65000:100" || len(dst.EVPNImportRTs) != 0 {
+		t.Fatalf("without frr.conf route targets: %+v", dst)
+	}
 }
 
 // The native BFD timers reach the network config.

@@ -46,6 +46,12 @@ type Session struct {
 	// BFD and BFDProfile request a BFD session.
 	BFD        bool
 	BFDProfile string
+	// RouteMaps are the route-maps per activated address family.
+	RouteMaps []SessionRouteMaps
+	// EBGPRequiresPolicy is "bgp ebgp-requires-policy" of the router: on
+	// unless "no bgp ebgp-requires-policy" (the current FRR default). It
+	// matters only for eBGP sessions.
+	EBGPRequiresPolicy bool
 	// BFD timers from the profile, with the FRR defaults for unset
 	// values and for an unknown profile (doc/user/bfd.rst).
 	BFDTransmitMS uint32
@@ -122,6 +128,7 @@ func (c *Config) session(r *Router, n *Neighbor) (Session, error) {
 		g = findNeighbor(r, n.Group)
 	}
 	s := Session{Name: n.Name, Interface: n.Interface, Line: n.Line}
+	s.EBGPRequiresPolicy = r.EBGPRequiresPolicy == nil || *r.EBGPRequiresPolicy
 	if r.VRF != "default" {
 		s.VRF = r.VRF
 	}
@@ -147,6 +154,18 @@ func (c *Config) session(r *Router, n *Neighbor) (Session, error) {
 	s.ConnectRetry = pick(n.ConnectRetry, g, func(x *Neighbor) *uint32 { return x.ConnectRetry }, connect)
 	s.ConnectRetrySet = n.ConnectRetry != nil || g != nil && g.ConnectRetry != nil
 
+	c.sessionBFD(&s, n, g)
+
+	s.Families = families(r, n)
+	s.AllowASIn = allowASIn(r, n)
+	s.FastExternalFailover = r.FastExternalFailover == nil || *r.FastExternalFailover
+	s.RouteMaps = routeMaps(r, n, s.Families)
+	return s, nil
+}
+
+// sessionBFD sets the BFD flag, profile and timers of a session; the peer
+// value wins over its peer-group.
+func (c *Config) sessionBFD(s *Session, n, g *Neighbor) {
 	s.BFD, s.BFDProfile = n.BFD, n.BFDProfile
 	if g != nil {
 		s.BFD = s.BFD || g.BFD
@@ -157,11 +176,6 @@ func (c *Config) session(r *Router, n *Neighbor) (Session, error) {
 	if s.BFD {
 		s.BFDTransmitMS, s.BFDReceiveMS, s.BFDDetectMult = c.BFDTimers(s.BFDProfile)
 	}
-
-	s.Families = families(r, n)
-	s.AllowASIn = allowASIn(r, n)
-	s.FastExternalFailover = r.FastExternalFailover == nil || *r.FastExternalFailover
-	return s, nil
 }
 
 // setRemoteAS resolves the remote-as: "internal" and the own ASN are iBGP,
@@ -268,6 +282,46 @@ func allowASIn(r *Router, n *Neighbor) int {
 		}
 	}
 	return count
+}
+
+// SessionRouteMaps are the "neighbor X route-map M in|out" of a session in
+// one address family. A value of the peer wins over its peer-group.
+type SessionRouteMaps struct {
+	Family string
+	In     string
+	Out    string
+}
+
+func routeMaps(r *Router, n *Neighbor, fams []string) []SessionRouteMaps {
+	var out []SessionRouteMaps
+	for _, f := range fams {
+		rm := SessionRouteMaps{Family: f}
+		for i := range r.AddressFamilies {
+			if af := &r.AddressFamilies[i]; familyName(af) == f {
+				// The group first and the peer last, so the peer wins.
+				rm.apply(af, n.Group)
+				rm.apply(af, n.Name)
+			}
+		}
+		if rm.In != "" || rm.Out != "" {
+			out = append(out, rm)
+		}
+	}
+	return out
+}
+
+func (rm *SessionRouteMaps) apply(af *AddressFamily, name string) {
+	for _, an := range af.Neighbors {
+		if name == "" || an.Name != name {
+			continue
+		}
+		if an.RouteMapIn != "" {
+			rm.In = an.RouteMapIn
+		}
+		if an.RouteMapOut != "" {
+			rm.Out = an.RouteMapOut
+		}
+	}
 }
 
 func familyName(af *AddressFamily) string {

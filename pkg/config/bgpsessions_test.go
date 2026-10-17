@@ -18,6 +18,7 @@ const bm4xNativeSessions = `
 asn: 4210000017
 defaults: traditional
 multipathRelax: true
+ebgpRequiresPolicy: false
 bfdProfiles:
   - {name: fabric, transmitInterval: 150, receiveInterval: 150}
 peerGroups:
@@ -31,6 +32,7 @@ peerGroups:
     connectRetry: 5
     families: [l2vpn-evpn]
     allowASIn: 3
+    routeMaps: [{family: l2vpn-evpn, in: TAG-FABRIC-IN, out: DENY-TAG-FABRIC-OUT}]
   - name: leaf
     vrf: Vrf_underlay
     remoteAS: "65500"
@@ -42,6 +44,7 @@ peerGroups:
     hold: 90
     families: [ipv4-unicast]
     allowASIn: 3
+    routeMaps: [{family: ipv4-unicast, in: TAG-FABRIC-IN, out: DENY-TAG-FABRIC-OUT}]
 sessions:
   - {name: ens1f0np0, interface: true, vrf: Vrf_underlay, peerGroup: leaf}
   - {name: ens1f1np1, interface: true, vrf: Vrf_underlay, peerGroup: leaf}
@@ -113,6 +116,12 @@ func TestNativeSessionsRejectLikeFRRConf(t *testing.T) {
 			"invalid allowas-in count",
 		},
 		{
+			"route-map direction",
+			"router bgp 65000\n neighbor 192.0.2.1 remote-as 65001\n address-family ipv4 unicast\n  neighbor 192.0.2.1 route-map M both\n",
+			"asn: 65000\nsessions:\n  - {name: 192.0.2.1, remoteAS: \"65001\", families: [ipv4-unicast], routeMaps: [{family: ipv4-unicast, both: M}]}\n",
+			"",
+		},
+		{
 			"BFD interval",
 			"bfd\n profile fast\n  transmit-interval 5\n",
 			"asn: 65000\nbfdProfiles:\n  - {name: fast, transmitInterval: 5}\nsessions:\n  - {name: 192.0.2.1, remoteAS: \"65001\", families: [ipv4-unicast]}\n",
@@ -121,11 +130,14 @@ func TestNativeSessionsRejectLikeFRRConf(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			_, frrErr := sessionsOf(tt.frr)
+			// Strict like the config loader: an unknown field fails.
 			var bgp BGPConfig
-			if err := yaml.Unmarshal([]byte(tt.native), &bgp); err != nil {
-				t.Fatal(err)
+			dec := yaml.NewDecoder(strings.NewReader(tt.native))
+			dec.KnownFields(true)
+			nativeErr := dec.Decode(&bgp)
+			if nativeErr == nil {
+				_, nativeErr = bgp.ResolveSessions()
 			}
-			_, nativeErr := bgp.ResolveSessions()
 			for name, err := range map[string]error{"frr.conf": frrErr, "native": nativeErr} {
 				if err == nil || !strings.Contains(err.Error(), tt.want) {
 					t.Errorf("%s: error %v, want %q", name, err, tt.want)

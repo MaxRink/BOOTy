@@ -53,12 +53,12 @@ exit-address-family
 			LocalAS:       &LocalAS{ASN: 65501, NoPrepend: true, ReplaceAS: true},
 			KeepaliveTime: 30, HoldTime: 90, ConnectRetry: 30,
 			Families: []string{FamilyIPv4Unicast}, BFD: true, BFDProfile: "fabric", FastExternalFailover: true,
-			BFDTransmitMS: 300, BFDReceiveMS: 300, BFDDetectMult: 3, Line: line}
+			BFDTransmitMS: 300, BFDReceiveMS: 300, BFDDetectMult: 3, EBGPRequiresPolicy: true, Line: line}
 	}
 	dcgw := func(name string, keepalive, hold uint32, line int) Session {
 		return Session{Name: name, VRF: "Vrf_underlay", Internal: true, RemoteASN: 4210000017,
 			KeepaliveTime: keepalive, HoldTime: hold, ConnectRetry: 5, ConnectRetrySet: true,
-			Families: []string{FamilyL2VPNEVPN}, FastExternalFailover: true, Line: line}
+			Families: []string{FamilyL2VPNEVPN}, FastExternalFailover: true, EBGPRequiresPolicy: true, Line: line}
 	}
 	want := []Session{
 		leaf("ens1f0np0", 13), leaf("ens1f1np1", 14),
@@ -206,5 +206,37 @@ exit
 		if got := [4]uint32{on, s.BFDTransmitMS, s.BFDReceiveMS, s.BFDDetectMult}; got != want[s.Name] {
 			t.Errorf("%s: BFD %v, want %v", s.Name, got, want[s.Name])
 		}
+	}
+}
+
+// "bgp ebgp-requires-policy" is on unless the router says "no", like
+// current FRR.
+func TestSessionsEBGPRequiresPolicy(t *testing.T) {
+	if s := mustSessions(t, "router bgp 65101\n neighbor 192.0.2.1 remote-as 65500\n")[0]; !s.EBGPRequiresPolicy {
+		t.Error("default: off, want on")
+	}
+	if s := mustSessions(t, "router bgp 65101\n no bgp ebgp-requires-policy\n neighbor 192.0.2.1 remote-as 65500\n")[0]; s.EBGPRequiresPolicy {
+		t.Error("no bgp ebgp-requires-policy: on, want off")
+	}
+}
+
+// A route-map of the peer wins over the one of its peer-group in the same
+// direction; the other direction still comes from the group.
+func TestSessionsPeerRouteMapOverridesGroup(t *testing.T) {
+	s := mustSessions(t, `router bgp 65101
+no bgp default ipv4-unicast
+neighbor leaf peer-group
+neighbor leaf remote-as 65500
+neighbor 192.0.2.1 peer-group leaf
+address-family ipv4 unicast
+  neighbor leaf activate
+  neighbor leaf route-map GROUP-IN in
+  neighbor leaf route-map GROUP-OUT out
+  neighbor 192.0.2.1 route-map PEER-IN in
+exit-address-family
+`)[0]
+	want := []SessionRouteMaps{{Family: FamilyIPv4Unicast, In: "PEER-IN", Out: "GROUP-OUT"}}
+	if !reflect.DeepEqual(s.RouteMaps, want) {
+		t.Fatalf("route-maps = %+v, want %+v", s.RouteMaps, want)
 	}
 }

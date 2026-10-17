@@ -104,6 +104,9 @@ network:
         hold: 90
         families: [ipv4-unicast]   # ipv4-unicast | ipv6-unicast | l2vpn-evpn
         allowASIn: 3          # allowas-in N in each family (1-10)
+        # route-maps per family, like "neighbor X route-map M in|out"
+        routeMaps:
+          - {family: ipv4-unicast, in: TAG-FABRIC-IN, out: DENY-TAG-FABRIC-OUT}
     sessions:
       - name: ens1f0np0
         interface: true
@@ -116,6 +119,25 @@ network:
         bfd: true
         bfdProfile: fabric
         families: [l2vpn-evpn]
+
+    # routeMaps (BGP_ROUTE_MAPS) / communityLists (BGP_COMMUNITY_LISTS):
+    # route-maps like FRR, with the subset BOOTy implements. A non-empty
+    # list replaces the frr.conf list as a whole.
+    routeMaps:
+      - name: TAG-FABRIC-IN
+        entries:
+          - {seq: 10, setLocalPreference: 90, setCommunities: ["65169:200"], setCommunityAdditive: true}
+      - name: DENY-TAG-FABRIC-OUT
+        entries:
+          - {seq: 10, deny: true, matchCommunity: cm-received-fabric}
+          - {seq: 20}
+    # ebgpRequiresPolicy (BGP_EBGP_REQUIRES_POLICY): FRR "bgp ebgp-requires-policy";
+    # unset: on for frr.conf and sessions, off for the peerMode peers
+    ebgpRequiresPolicy: false
+    communityLists:
+      - name: cm-received-fabric
+        entries:
+          - communities: ["65169:200"]
 
     # bfdProfiles (BFD_PROFILES): BFD profiles of bfdProfile, like frr.conf
     # "bfd / profile NAME"; unset values use 300 ms, 300 ms, 3. A non-empty

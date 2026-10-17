@@ -150,3 +150,42 @@ func TestDebounce(t *testing.T) {
 		}
 	}
 }
+
+// The RA is sent again after raRepeat; stopping the watch stops a pending
+// repeat.
+func TestCarrierWatchRARepeat(t *testing.T) {
+	sent := make(chan string, 8)
+	newWatch := func() *carrierWatch {
+		return &carrierWatch{
+			peers:    map[string]string{"ens1f0np0": "fe80::1%ens1f0np0"},
+			down:     map[string]bool{"ens1f0np0": true},
+			disable:  func(context.Context, string) error { return nil },
+			enable:   func(context.Context, string) error { return nil },
+			announce: func(iface string) { sent <- iface },
+			raRepeat: 50 * time.Millisecond,
+			log:      slog.Default(),
+		}
+	}
+	count := func(within time.Duration) int {
+		n, deadline := 0, time.After(within)
+		for {
+			select {
+			case <-sent:
+				n++
+			case <-deadline:
+				return n
+			}
+		}
+	}
+	w := newWatch()
+	w.handle("ens1f0np0", true)
+	if n := count(300 * time.Millisecond); n != 2 {
+		t.Fatalf("RAs after carrier up = %d, want 2", n)
+	}
+	w = newWatch()
+	w.handle("ens1f0np0", true)
+	w.stopRATimers()
+	if n := count(300 * time.Millisecond); n != 1 {
+		t.Fatalf("RAs after carrier up and stop = %d, want 1", n)
+	}
+}

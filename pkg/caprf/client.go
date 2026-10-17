@@ -1310,6 +1310,10 @@ func applyNetworkStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"UNDERLAY_DUMMY_NAME": &cfg.Network.EVPN.UnderlayDummyName,
 		"OVERLAY_VRF_NAME":    &cfg.Network.VRF.OverlayName,
 		"BGP_NEIGHBOR_VRF":    &cfg.Network.BGP.NeighborVRF,
+		"BGP_ROUTE_MAP_IN":    &cfg.Network.BGP.RouteMapIn,
+		"BGP_ROUTE_MAP_OUT":   &cfg.Network.BGP.RouteMapOut,
+		"EVPN_RT_IMPORT":      &cfg.Network.EVPN.ImportRouteTargets,
+		"EVPN_RT_EXPORT":      &cfg.Network.EVPN.ExportRouteTargets,
 	}
 
 	if ptr, ok := strFields[key]; ok {
@@ -1438,6 +1442,29 @@ func unmarshalJSONVar(value string, target any) error {
 	}
 	if err := json.Unmarshal([]byte(normalized), target); err != nil {
 		return fmt.Errorf("unmarshal normalized JSON var: %w", err)
+	}
+	return nil
+}
+
+// strictJSONVar is unmarshalJSONVar that rejects unknown fields.
+func strictJSONVar(value string, target any) error {
+	decode := func(s string) error {
+		dec := json.NewDecoder(strings.NewReader(s))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(target); err != nil {
+			return fmt.Errorf("decode JSON value: %w", err)
+		}
+		if dec.More() {
+			return errors.New("data after the JSON value")
+		}
+		return nil
+	}
+	err := decode(value)
+	if normalized := normalizeGoQuotedJSONWhitespace(value); err != nil && normalized != value {
+		err = decode(normalized)
+	}
+	if err != nil {
+		return fmt.Errorf("unmarshal JSON var: %w", err)
 	}
 	return nil
 }
@@ -1643,6 +1670,7 @@ func applyIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 		"NETPLAN_STRICT":             &cfg.Network.NetplanStrict,
 		"BGP_MULTIPATH_RELAX":        &cfg.Network.BGP.MultipathRelax,
 		"BGP_FAST_EXTERNAL_FAILOVER": &cfg.Network.BGP.FastExternalFailover,
+		"BGP_EBGP_REQUIRES_POLICY":   &cfg.Network.BGP.EBGPRequiresPolicy,
 	}[key]; ok {
 		// A typo must not silently pick a value, so only booleans parse.
 		v, err := strconv.ParseBool(value)
@@ -1653,12 +1681,16 @@ func applyIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 		return true, nil
 	}
 	if list, ok := map[string]any{
-		"BGP_SESSIONS":    &cfg.Network.BGP.Sessions,
-		"BGP_PEER_GROUPS": &cfg.Network.BGP.PeerGroups,
-		"BFD_PROFILES":    &cfg.Network.BGP.BFDProfiles,
+		"BGP_SESSIONS":        &cfg.Network.BGP.Sessions,
+		"BGP_PEER_GROUPS":     &cfg.Network.BGP.PeerGroups,
+		"BFD_PROFILES":        &cfg.Network.BGP.BFDProfiles,
+		"BGP_ROUTE_MAPS":      &cfg.Network.BGP.RouteMaps,
+		"BGP_COMMUNITY_LISTS": &cfg.Network.BGP.CommunityLists,
 	}[key]; ok {
-		// A JSON list, like network.bgp.sessions in YAML.
-		if err := json.Unmarshal([]byte(value), list); err != nil {
+		// A JSON list, like network.bgp.sessions in YAML. An unknown field
+		// fails, like in the YAML config, so an unsupported statement is
+		// not dropped.
+		if err := strictJSONVar(value, list); err != nil {
 			return true, fmt.Errorf("invalid %s: %w", key, err)
 		}
 		return true, nil

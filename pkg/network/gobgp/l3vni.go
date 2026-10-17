@@ -139,7 +139,7 @@ func (o *OverlayTier) advertiseType5Networks(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("build EVPN NLRI for %s: %w", prefix, err)
 		}
-		pattrs, err := buildType5PathAttrs(nlri, o.cfg.RouterID, o.cfg.ASN, vni, o.cfg.VPNRT, o.cfg.BridgeMAC)
+		pattrs, err := buildType5PathAttrsRTs(nlri, o.cfg.RouterID, o.cfg.ASN, vni, o.exportRTSpecs(), o.cfg.BridgeMAC)
 		if err != nil {
 			return fmt.Errorf("build path attributes for %s: %w", prefix, err)
 		}

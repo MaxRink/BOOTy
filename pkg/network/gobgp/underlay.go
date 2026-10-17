@@ -142,12 +142,8 @@ func (u *UnderlayTier) Setup(ctx context.Context) error {
 		return fmt.Errorf("start BGP server: %w", err)
 	}
 
-	if err := u.addPeers(ctx); err != nil {
-		return fmt.Errorf("add BGP peers: %w", err)
-	}
-
-	if err := u.announceUnderlayRoute(ctx); err != nil {
-		return fmt.Errorf("announce underlay route: %w", err)
+	if err := u.setupBGP(ctx); err != nil {
+		return err
 	}
 
 	u.startBFD()
@@ -516,6 +512,21 @@ func (u *UnderlayTier) addPeers(ctx context.Context) error {
 
 	if added == 0 && lastErr != nil {
 		return fmt.Errorf("no BGP peers added: %w", lastErr)
+	}
+	return nil
+}
+
+// setupBGP adds the peers, installs the route policies and announces the
+// underlay route.
+func (u *UnderlayTier) setupBGP(ctx context.Context) error {
+	if err := u.addPeers(ctx); err != nil {
+		return fmt.Errorf("add BGP peers: %w", err)
+	}
+	if err := u.installPolicies(ctx); err != nil {
+		return fmt.Errorf("install BGP route policies: %w", err)
+	}
+	if err := u.announceUnderlayRoute(ctx); err != nil {
+		return fmt.Errorf("announce underlay route: %w", err)
 	}
 	return nil
 }

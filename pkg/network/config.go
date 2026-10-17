@@ -102,6 +102,16 @@ type Config struct {
 	BGPSessions []BGPSession
 	// BGPMultipathRelax is "bgp bestpath as-path multipath-relax".
 	BGPMultipathRelax bool
+	// BGPRouteMaps and BGPCommunityLists define the route-maps that the
+	// sessions name; BGPRouteMapIn and BGPRouteMapOut apply to the native
+	// peers in every address family.
+	BGPRouteMaps      []RouteMap
+	BGPCommunityLists []CommunityList
+	BGPRouteMapIn     string
+	BGPRouteMapOut    string
+	// BGPEBGPRequiresPolicy applies "bgp ebgp-requires-policy" to the
+	// native peers of BGP_PEER_MODE (off by default).
+	BGPEBGPRequiresPolicy bool
 	// BGPLocalAS is the local-as of the native unnumbered peers.
 	BGPLocalAS uint32
 	// BGPNeighborVRF binds the native numbered peers to a VRF device.
@@ -145,6 +155,11 @@ type Config struct {
 	// BlackholeRoutes are the FRR "ip route" and "ipv6 route" blackhole
 	// prefixes of the default VRF.
 	BlackholeRoutes []string
+	// EVPNImportRTs and EVPNExportRTs are the route targets of the
+	// provision L3VNI ("route-target import|export"); empty lists use
+	// vpn_rt or the derived route target.
+	EVPNImportRTs []string
+	EVPNExportRTs []string
 	// Type5Networks are the FRR "network" prefixes of the provision L3VNI
 	// VRF that "advertise ipv4|ipv6 unicast" originates as EVPN Type-5.
 	Type5Networks []string
@@ -183,6 +198,56 @@ type BGPSession struct {
 	BFDTransmitMS uint32
 	BFDReceiveMS  uint32
 	BFDDetectMult uint32
+	// RouteMaps are the route-maps per address family ("ipv4-unicast",
+	// "ipv6-unicast", "l2vpn-evpn").
+	RouteMaps []SessionRouteMaps
+	// EBGPRequiresPolicy rejects the routes of an eBGP session in each
+	// family and direction without a route-map, like FRR "bgp
+	// ebgp-requires-policy".
+	EBGPRequiresPolicy bool
+}
+
+// SessionRouteMaps are the import (In) and export (Out) route-maps of a
+// BGP session in one address family.
+type SessionRouteMaps struct {
+	Family string `json:"family" yaml:"family"`
+	In     string `json:"in,omitempty" yaml:"in,omitempty"`
+	Out    string `json:"out,omitempty" yaml:"out,omitempty"`
+}
+
+// RouteMap is an FRR route-map with the subset of statements BOOTy
+// implements, in sequence order.
+type RouteMap struct {
+	Name    string          `json:"name" yaml:"name"`
+	Entries []RouteMapEntry `json:"entries" yaml:"entries"`
+}
+
+// RouteMapEntry is one "route-map NAME permit|deny SEQ" entry. A permit
+// entry that matches applies its sets and stops; a deny entry that
+// matches rejects. A route that no entry matches is rejected.
+type RouteMapEntry struct {
+	Seq  int  `json:"seq" yaml:"seq"`
+	Deny bool `json:"deny,omitempty" yaml:"deny,omitempty"`
+	// MatchCommunity names a community-list; empty matches every route.
+	MatchCommunity     string   `json:"matchCommunity,omitempty" yaml:"matchCommunity,omitempty"`
+	SetLocalPreference *uint32  `json:"setLocalPreference,omitempty" yaml:"setLocalPreference,omitempty"`
+	SetCommunities     []string `json:"setCommunities,omitempty" yaml:"setCommunities,omitempty"`
+	// SetCommunityAdditive adds SetCommunities instead of replacing.
+	SetCommunityAdditive bool `json:"setCommunityAdditive,omitempty" yaml:"setCommunityAdditive,omitempty"`
+}
+
+// CommunityList is a standard community-list. An entry matches a route
+// that carries all its communities; the first matching entry decides,
+// and no match denies.
+type CommunityList struct {
+	Name    string               `json:"name" yaml:"name"`
+	Entries []CommunityListEntry `json:"entries" yaml:"entries"`
+}
+
+// CommunityListEntry is one "bgp community-list standard" line.
+type CommunityListEntry struct {
+	Deny        bool     `json:"deny,omitempty" yaml:"deny,omitempty"`
+	Communities []string `json:"communities" yaml:"communities"`
 }
 
 // VLANConfig holds configuration for a single 802.1Q VLAN interface.

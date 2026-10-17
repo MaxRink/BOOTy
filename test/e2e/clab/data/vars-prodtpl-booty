@@ -15,6 +15,3 @@ export DEBUG_URL="http://172.31.250.10/debug"
 export HEARTBEAT_URL="http://172.31.250.10/status/heartbeat"
 export COMMANDS_URL="http://172.31.250.10/commands"
 export DISK_DEVICE="/dev/loop0"
-# The template sets "route-target import/export 65169:3000". BOOTy does not
-# read explicit route targets from the FRR config yet (#630 slice e).
-export vpn_rt="65169:3000"

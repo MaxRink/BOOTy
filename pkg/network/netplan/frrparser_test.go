@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/telekom/BOOTy/pkg/network/frrconf"
 )
 
 func TestParseFRRConfigBytes_Basic(t *testing.T) {
@@ -381,15 +383,42 @@ func TestParseFRRConfigWarnsUnapplied(t *testing.T) {
 	warned := func(stmt string) bool {
 		return strings.Contains(out, `statement="`+stmt+`"`) || strings.Contains(out, "statement="+stmt+" ")
 	}
-	for _, stmt := range []string{"route-map", "soft-reconfiguration inbound", "[no] bgp ebgp-requires-policy", "[no] bgp suppress-duplicates"} {
+	for _, stmt := range []string{"soft-reconfiguration inbound", "[no] bgp suppress-duplicates"} {
 		if !warned(stmt) {
 			t.Errorf("no warning for %q in:\n%s", stmt, out)
 		}
 	}
 	// GoBGP mode applies these.
-	for _, stmt := range []string{"allowas-in", "bgp bestpath as-path multipath-relax"} {
+	for _, stmt := range []string{"allowas-in", "bgp bestpath as-path multipath-relax", "route-map", "[no] bgp ebgp-requires-policy"} {
 		if warned(stmt) {
 			t.Errorf("warning for the applied %q in:\n%s", stmt, out)
 		}
+	}
+}
+
+// The rd and route-targets of a vni block are parsed only and warned.
+func TestParseFRRConfigWarnsVNIRD(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	if _, err := ParseFRRConfigBytes([]byte("router bgp 65000\n address-family l2vpn evpn\n  vni 100\n   rd 192.0.2.1:100\n  exit-vni\n")); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "vni rd/route-target") {
+		t.Errorf("no warning for the vni rd: %s", buf.String())
+	}
+}
+
+// Without route-target lines FRR uses the auto route target
+// (AS & 0xFFFF):VNI; for the 4-byte ASN 4210000017 that is 32913:3000.
+func TestL3VNIAutoRouteTarget4ByteASN(t *testing.T) {
+	model := &frrconf.Config{
+		VRFVNIs: []frrconf.VRFVNI{{VNI: 3000}},
+		Routers: []frrconf.Router{{ASN: 4210000017, VRF: "default"}},
+	}
+	imp, exp := l3vniRouteTargets(model, 3000)
+	if strings.Join(imp, " ") != "32913:3000" || strings.Join(exp, " ") != "32913:3000" {
+		t.Fatalf("auto route targets = %v / %v, want 32913:3000", imp, exp)
 	}
 }

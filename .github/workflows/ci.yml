@@ -1187,7 +1187,7 @@ jobs:
             sudo apt-get install -y -qq "linux-modules-extra-$(uname -r)"
             sudo modprobe vrf
           fi
-          sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestType5Netlink|^TestFIBWriterKernel|^TestL3VNINetlink' ./pkg/network/gobgp/ 2>&1 | tee -a linux-e2e-logs/go-test.log
+          sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestType5Netlink|^TestFIBWriterKernel|^TestL3VNINetlink|^TestConnectedInVRF' ./pkg/network/gobgp/ 2>&1 | tee -a linux-e2e-logs/go-test.log
           sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestDHCPNetlink' ./pkg/network/ 2>&1 | tee -a linux-e2e-logs/go-test.log
           if grep -E '^[[:space:]]*--- SKIP:' linux-e2e-logs/go-test.log; then
             echo "::error::linux e2e tests skipped in CI"
@@ -1693,7 +1693,8 @@ jobs:
             TestProdTplType5Origination \
             TestProdTplType5CAPRFOverIPv6 \
             TestProdTplBFDSessions \
-            TestProdTplBFDFailover; do
+            TestProdTplBFDFailover \
+            TestProdTplLocalASLoopCheck; do
             if ! grep -q "^--- PASS: ${expected} " e2e-prodtpl.log; then
               echo "::error::${expected} did not pass"
               exit 1

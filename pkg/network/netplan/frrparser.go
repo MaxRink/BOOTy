@@ -170,9 +170,14 @@ func toBGPSession(s *frrconf.Session) network.BGPSession {
 		BFDTransmitMS:        s.BFDTransmitMS,
 		BFDReceiveMS:         s.BFDReceiveMS,
 		BFDDetectMult:        s.BFDDetectMult,
+
+		EBGPRequiresPolicy: s.EBGPRequiresPolicy,
 	}
 	if s.LocalAS != nil {
 		out.LocalASN = s.LocalAS.ASN
+	}
+	for _, rm := range s.RouteMaps {
+		out.RouteMaps = append(out.RouteMaps, network.SessionRouteMaps{Family: rm.Family, In: rm.In, Out: rm.Out})
 	}
 	return out
 }
@@ -185,24 +190,89 @@ func warnUnapplied(model *frrconf.Config) {
 	}
 	for i := range model.Routers {
 		r := &model.Routers[i]
-		if r.EBGPRequiresPolicy != nil {
-			warn(r.Line, "[no] bgp ebgp-requires-policy", "router", r.ASN)
-		}
 		if r.SuppressDuplicates != nil {
 			warn(r.Line, "[no] bgp suppress-duplicates", "router", r.ASN)
 		}
 		for j := range r.AddressFamilies {
 			af := &r.AddressFamilies[j]
 			for _, n := range af.Neighbors {
-				if n.RouteMapIn != "" || n.RouteMapOut != "" {
-					warn(af.Line, "route-map", "neighbor", n.Name, "family", af.AFI+" "+af.SAFI, "in", n.RouteMapIn, "out", n.RouteMapOut)
-				}
 				if n.SoftReconfigInbound {
 					warn(af.Line, "soft-reconfiguration inbound", "neighbor", n.Name, "family", af.AFI+" "+af.SAFI)
 				}
 			}
+			// BOOTy creates no L2VNI devices of its own; their rd and
+			// route-targets are only checked.
+			for _, v := range af.L2VNIs {
+				if v.RD != "" || len(v.RouteTargetImport)+len(v.RouteTargetExport) > 0 {
+					warn(v.Line, "vni rd/route-target", "vni", v.VNI, "rd", v.RD)
+				}
+			}
 		}
 	}
+}
+
+// policy converts the route-maps and community-lists of the model.
+func policy(model *frrconf.Config) ([]network.RouteMap, []network.CommunityList) {
+	rms := make([]network.RouteMap, 0, len(model.RouteMaps))
+	for _, rm := range model.RouteMaps {
+		out := network.RouteMap{Name: rm.Name}
+		for _, e := range rm.Entries {
+			out.Entries = append(out.Entries, network.RouteMapEntry{
+				Seq:                  e.Seq,
+				Deny:                 e.Action == frrconf.Deny,
+				MatchCommunity:       e.MatchCommunity,
+				SetLocalPreference:   e.SetLocalPreference,
+				SetCommunities:       e.SetCommunities,
+				SetCommunityAdditive: e.SetCommunityAdditive,
+			})
+		}
+		rms = append(rms, out)
+	}
+	cls := make([]network.CommunityList, 0, len(model.CommunityLists))
+	for _, cl := range model.CommunityLists {
+		out := network.CommunityList{Name: cl.Name}
+		for _, e := range cl.Entries {
+			out.Entries = append(out.Entries, network.CommunityListEntry{Deny: e.Action == frrconf.Deny, Communities: e.Communities})
+		}
+		cls = append(cls, out)
+	}
+	return rms, cls
+}
+
+// l3vniRouteTargets returns the "route-target import|export" of the VRF
+// that maps to vni. Without them FRR uses the auto route target
+// (AS & 0xFFFF):VNI (bgpd/bgp_evpn.c, form_auto_rt).
+func l3vniRouteTargets(model *frrconf.Config, vni uint32) (imp, exp []string) {
+	i := slices.IndexFunc(model.VRFVNIs, func(v frrconf.VRFVNI) bool { return v.VNI == vni })
+	if i < 0 {
+		return nil, nil
+	}
+	vrf := model.VRFVNIs[i].VRF
+	var asn uint32
+	for j := range model.Routers {
+		r := &model.Routers[j]
+		if routerVRF(r.VRF) != vrf {
+			continue
+		}
+		asn = r.ASN
+		for k := range r.AddressFamilies {
+			if af := &r.AddressFamilies[k]; af.SAFI == "evpn" {
+				imp = append(imp, af.RouteTargetImport...)
+				exp = append(exp, af.RouteTargetExport...)
+			}
+		}
+	}
+	if asn == 0 && len(model.Routers) > 0 {
+		asn = model.Routers[0].ASN
+	}
+	auto := fmt.Sprintf("%d:%d", asn&0xFFFF, vni)
+	if len(imp) == 0 {
+		imp = []string{auto}
+	}
+	if len(exp) == 0 {
+		exp = []string{auto}
+	}
+	return imp, exp
 }
 
 // type5Networks returns the "network" prefixes that FRR originates as EVPN

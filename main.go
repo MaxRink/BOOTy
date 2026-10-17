@@ -1088,6 +1088,12 @@ func networkConfigFromMachineConfig(cfg *config.MachineConfig) *network.Config {
 		MTU:               cfg.Network.MTU,
 		OverlayVRFTableID: cfg.Network.VRF.OverlayTableID,
 		BGPLocalAS:        cfg.Network.BGP.LocalAS,
+		BGPRouteMaps:      cfg.Network.BGP.RouteMaps,
+		BGPCommunityLists: cfg.Network.BGP.CommunityLists,
+		BGPRouteMapIn:     cfg.Network.BGP.RouteMapIn,
+		BGPRouteMapOut:    cfg.Network.BGP.RouteMapOut,
+		EVPNImportRTs:     splitList(cfg.Network.EVPN.ImportRouteTargets),
+		EVPNExportRTs:     splitList(cfg.Network.EVPN.ExportRouteTargets),
 		BGPNeighborVRF:    cfg.Network.BGP.NeighborVRF,
 		BGPConnectRetry:   cfg.Network.BGP.ConnectRetry,
 		BGPAuthPassword:   cfg.Network.BGP.AuthPassword,
@@ -1118,8 +1124,14 @@ func applyBGPOptions(o *config.BGPConfig, n *network.Config) {
 	if o.AllowASIn != nil {
 		n.BGPAllowASIn = *o.AllowASIn
 	}
+	if o.EBGPRequiresPolicy != nil {
+		n.BGPEBGPRequiresPolicy = *o.EBGPRequiresPolicy
+	}
 	for i := range n.BGPSessions {
 		s := &n.BGPSessions[i]
+		if o.EBGPRequiresPolicy != nil {
+			s.EBGPRequiresPolicy = *o.EBGPRequiresPolicy
+		}
 		if o.AllowASIn != nil && s.AllowASIn == 0 {
 			s.AllowASIn = int(*o.AllowASIn)
 		}
@@ -1132,6 +1144,9 @@ func applyBGPOptions(o *config.BGPConfig, n *network.Config) {
 		if o.NeighborVRF != "" && !s.Interface && s.VRF == "" {
 			s.VRF = o.NeighborVRF
 		}
+		if o.RouteMapIn != "" || o.RouteMapOut != "" {
+			s.RouteMaps = explicitRouteMaps(s, o.RouteMapIn, o.RouteMapOut)
+		}
 		if s.BFD && o.BFDTransmitMS > 0 {
 			s.BFDTransmitMS, s.BFDReceiveMS = o.BFDTransmitMS, o.BFDReceiveMS
 		}
@@ -1139,6 +1154,32 @@ func applyBGPOptions(o *config.BGPConfig, n *network.Config) {
 			s.BFDDetectMult = o.BFDDetectMultiplier
 		}
 	}
+}
+
+// explicitRouteMaps applies BGP_ROUTE_MAP_IN/OUT to every activated family
+// of a session; an unset direction keeps the frr.conf route-map.
+func explicitRouteMaps(s *network.BGPSession, in, out string) []network.SessionRouteMaps {
+	var fams []string
+	for f, on := range map[string]bool{"ipv4-unicast": s.IPv4Unicast, "ipv6-unicast": s.IPv6Unicast, "l2vpn-evpn": s.L2VPNEVPN} {
+		if on {
+			fams = append(fams, f)
+		}
+	}
+	slices.Sort(fams)
+	maps := make([]network.SessionRouteMaps, 0, len(fams))
+	for _, f := range fams {
+		rm := network.SessionRouteMaps{Family: f, In: in, Out: out}
+		for _, old := range s.RouteMaps {
+			if old.Family == f && in == "" {
+				rm.In = old.In
+			}
+			if old.Family == f && out == "" {
+				rm.Out = old.Out
+			}
+		}
+		maps = append(maps, rm)
+	}
+	return maps
 }
 
 func boolOr(v *bool, def bool) bool {
@@ -1424,6 +1465,7 @@ func mergeNetplanConfig(dst, src *network.Config) {
 		dst.BGPSessions = src.BGPSessions
 		dst.BGPMultipathRelax = src.BGPMultipathRelax
 	}
+	mergeBGPPolicy(dst, src)
 }
 
 // nativeWins keeps a set native value; an unset one takes the parsed value.
@@ -1464,6 +1506,29 @@ func mergeInferredEVPNMode(dst, src *network.Config) {
 	}
 	if src.EVPNL2Enabled && !dst.EVPNType5Only {
 		dst.EVPNL2Enabled = true
+	}
+}
+
+// mergeBGPPolicy takes the frr.conf route-maps, community-lists and route
+// targets. A non-empty native list replaces the frr.conf list as a whole.
+// The frr.conf route targets win over the legacy vpn_rt key (as for every
+// key that exists on main, and as in FRR); vpn_rt applies only without
+// frr.conf and native route targets.
+func mergeBGPPolicy(dst, src *network.Config) {
+	switch {
+	case len(dst.BGPRouteMaps) == 0:
+		dst.BGPRouteMaps = src.BGPRouteMaps
+	case len(src.BGPRouteMaps) > 0:
+		slog.Info("network.bgp.routeMaps replaces the frr.conf route-maps", "native", len(dst.BGPRouteMaps), "frr.conf", len(src.BGPRouteMaps))
+	}
+	switch {
+	case len(dst.BGPCommunityLists) == 0:
+		dst.BGPCommunityLists = src.BGPCommunityLists
+	case len(src.BGPCommunityLists) > 0:
+		slog.Info("network.bgp.communityLists replaces the frr.conf community-lists", "native", len(dst.BGPCommunityLists), "frr.conf", len(src.BGPCommunityLists))
+	}
+	if len(dst.EVPNImportRTs) == 0 && len(dst.EVPNExportRTs) == 0 {
+		dst.EVPNImportRTs, dst.EVPNExportRTs = src.EVPNImportRTs, src.EVPNExportRTs
 	}
 }
 

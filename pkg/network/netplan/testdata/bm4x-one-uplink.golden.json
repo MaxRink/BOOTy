@@ -66,7 +66,15 @@
       "BFDProfile": "fabric",
       "BFDTransmitMS": 150,
       "BFDReceiveMS": 150,
-      "BFDDetectMult": 3
+      "BFDDetectMult": 3,
+      "RouteMaps": [
+        {
+          "family": "ipv4-unicast",
+          "in": "TAG-FABRIC-IN",
+          "out": "DENY-TAG-FABRIC-OUT"
+        }
+      ],
+      "EBGPRequiresPolicy": false
     },
     {
       "Name": "198.51.100.1",
@@ -88,10 +96,61 @@
       "BFDProfile": "fabric",
       "BFDTransmitMS": 150,
       "BFDReceiveMS": 150,
-      "BFDDetectMult": 3
+      "BFDDetectMult": 3,
+      "RouteMaps": [
+        {
+          "family": "l2vpn-evpn",
+          "in": "TAG-FABRIC-IN",
+          "out": "DENY-TAG-FABRIC-OUT"
+        }
+      ],
+      "EBGPRequiresPolicy": false
     }
   ],
   "BGPMultipathRelax": true,
+  "BGPRouteMaps": [
+    {
+      "name": "TAG-FABRIC-IN",
+      "entries": [
+        {
+          "seq": 10,
+          "setLocalPreference": 90,
+          "setCommunities": [
+            "65169:200"
+          ],
+          "setCommunityAdditive": true
+        }
+      ]
+    },
+    {
+      "name": "DENY-TAG-FABRIC-OUT",
+      "entries": [
+        {
+          "seq": 10,
+          "deny": true,
+          "matchCommunity": "cm-received-fabric"
+        },
+        {
+          "seq": 20
+        }
+      ]
+    }
+  ],
+  "BGPCommunityLists": [
+    {
+      "name": "cm-received-fabric",
+      "entries": [
+        {
+          "communities": [
+            "65169:200"
+          ]
+        }
+      ]
+    }
+  ],
+  "BGPRouteMapIn": "",
+  "BGPRouteMapOut": "",
+  "BGPEBGPRequiresPolicy": false,
   "BGPLocalAS": 0,
   "BGPNeighborVRF": "",
   "BGPConnectRetry": 0,
@@ -119,6 +178,12 @@
   ],
   "BlackholeRoutes": [
     "2001:db8:40a:5481::/64"
+  ],
+  "EVPNImportRTs": [
+    "65169:3000"
+  ],
+  "EVPNExportRTs": [
+    "65169:3000"
   ],
   "Type5Networks": [
     "2001:db8:40a:5481::17/128",

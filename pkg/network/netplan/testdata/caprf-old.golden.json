@@ -69,10 +69,17 @@
       "BFDProfile": "",
       "BFDTransmitMS": 0,
       "BFDReceiveMS": 0,
-      "BFDDetectMult": 0
+      "BFDDetectMult": 0,
+      "RouteMaps": null,
+      "EBGPRequiresPolicy": false
     }
   ],
   "BGPMultipathRelax": false,
+  "BGPRouteMaps": [],
+  "BGPCommunityLists": [],
+  "BGPRouteMapIn": "",
+  "BGPRouteMapOut": "",
+  "BGPEBGPRequiresPolicy": false,
   "BGPLocalAS": 0,
   "BGPNeighborVRF": "",
   "BGPConnectRetry": 0,
@@ -97,6 +104,12 @@
   ],
   "LoopbackAddrs": null,
   "BlackholeRoutes": null,
+  "EVPNImportRTs": [
+    "65000:1000"
+  ],
+  "EVPNExportRTs": [
+    "65000:1000"
+  ],
   "Type5Networks": null,
   "VLANs": null
 }

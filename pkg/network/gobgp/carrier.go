@@ -30,6 +30,11 @@ type carrierWatch struct {
 	// interface down and refuses our connect until it gets an RA; zebra
 	// sends one at once on link up, the periodic RA comes up to 10 s later.
 	announce func(iface string)
+	// raRepeat sends the RA again after this time, in case the link-local
+	// address was still tentative; 0 sends it once. The timers stop with
+	// the watch.
+	raRepeat time.Duration
+	raTimers map[string]*time.Timer
 	log      *slog.Logger
 }
 
@@ -43,13 +48,10 @@ func newCarrierWatch(bgp *server.BgpServer, peers map[string]string, log *slog.L
 		enable: func(ctx context.Context, addr string) error {
 			return bgp.EnablePeer(ctx, &apipb.EnablePeerRequest{Address: addr}) //nolint:wrapcheck // logged with the peer
 		},
-		announce: func(iface string) {
-			sendRouterAdvertisement(iface)
-			// Again after 1 s, in case the link-local address was still
-			// tentative; GoBGP connects 2 to 3 s after the enable.
-			time.AfterFunc(time.Second, func() { sendRouterAdvertisement(iface) })
-		},
-		log: log,
+		announce: sendRouterAdvertisement,
+		// GoBGP connects 2 to 3 s after the enable.
+		raRepeat: time.Second,
+		log:      log,
 	}
 }
 
@@ -71,6 +73,7 @@ func (w *carrierWatch) start(stop chan struct{}) (<-chan struct{}, error) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
+		defer w.stopRATimers()
 		for u := range updates {
 			w.handleUpdate(u)
 		}
@@ -103,7 +106,23 @@ func (w *carrierWatch) handle(iface string, carrier bool) {
 	}
 	w.log.Info("uplink has carrier again, starting its BGP session", "interface", iface, "neighbor", addr)
 	w.announce(iface)
+	if w.raRepeat > 0 {
+		if w.raTimers == nil {
+			w.raTimers = map[string]*time.Timer{}
+		}
+		if t := w.raTimers[iface]; t != nil {
+			t.Stop()
+		}
+		w.raTimers[iface] = time.AfterFunc(w.raRepeat, func() { w.announce(iface) })
+	}
 	if err := w.enable(ctx, addr); err != nil {
 		w.log.Warn("start BGP session", "neighbor", addr, "error", err)
+	}
+}
+
+// stopRATimers stops the repeated RAs; it runs on the update goroutine.
+func (w *carrierWatch) stopRATimers() {
+	for _, t := range w.raTimers {
+		t.Stop()
 	}
 }

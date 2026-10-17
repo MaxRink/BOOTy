@@ -10,6 +10,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/frrconf"
 )
 
@@ -47,6 +48,10 @@ type BGPSessionConfig struct {
 	// of Families, like "neighbor X allowas-in N" (1-10; FRR's default
 	// without N is 3). 0 is unset.
 	AllowASIn int `yaml:"allowASIn,omitempty" json:"allowASIn,omitempty"`
+	// RouteMaps are the import (in) and export (out) route-maps per address
+	// family, like "neighbor X route-map M in|out" in that family. They name
+	// network.bgp.routeMaps or frr.conf route-maps.
+	RouteMaps []network.SessionRouteMaps `yaml:"routeMaps,omitempty" json:"routeMaps,omitempty"`
 	// BFD and BFDProfile request a BFD session ("neighbor X bfd [profile P]").
 	BFD        bool   `yaml:"bfd,omitempty" json:"bfd,omitempty"`
 	BFDProfile string `yaml:"bfdProfile,omitempty" json:"bfdProfile,omitempty"`
@@ -136,7 +141,7 @@ func (b *BGPConfig) frrModel() (*frrconf.Config, error) {
 		if r, ok := routers[vrf]; ok {
 			return r
 		}
-		r := &frrconf.Router{ASN: b.ASN, VRF: vrf, DefaultIPv4Unicast: new(false), FastExternalFailover: b.FastExternalFailover}
+		r := &frrconf.Router{ASN: b.ASN, VRF: vrf, DefaultIPv4Unicast: new(false), FastExternalFailover: b.FastExternalFailover, EBGPRequiresPolicy: b.EBGPRequiresPolicy}
 		routers[vrf] = r
 		vrfs = append(vrfs, vrf)
 		return r
@@ -265,14 +270,35 @@ func addNeighbor(r *frrconf.Router, s *BGPSessionConfig, group bool) error {
 		if !ok {
 			return fmt.Errorf("%s: family %q must be ipv4-unicast, ipv6-unicast or l2vpn-evpn", what, f)
 		}
-		i := slices.IndexFunc(r.AddressFamilies, func(af frrconf.AddressFamily) bool { return af.AFI == afi[0] && af.SAFI == afi[1] })
-		if i < 0 {
-			r.AddressFamilies = append(r.AddressFamilies, frrconf.AddressFamily{AFI: afi[0], SAFI: afi[1]})
-			i = len(r.AddressFamilies) - 1
+		an := afNeighbor(r, afi, s.Name)
+		an.Activate, an.AllowASIn = true, s.AllowASIn
+	}
+	for _, rm := range s.RouteMaps {
+		af, ok := sessionFamilies[rm.Family]
+		if !ok {
+			return fmt.Errorf("%s: route-map family %q must be ipv4-unicast, ipv6-unicast or l2vpn-evpn", what, rm.Family)
 		}
-		r.AddressFamilies[i].Neighbors = append(r.AddressFamilies[i].Neighbors, frrconf.AFNeighbor{Name: s.Name, Activate: true, AllowASIn: s.AllowASIn})
+		an := afNeighbor(r, af, s.Name)
+		an.RouteMapIn, an.RouteMapOut = rm.In, rm.Out
 	}
 	return nil
+}
+
+// afNeighbor returns the neighbor entry of name in the address family,
+// adding the family and the entry when they are missing.
+func afNeighbor(r *frrconf.Router, afi [2]string, name string) *frrconf.AFNeighbor {
+	i := slices.IndexFunc(r.AddressFamilies, func(af frrconf.AddressFamily) bool { return af.AFI == afi[0] && af.SAFI == afi[1] })
+	if i < 0 {
+		r.AddressFamilies = append(r.AddressFamilies, frrconf.AddressFamily{AFI: afi[0], SAFI: afi[1]})
+		i = len(r.AddressFamilies) - 1
+	}
+	af := &r.AddressFamilies[i]
+	j := slices.IndexFunc(af.Neighbors, func(n frrconf.AFNeighbor) bool { return n.Name == name })
+	if j < 0 {
+		af.Neighbors = append(af.Neighbors, frrconf.AFNeighbor{Name: name})
+		j = len(af.Neighbors) - 1
+	}
+	return &af.Neighbors[j]
 }
 
 func parseRemoteAS(v string) (frrconf.RemoteAS, error) {

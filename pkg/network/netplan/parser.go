@@ -489,6 +489,9 @@ func applyFRRParams(frr *FRRParams, cfg *network.Config) {
 	cfg.BlackholeRoutes = frr.BlackholeRoutes
 	cfg.BGPSessions = frr.Sessions
 	cfg.BGPMultipathRelax = frr.MultipathRelax
+	if frr.Model != nil {
+		cfg.BGPRouteMaps, cfg.BGPCommunityLists = policy(frr.Model)
+	}
 	applyEVPNMode(frr, cfg)
 	cfg.InterfaceNames = append(cfg.InterfaceNames, frr.UnnumberedPeers...)
 	hasUnnumbered := len(frr.UnnumberedPeers) > 0
@@ -513,6 +516,9 @@ func applyEVPNMode(frr *FRRParams, cfg *network.Config) {
 	if cfg.ProvisionVNI != 0 && slices.Contains(frr.L3VNIs, cfg.ProvisionVNI) {
 		cfg.EVPNType5Only = true
 		cfg.Type5Networks = type5Networks(frr.Model, cfg.ProvisionVNI)
+		if frr.Model != nil {
+			cfg.EVPNImportRTs, cfg.EVPNExportRTs = l3vniRouteTargets(frr.Model, cfg.ProvisionVNI)
+		}
 		return
 	}
 	cfg.EVPNL2Enabled = frr.AdvertiseAllVNI

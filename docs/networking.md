@@ -147,6 +147,31 @@ same resolution:
 - `neighbor X allowas-in [N]` (native `allowASIn`, FRR's default N is 3)
   accepts paths with the own AS up to N times. GoBGP has one count per
   session, so a session uses the highest count of its families.
+- `bgp ebgp-requires-policy` is on unless the router has `no bgp
+  ebgp-requires-policy`, like current FRR (`bgpd/bgp_route.c`,
+  `bgp_inbound_policy_exists`). An eBGP session without a route-map in a
+  family and direction then exchanges no routes there; BOOTy logs each
+  such session, family and direction at warning level, like FRR's
+  `zlog_warn`. Native sessions follow
+  the same default; `network.bgp.ebgpRequiresPolicy`
+  (`BGP_EBGP_REQUIRES_POLICY`) sets it for all sessions, and it is off for
+  the `BGP_PEER_MODE` peers unless set.
+- `neighbor X route-map M in|out` in an address family (native `routeMaps`
+  with `family`, `in`, `out`) sets the route-maps of the session in that
+  family; the peer's value wins over its peer-group's. The route-maps come
+  from `frr.conf` or from `network.bgp.routeMaps` (`BGP_ROUTE_MAPS`). A
+  route-map that a session names but that is not defined stops the setup
+  (fail-fast); FRR instead denies all routes of that peer in that
+  direction. A community-list `deny` entry stops the setup too.
+- Route-map coverage: the production template (bm4x-operator provcfg
+  `frr.conf.tpl`) uses `route-map NAME permit|deny SEQ`, `set
+  local-preference`, `set community ... additive`, and `match community`
+  with a standard community-list of `permit` entries, and BOOTy implements
+  all of them in both forms. No template uses the other constructs, so they
+  are rejected: `match ip address prefix-list`, `ip prefix-list`, as-path
+  lists and `match as-path`, `set metric`, `set as-path prepend`,
+  `continue`, `on-match`, expanded community-lists, EVPN matches (`match
+  evpn route-type|vni`) and community-list `deny` entries.
 - `neighbor X bfd [profile P]` (native `bfd`, `bfdProfile`) runs BFD with
   the timers of the `bfd` / `profile P` block (native
   `network.bgp.bfdProfiles`, `BFD_PROFILES`). An unknown profile and unset
@@ -219,14 +244,17 @@ The FRR stack (`NETWORK_MODE=frr`) does not use `BGP_SESSIONS`; BOOTy logs
 a warning when it is set there.
 
 These statements are parsed but not applied yet, and BOOTy logs one
-warning per statement: `route-map ... in|out`,
-`soft-reconfiguration inbound`, `[no] bgp ebgp-requires-policy` and
-`[no] bgp suppress-duplicates`.
+warning per statement: `soft-reconfiguration inbound`,
+`[no] bgp suppress-duplicates` (it changes no routes), and `rd` and
+`route-target` of a `vni` block (BOOTy creates no L2VNI of its own, so they
+are only checked).
 
 Native config and parsed files merge like this: a native list
 (`network.bgp.sessions`) replaces the parsed list as a whole, with one info
-log line; there is no element-wise merge. `network.bgp.bfdProfiles` replaces
-the `frr.conf` BFD profiles the same way, also for the `frr.conf` sessions. A native scalar that is set
+log line; there is no element-wise merge. `network.bgp.bfdProfiles`,
+`network.bgp.routeMaps` and `network.bgp.communityLists` replace the
+`frr.conf` lists the same way, also for the `frr.conf` sessions. In the
+vars, an unknown field of a JSON list fails, like in the YAML config. A native scalar that is set
 (`network.bgp.multipathRelax`) overrides the parsed value; unset keeps it.
 
 A key that exists in earlier releases keeps its rule for CAPRF
@@ -273,6 +301,12 @@ rule of every key:
 | `BFD_PROFILES` | `frr.conf` `bfd` / `profile NAME` | `network.bgp.bfdProfiles` | list replaces, also for the `frr.conf` sessions |
 | `BFD_TRANSMIT_MS`, `BFD_RECEIVE_MS` | profile timers | `network.bgp.bfdTransmitMS`, `network.bgp.bfdReceiveMS` | native wins, for the sessions with BFD |
 | `BFD_DETECT_MULTIPLIER` | profile `detect-multiplier` | `network.bgp.bfdDetectMultiplier` | native wins, for the sessions with BFD |
+| `routeMaps` (session field) | `neighbor X route-map M in\|out` | `network.bgp.sessions[].routeMaps` | part of the session list |
+| `BGP_ROUTE_MAPS`, `BGP_COMMUNITY_LISTS` | `frr.conf` `route-map`, `bgp community-list` | `network.bgp.routeMaps`, `network.bgp.communityLists` | list replaces |
+| `BGP_ROUTE_MAP_IN`, `BGP_ROUTE_MAP_OUT` | session route-maps | `network.bgp.routeMapIn`, `network.bgp.routeMapOut` | native wins, for every session and family |
+| `EVPN_RT_IMPORT`, `EVPN_RT_EXPORT` | `frr.conf` `route-target import\|export` | `network.evpn.importRouteTargets`, `network.evpn.exportRouteTargets` | list replaces |
+| `vpn_rt` | `frr.conf` route targets, else FRR's auto route target of an `frr.conf` L3VNI | `network.evpn.vpnRT` | netplan wins: the `frr.conf` route targets win over `vpn_rt`, as in FRR; `vpn_rt` applies only without them |
+| `BGP_EBGP_REQUIRES_POLICY` | `[no] bgp ebgp-requires-policy` | `network.bgp.ebgpRequiresPolicy` | native wins, for every session; unset is on for sessions, off for `BGP_PEER_MODE` peers |
 
 ### Strict input and the accepted grammar
 
@@ -303,8 +337,10 @@ parse FRR config /deploy/file-system/etc/frr/frr.conf: line 31
 each such statement or key and go on without it. The FRR warning names the
 file and the line.
 
-Lenient mode skips only what BOOTy does not implement. These stay errors in
-both modes:
+Lenient mode skips only what BOOTy does not implement. An unsupported
+statement inside a route-map, such as `set metric` or `match ip address
+prefix-list`, is then skipped, so the route-map matches or sets less than in
+FRR and the policy changes. These stay errors in both modes:
 
 - an invalid value, such as `remote-as 65oo1`, a router-id that is not an
   IPv4 address or a network with prefix length 33;
@@ -497,8 +533,11 @@ gateway. GoBGP still requires `provision_vni` in every overlay type.
 ### Routes BOOTy originates
 
 All routes use the route distinguisher `asn_server:provision_vni` and the
-router ID as next hop. The route target is `vpn_rt`, or
-`asn_server:provision_vni` when `vpn_rt` is empty.
+router ID as next hop. The route target follows the precedence in the
+`EVPN_RT_IMPORT` row of [Configuration](configuration.md): the native
+`EVPN_RT_IMPORT`/`EVPN_RT_EXPORT` lists, then the `frr.conf` route targets
+or FRR's auto route target of an `frr.conf` L3VNI, then `vpn_rt`, then
+`asn_server:provision_vni`.
 
 | Route | Content | Mode |
 |---|---|---|

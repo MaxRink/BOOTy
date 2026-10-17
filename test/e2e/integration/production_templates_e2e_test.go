@@ -351,13 +351,16 @@ func waitRoutes(t *testing.T, node prodtplNode, want map[string][]string) {
 	}
 }
 
+// prodtplRoutesVia is the BGP table of a server: the RR loopbacks, the
+// other servers and the leaf route with the local-as 3 times (allowed by
+// allowas-in 3). The leaf route with the local-as 4 times is rejected.
 func prodtplRoutesVia(devs ...string) map[string][]string {
 	hops := make([]string, 0, len(devs))
 	for _, d := range devs {
 		// Like zebra: the leaf link-local gateway (RFC 5549) and metric 20.
 		hops = append(hops, d+" via leaf metric 20")
 	}
-	return map[string][]string{"198.51.100.1": hops, "198.51.100.2": hops, "other-server": hops}
+	return map[string][]string{"198.51.100.1": hops, "198.51.100.2": hops, "other-server": hops, "203.0.113.128/25": hops}
 }
 
 // The learned routes are in the VRF table with ECMP over both uplinks,
@@ -526,5 +529,16 @@ func prodtplInbound(t *testing.T, node prodtplNode) {
 			t.Fatalf("dcgw01 -> %s session not opened inbound: %v %v", node.name, n, err)
 		case <-time.After(2 * time.Second):
 		}
+	}
+}
+
+// Mirrors FRR bgp_as_allow_in test_bgp_allowas_in_p0 for the local-as of
+// "local-as 65501 no-prepend replace-as": the leaf sends 203.0.113.0/24
+// with 65501 four times and 203.0.113.128/25 with it three times. FRR
+// rejects the first (more than allowas-in 3) and keeps the second; BOOTy
+// must do the same (#630 C6, C11).
+func TestProdTplLocalASLoopCheck(t *testing.T) {
+	for _, node := range prodtplServers {
+		waitRoutes(t, node, prodtplRoutesVia("ens1f0np0", "ens1f1np1"))
 	}
 }

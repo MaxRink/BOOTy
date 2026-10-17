@@ -677,7 +677,7 @@ func (o *OverlayTier) advertiseType5(ctx context.Context) error {
 		return fmt.Errorf("build EVPN NLRI: %w", err)
 	}
 
-	pattrs, err := buildType5PathAttrs(nlri, o.cfg.RouterID, o.cfg.ASN, uint32(o.cfg.ProvisionVNI), o.cfg.VPNRT, o.cfg.BridgeMAC)
+	pattrs, err := buildType5PathAttrsRTs(nlri, o.cfg.RouterID, o.cfg.ASN, uint32(o.cfg.ProvisionVNI), o.exportRTSpecs(), o.cfg.BridgeMAC)
 	if err != nil {
 		return fmt.Errorf("build path attributes: %w", err)
 	}
@@ -822,12 +822,10 @@ func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 		return
 	}
 
-	importASN, importVNI, err := o.importRouteTarget()
-	if err != nil {
+	if ok, err := o.importsRoute(p); err != nil {
 		o.log.Debug("route update skipped: invalid configured import RT", "action", action, "type", nlri.GetTypeUrl(), "error", err)
 		return
-	}
-	if !routeUpdateMatchesImportRT(p, importASN, importVNI) {
+	} else if !ok {
 		o.log.Debug("route update skipped: RT mismatch", "action", action, "type", nlri.GetTypeUrl())
 		return
 	}
@@ -1677,6 +1675,12 @@ func buildEVPNType5NLRI(rd *anypb.Any, provisionIP, gwIP string, label uint32) (
 
 // buildType5PathAttrs builds BGP path attributes for EVPN Type-5 advertisement.
 func buildType5PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32, vpnRT, routerMAC string) ([]*anypb.Any, error) {
+	return buildType5PathAttrsRTs(nlri, nextHop, asn, vni, []string{vpnRT}, routerMAC)
+}
+
+// buildType5PathAttrsRTs is buildType5PathAttrs with one route target per
+// spec, like FRR "route-target export" with several values.
+func buildType5PathAttrsRTs(nlri *anypb.Any, nextHop string, asn, vni uint32, rtSpecs []string, routerMAC string) ([]*anypb.Any, error) {
 	origin, err := anypb.New(&apipb.OriginAttribute{Origin: 0}) // IGP
 	if err != nil {
 		return nil, fmt.Errorf("marshal origin: %w", err)
@@ -1693,9 +1697,13 @@ func buildType5PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32, vpnRT
 		return nil, fmt.Errorf("marshal mp-reach: %w", err)
 	}
 
-	rt, err := buildRouteTargetForSpec(vpnRT, asn, vni)
-	if err != nil {
-		return nil, fmt.Errorf("build route target: %w", err)
+	var communities []*anypb.Any
+	for _, spec := range rtSpecs {
+		rt, err := buildRouteTargetForSpec(spec, asn, vni)
+		if err != nil {
+			return nil, fmt.Errorf("build route target: %w", err)
+		}
+		communities = append(communities, rt)
 	}
 
 	encap, err := anypb.New(&apipb.EncapExtended{TunnelType: vxlanTunnelType})
@@ -1703,7 +1711,7 @@ func buildType5PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32, vpnRT
 		return nil, fmt.Errorf("marshal vxlan encapsulation extended community: %w", err)
 	}
 
-	communities := []*anypb.Any{rt, encap}
+	communities = append(communities, encap)
 	if routerMAC != "" {
 		rmac, err := buildRouterMACExtended(routerMAC)
 		if err != nil {
@@ -1799,6 +1807,42 @@ func extractRouterMAC(path *apipb.Path) (net.HardwareAddr, error) {
 		}
 	}
 	return nil, nil
+}
+
+// importsRoute reports whether a route update carries an import route
+// target. With explicit import route targets (FRR "route-target import")
+// any of them imports the route; a withdraw without route targets is
+// accepted, as for the single route target.
+func (o *OverlayTier) importsRoute(p *apipb.Path) (bool, error) {
+	if o.cfg == nil || len(o.cfg.ImportRTs) == 0 {
+		asn, vni, err := o.importRouteTarget()
+		if err != nil {
+			return false, err
+		}
+		return routeUpdateMatchesImportRT(p, asn, vni), nil
+	}
+	seen := false
+	for _, spec := range o.cfg.ImportRTs {
+		asn, val, err := ParseRouteTarget(spec)
+		if err != nil {
+			return false, fmt.Errorf("invalid import route target: %w", err)
+		}
+		matches, present := routeTargetMatchState(p, asn, val)
+		if matches {
+			return true, nil
+		}
+		seen = seen || present
+	}
+	return p.GetIsWithdraw() && !seen, nil
+}
+
+// exportRTSpecs returns the export route targets: the explicit list, or
+// vpn_rt, or ASN:VNI (an empty spec).
+func (o *OverlayTier) exportRTSpecs() []string {
+	if len(o.cfg.ExportRTs) > 0 {
+		return o.cfg.ExportRTs
+	}
+	return []string{o.cfg.VPNRT}
 }
 
 func (o *OverlayTier) importRouteTarget() (asn, vni uint32, err error) {
