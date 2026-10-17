@@ -11,8 +11,12 @@ import (
 type StepMetrics struct {
 	Name       string `json:"name"`
 	DurationMs int64  `json:"durationMs"`
-	Status     string `json:"status"`
-	Error      string `json:"error,omitempty"`
+	// Status is a StepStatus: done, failed, skipped or running.
+	Status  string `json:"status"`
+	Retries int    `json:"retries,omitempty"`
+	Error   string `json:"error,omitempty"`
+	// Code is the stable failure code (BOOTY-<AREA>-<NNN>) of a failed step.
+	Code string `json:"code,omitempty"`
 }
 
 // ImageMetrics captures image download performance.
@@ -46,26 +50,20 @@ type Summary struct {
 type Collector struct {
 	mu        sync.Mutex
 	startTime time.Time
-	steps     []StepMetrics
+	steps     *StepTracker
 	image     *ImageMetrics
 	disk      *DiskMetrics
 }
 
 // NewCollector creates a Collector and records the start time.
 func NewCollector() *Collector {
-	return &Collector{startTime: time.Now()}
+	return &Collector{startTime: time.Now(), steps: NewStepTracker(nil, nil)}
 }
 
-// RecordStep records timing and status for a provisioning step.
-func (c *Collector) RecordStep(name string, duration time.Duration, err error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	m := StepMetrics{Name: name, DurationMs: duration.Milliseconds(), Status: "ok"}
-	if err != nil {
-		m.Status = "error"
-		m.Error = err.Error()
-	}
-	c.steps = append(c.steps, m)
+// Steps returns the step tracker. It is the only source of the step data
+// in the summary.
+func (c *Collector) Steps() *StepTracker {
+	return c.steps
 }
 
 // RecordImage records image download metrics.
@@ -102,8 +100,15 @@ func (c *Collector) Summarize() Summary {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := time.Now()
-	steps := make([]StepMetrics, len(c.steps))
-	copy(steps, c.steps)
+	records := c.steps.Steps()
+	steps := make([]StepMetrics, len(records))
+	for i := range records {
+		r := &records[i]
+		steps[i] = StepMetrics{
+			Name: r.Name, DurationMs: r.Duration.Milliseconds(), Status: string(r.Status),
+			Retries: r.Retries, Error: r.Error, Code: r.Code,
+		}
+	}
 	s := Summary{
 		StartTime: c.startTime, EndTime: now, TotalDurMs: now.Sub(c.startTime).Milliseconds(),
 		Steps: steps,

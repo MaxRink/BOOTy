@@ -31,11 +31,16 @@ func (o *Orchestrator) Deprovision(ctx context.Context) error {
 	o.log.Info("starting deprovisioning", "mode", mode)
 
 	steps := o.deprovisionSteps(mode)
+	defer o.flushTelemetry(context.Background())
+	tracker := o.collector.Steps()
 
 	for i, step := range steps {
 		o.log.Info("deprovisioning step", "step", step.Name, "index", i+1, "total", len(steps))
-		if err := step.Fn(ctx); err != nil {
-			msg := fmt.Sprintf("step %s failed: %v", step.Name, err)
+		tracker.StartStep(step.Name)
+		err := WithCode(step.Name, step.Fn(ctx))
+		tracker.EndStep(step.Name, err)
+		if err != nil {
+			msg := stepFailureMessage(step.Name, err)
 			o.log.Error("deprovisioning step failed", "step", step.Name, "error", err)
 			DumpDebugState(step.Name)
 			if reportErr := o.provider.ReportStatus(ctx, config.StatusError, msg); reportErr != nil {

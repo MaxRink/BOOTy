@@ -2,6 +2,7 @@
 package telemetry
 
 import (
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -28,6 +29,22 @@ type StepRecord struct {
 	Duration  time.Duration `json:"duration,omitempty"`
 	Retries   int           `json:"retries,omitempty"`
 	Error     string        `json:"error,omitempty"`
+	Code      string        `json:"code,omitempty"`
+}
+
+// codedError is an error that carries a stable failure code
+// (pkg/provision.CodedError).
+type codedError interface {
+	error
+	FailureCode() string
+}
+
+// failureCode returns the failure code that err carries, or "".
+func failureCode(err error) string {
+	if coded, ok := errors.AsType[codedError](err); ok {
+		return coded.FailureCode()
+	}
+	return ""
 }
 
 // StepTracker tracks provisioning step execution.
@@ -77,6 +94,7 @@ func (t *StepTracker) EndStep(name string, err error) {
 		if err != nil {
 			t.steps[i].Status = StatusFailed
 			t.steps[i].Error = err.Error()
+			t.steps[i].Code = failureCode(err)
 			if t.metrics != nil {
 				t.metrics.StepErrors.Inc()
 			}
@@ -148,8 +166,8 @@ func (t *StepTracker) TotalDuration() time.Duration {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	var total time.Duration
-	for _, s := range t.steps {
-		total += s.Duration
+	for i := range t.steps {
+		total += t.steps[i].Duration
 	}
 	return total
 }

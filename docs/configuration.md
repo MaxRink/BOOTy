@@ -366,8 +366,10 @@ default and `iso` build flavors contain the FRR daemons.
 | `TELEMETRY_URL` | (unset) | URL | Fallback for `METRICS_URL`. |
 | `EVENT_URL` | (unset) | URL | Receives the last provisioning event. |
 
-The provisioning steps do not feed the telemetry collector yet. The metrics
-summary has no step data and BOOTy sends no events.
+Provision and deprovision runs fill the `steps` list of the metrics summary:
+name, `durationMs`, `status` (`done`, `failed` or `skipped`), `retries`, and
+for a failed step `error` and `code` (see [Failure codes](failure-codes.md)).
+The summary has no image or disk data yet, and BOOTy sends no events.
 
 ## Crash artifacts
 

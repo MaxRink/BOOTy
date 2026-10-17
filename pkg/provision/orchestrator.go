@@ -217,6 +217,7 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 		_, mustRun := stateSteps[step.Name]
 		if cp.IsCompleted(step.Name) && !mustRun {
 			o.log.Info("skipping completed step", "step", step.Name)
+			o.collector.Steps().SkipStep(step.Name)
 			continue
 		}
 		o.log.Info("provisioning step", "step", step.Name, "index", i+1, "total", len(steps))
@@ -297,15 +298,26 @@ func (o *Orchestrator) restoreCheckpointDerivedState(cp *Checkpoint) {
 // executeStep runs a single provisioning step with optional retry, updating
 // the checkpoint on success or failure.
 func (o *Orchestrator) executeStep(ctx context.Context, step Step, cp *Checkpoint) error {
+	tracker := o.collector.Steps()
+	tracker.StartStep(step.Name)
 	var err error
 	if policy, ok := DefaultPolicies[step.Name]; ok {
-		err = WithRetry(ctx, step.Name, policy, step.Fn)
+		attempts := 0
+		err = WithRetry(ctx, step.Name, policy, func(ctx context.Context) error {
+			if attempts > 0 {
+				tracker.RecordRetry(step.Name)
+			}
+			attempts++
+			return step.Fn(ctx)
+		})
 	} else {
 		err = step.Fn(ctx)
 	}
+	err = WithCode(step.Name, err)
+	tracker.EndStep(step.Name, err)
 
 	if err != nil {
-		msg := fmt.Sprintf("step %s failed: %v", step.Name, err)
+		msg := stepFailureMessage(step.Name, err)
 		o.log.Error("provisioning step failed", "step", step.Name, "error", err)
 		cp.Errors = append(cp.Errors, msg)
 		cp.FailureCount++
@@ -327,6 +339,12 @@ func (o *Orchestrator) executeStep(ctx context.Context, step Step, cp *Checkpoin
 		return fmt.Errorf("save checkpoint after step %s: %w", step.Name, saveErr)
 	}
 	return nil
+}
+
+// stepFailureMessage is the ERROR_URL body of a failed step. err must carry
+// a failure code (WithCode).
+func stepFailureMessage(step string, err error) string {
+	return fmt.Sprintf("step %s failed [%s]: %v", step, CodeOf(err), err)
 }
 
 func (o *Orchestrator) recordCheckpointDerivedState(stepName string, cp *Checkpoint) {

@@ -132,12 +132,15 @@ When a provisioning run ends, with success or with an error, BOOTy posts the
 metrics summary. The requests use the CAPRF token and up to 3 attempts. A
 failed request does not change the result of the run.
 
-The provisioning steps do not feed the telemetry collector yet. So the
-summary has no step, image or disk data. The event emitter gets no events,
-so BOOTy sends nothing to `EVENT_URL`.
+The summary lists every step that a provision or deprovision run reached,
+with its duration, status, retries and, for a failed step, the error and its
+[failure code](failure-codes.md). A step that a resumed run skips has the
+status `skipped`. The summary has no image or disk data yet. The event
+emitter gets no events, so BOOTy sends nothing to `EVENT_URL`.
 
-The `pkg/telemetry` library also has counters, gauges, histograms and a step
-tracker. The provisioning flow does not use them.
+The step data comes from the step tracker of `pkg/telemetry`. The library
+also has counters, gauges and histograms. The provisioning flow does not use
+them.
 
 Planned: step metrics, events and exporters. See
 [proposal-telemetry-enhanced.md](proposal-telemetry-enhanced.md) and

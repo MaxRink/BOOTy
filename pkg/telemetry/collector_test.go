@@ -2,28 +2,50 @@ package telemetry
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
 
-func TestRecordStep(t *testing.T) {
+type codedErr struct{ code string }
+
+func (e codedErr) Error() string       { return "coded" }
+func (e codedErr) FailureCode() string { return e.code }
+
+func TestSummaryStepsFromTracker(t *testing.T) {
 	c := NewCollector()
-	c.RecordStep("detect-disk", 100*time.Millisecond, nil)
+	tr := c.Steps()
+	tr.SkipStep("report-init")
+	tr.StartStep("detect-disk")
+	tr.RecordRetry("detect-disk")
+	tr.EndStep("detect-disk", nil)
+	tr.StartStep("mount-root")
+	tr.EndStep("mount-root", fmt.Errorf("mount: %w", codedErr{"BOOTY-DSK-016"}))
+
 	s := c.Summarize()
-	if len(s.Steps) != 1 {
-		t.Fatalf("got %d steps, want 1", len(s.Steps))
+	want := []StepMetrics{
+		{Name: "report-init", Status: "skipped"},
+		{Name: "detect-disk", Status: "done", Retries: 1},
+		{Name: "mount-root", Status: "failed", Error: "mount: coded", Code: "BOOTY-DSK-016"},
 	}
-	if s.Steps[0].Status != "ok" {
-		t.Errorf("step status = %s, want ok", s.Steps[0].Status)
+	if len(s.Steps) != len(want) {
+		t.Fatalf("steps = %+v, want %+v", s.Steps, want)
+	}
+	for i := range want {
+		got := s.Steps[i]
+		got.DurationMs = 0
+		if got != want[i] {
+			t.Errorf("step %d = %+v, want %+v", i, got, want[i])
+		}
 	}
 }
 
-func TestRecordStepError(t *testing.T) {
+func TestStepErrorWithoutCode(t *testing.T) {
 	c := NewCollector()
-	c.RecordStep("mount-root", 50*time.Millisecond, fmt.Errorf("mount failed"))
-	s := c.Summarize()
-	if s.Steps[0].Status != "error" {
-		t.Errorf("step status = %s, want error", s.Steps[0].Status)
+	c.Steps().StartStep("mount-root")
+	c.Steps().EndStep("mount-root", fmt.Errorf("mount failed"))
+	if got := c.Summarize().Steps[0]; got.Status != "failed" || got.Code != "" {
+		t.Errorf("step = %+v, want failed without code", got)
 	}
 }
 
@@ -53,13 +75,14 @@ func TestRecordDisk(t *testing.T) {
 
 func TestMarshalSummary(t *testing.T) {
 	c := NewCollector()
-	c.RecordStep("test", time.Second, nil)
+	c.Steps().StartStep("test")
+	c.Steps().EndStep("test", codedErr{"BOOTY-RUN-001"})
 	data, err := c.MarshalSummary()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(data) == 0 {
-		t.Error("expected non-empty JSON")
+	if !strings.Contains(string(data), `"status":"failed","error":"coded","code":"BOOTY-RUN-001"`) {
+		t.Errorf("summary JSON %s has no step code", data)
 	}
 }
 

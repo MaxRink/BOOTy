@@ -848,9 +848,10 @@ export METRICS_URL="https://caprf.example.com/metrics"
 | `METRICS_URL`, or `TELEMETRY_URL` when `METRICS_URL` is unset | Metrics summary (JSON) |
 | `EVENT_URL` | The last provisioning event |
 
-The provisioning steps do not feed the telemetry collector yet. The summary
-has no step data, and BOOTy sends no events. Telemetry is best-effort:
-failures do not block provisioning.
+The summary lists every step of a provision or deprovision run with its
+duration, status, retries and, for a failed step, the
+[failure code](docs/failure-codes.md). BOOTy sends no events yet. Telemetry
+is best-effort: failures do not block provisioning.
 
 ### Startup Crash Artifact Upload
 

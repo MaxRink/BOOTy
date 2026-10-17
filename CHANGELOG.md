@@ -31,6 +31,9 @@ behaviour.
 
 ### Behaviour changes in all modes
 
+- The `ERROR_URL` body of a failed provision or deprovision step now carries a
+  stable failure code: `step <name> failed [BOOTY-<AREA>-<NNN>]: <error>`.
+  [docs/failure-codes.md](docs/failure-codes.md) lists the codes (#706).
 - Provisioning and hard deprovision zero the superblock of every
   `linux_raid_member` (whole disks and partitions) on the disks they wipe,
   after `stop-raid` stopped the arrays: provisioning on the target and mirror
@@ -200,6 +203,10 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 
 ### Features
 
+- The `METRICS_URL` summary has step data: duration, status (done, failed or
+  skipped), retries, and the error and failure code of a failed step, for
+  provision and deprovision runs. A deprovision run now posts the summary too
+  (#706).
 - GoBGP mode applies the netplan device settings of the provision VXLAN device,
   the bridge and the NICs like systemd-networkd (MTU, MAC, learning, ARP proxy,
   hairpin, link-local, `accept-ra`), and `frr.conf` `[no] ip[v6] forwarding`.
