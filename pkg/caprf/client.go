@@ -1142,6 +1142,9 @@ func applyVar(cfg *config.MachineConfig, key, value string) error {
 	if applyParityVar(cfg, key, value) || applyStringVar(cfg, key, value) {
 		return nil
 	}
+	if handled, err := applyWatchdogVar(cfg, key, value); handled {
+		return err
+	}
 	if handled, err := applyUint32Var(cfg, key, value); handled {
 		return err
 	}

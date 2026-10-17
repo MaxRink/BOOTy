@@ -58,6 +58,7 @@ import (
 func (c *Config) Validate() error {
 	c.ApplyPresets()
 	errs := c.validateEnums()
+	errs = append(errs, validateWatchdog(&c.Watchdog)...)
 
 	peerMode := strings.ToLower(strings.TrimSpace(c.Network.BGP.PeerMode))
 	if (peerMode == "dual" || peerMode == "numbered") && strings.TrimSpace(c.Network.BGP.Neighbors) == "" {

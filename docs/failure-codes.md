@@ -81,3 +81,4 @@ step (step `*`). Any other error gets the code of its step.
 | `BOOTY-OS-013` | config | `run-post-provision-cmds` | A post-provision command failed. |
 | `BOOTY-OS-014` | environment | `teardown-chroot` | Chroot teardown failed. |
 | `BOOTY-OS-015` | config | `soft-deprovision` | Soft deprovision failed. |
+| `BOOTY-WDT-001` | environment | `*` | A step made no progress within its watchdog budget; the hardware watchdog resets the host. |

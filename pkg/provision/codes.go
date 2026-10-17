@@ -116,6 +116,8 @@ var failureCodes = []FailureCode{
 	{"BOOTY-OS-013", ClassConfig, "run-post-provision-cmds", "A post-provision command failed."},
 	{"BOOTY-OS-014", ClassEnvironment, "teardown-chroot", "Chroot teardown failed."},
 	{"BOOTY-OS-015", ClassConfig, "soft-deprovision", "Soft deprovision failed."},
+
+	{"BOOTY-WDT-001", ClassEnvironment, AnyStep, "A step made no progress within its watchdog budget; the hardware watchdog resets the host."},
 }
 
 // Failure codes used outside the step table.
@@ -132,6 +134,8 @@ const (
 	codeAmbiguousRoot    = "BOOTY-DSK-012"
 	codeEFIVars          = "BOOTY-EFI-002"
 	codeVerifyReboot     = "BOOTY-HW-006"
+	// CodeStalled is watchdog.CodeStalled (main_watchdog_test.go checks it).
+	CodeStalled = "BOOTY-WDT-001"
 )
 
 // sentinelCodes maps known errors to a specific code. The first match wins.

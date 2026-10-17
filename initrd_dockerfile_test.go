@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -493,6 +494,38 @@ func TestDockerfilePrunesUnusedLibsBeforePacking(t *testing.T) {
 		lastCopy := strings.LastIndex(block, "\nCOPY --from=")
 		if prune < 0 || pack < 0 || prune > pack || lastCopy > prune {
 			t.Errorf("stage %s must run prune-initramfs-libs.sh after its last COPY --from and before cpio", stage)
+		}
+	}
+}
+
+// TestDockerfileShipsWatchdogModulesSeparately checks that the watchdog
+// drivers go to /modules/watchdog, which BOOTy loads only with
+// WATCHDOG_ENABLE, and not to /modules, which it loads at every start.
+func TestDockerfileShipsWatchdogModulesSeparately(t *testing.T) {
+	data, err := os.ReadFile("initrd.Dockerfile")
+	if err != nil {
+		t.Fatalf("cannot read initrd.Dockerfile: %v", err)
+	}
+	text := string(data)
+	loop := regexp.MustCompile(`(?m)^\s*for w in ([^;]+); do`).FindStringSubmatch(text)
+	if loop == nil {
+		t.Fatal("cannot find the watchdog module loop")
+	}
+	words := strings.Fields(loop[1])
+	for _, mod := range []string{"iTCO_wdt", "lpc_ich", "i2c_i801", "sp5100_tco", "ipmi_watchdog", "wdat_wdt", "i6300esb"} {
+		if !slices.Contains(words, mod) {
+			t.Errorf("watchdog module %q missing from the loop", mod)
+		}
+	}
+	if !strings.Contains(text, `-exec cp -n {} /modules/watchdog/ \;`) {
+		t.Error("the watchdog loop does not copy into /modules/watchdog")
+	}
+	checkDockerfileModules(t, "initrd.Dockerfile", nil)
+	mLoop := text[strings.Index(text, "for m in"):]
+	mLoop = mLoop[:strings.Index(mLoop, "; do")]
+	for _, mod := range words {
+		if slices.Contains(strings.Fields(mLoop), mod) {
+			t.Errorf("watchdog module %q is in the /modules loop, so it loads on every start", mod)
 		}
 	}
 }

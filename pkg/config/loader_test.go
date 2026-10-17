@@ -564,6 +564,8 @@ func TestLoadFullYAMLReference(t *testing.T) {
 		{"Network.Bond.Mode", cfg.Network.Bond.Mode, "802.3ad"},
 		{"Network.VRF.TableID", cfg.Network.VRF.TableID, uint32(1000)},
 		{"Network.IPMI.Subnet", cfg.Network.IPMI.Subnet, "172.30.0.0/24"},
+		{"Watchdog", fmt.Sprintf("%v %d %s %s %v %v", cfg.Watchdog.Enable, cfg.Watchdog.TimeoutSeconds, cfg.Watchdog.Device,
+			cfg.Watchdog.Handoff, cfg.Watchdog.IPMIFallback, cfg.Watchdog.StepBudgets), "true 120 /dev/watchdog1 keep true map[wipe-disks:7200]"},
 		{"Transport.Token", cfg.Transport.Token, "bootstrap-token-xyz"},
 		{"Transport.TokenAlgorithm", cfg.Transport.TokenAlgorithm, "RS256"},
 		{"Transport.TokenExpiresAt", cfg.Transport.TokenExpiresAt, "2026-10-14T12:00:00Z"},

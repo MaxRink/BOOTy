@@ -303,6 +303,29 @@ network:
     subnet: "172.30.0.0/24"
 
 # ---------------------------------------------------------------------------
+# Watchdog: hardware watchdog that resets a host whose run stopped making progress.
+# ---------------------------------------------------------------------------
+watchdog:
+  # enable (WATCHDOG_ENABLE): arm the hardware watchdog (default: false)
+  enable: true
+
+  # timeoutSeconds (WATCHDOG_TIMEOUT_SEC): hardware timeout, 10-3600 (default: 300)
+  timeoutSeconds: 120
+
+  # device (WATCHDOG_DEVICE): watchdog device (default: /dev/watchdog0, then /dev/watchdog)
+  device: /dev/watchdog1
+
+  # handoff (WATCHDOG_HANDOFF): stop (default) | keep, at kexec and reboot; power off always stops
+  handoff: keep
+
+  # ipmiFallback (WATCHDOG_IPMI_FALLBACK): arm the BMC watchdog through IPMI without a device (default: false)
+  ipmiFallback: true
+
+  # stepBudgets (WATCHDOG_STEP_BUDGETS): seconds a step may run without progress
+  stepBudgets:
+    wipe-disks: 7200
+
+# ---------------------------------------------------------------------------
 # Transport — CAPRF server communication settings.
 # ---------------------------------------------------------------------------
 transport:

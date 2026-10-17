@@ -38,6 +38,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/realm"
 	"github.com/telekom/BOOTy/pkg/runmode"
 	"github.com/telekom/BOOTy/pkg/ux"
+	"github.com/telekom/BOOTy/pkg/watchdog"
 )
 
 // Version and Build are set via -ldflags at build time.
@@ -470,16 +471,19 @@ func flushObservability() {
 }
 
 func reboot() {
+	watchdogHandoff(false)
 	flushObservability()
 	realm.Reboot()
 }
 
 func requestReboot() error {
+	watchdogHandoff(false)
 	flushObservability()
 	return realm.RequestReboot()
 }
 
 func requestPowerOff() error {
+	watchdogHandoff(true)
 	flushObservability()
 	return realm.RequestPowerOff()
 }
@@ -490,6 +494,7 @@ func shell() {
 }
 
 func doKexecExecute() error {
+	watchdogHandoff(false)
 	flushObservability()
 	return kexec.Execute()
 }
@@ -538,6 +543,7 @@ func runCAPRF(ctx context.Context) {
 	if cfg.DryRun {
 		cfg.Mode = "dry-run"
 	}
+	startWatchdog(ctx, cfg)
 
 	// Wire remote log shipping.
 	if cfg.Transport.LogURL != "" {
@@ -568,7 +574,7 @@ func runCAPRF(ctx context.Context) {
 		return
 	}
 
-	diskMgr := disk.NewManager(nil)
+	diskMgr := disk.NewManager(watchdog.ProgressRunner{Inner: &disk.ExecCommander{}})
 	diskMgr.SetLegacyCAPRFSelection(cfg.Provision.Disk.Selection == config.DiskSelectionLsblk)
 	if result, inspectErr := crash.InspectStartup(ctx, cfg, diskMgr, client, crash.InspectOptions{}); inspectErr != nil {
 		slog.Warn("startup crash artifact inspection failed", "error", inspectErr)

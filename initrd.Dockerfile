@@ -225,6 +225,26 @@ RUN if [ -n "$KERNEL_SUITE" ]; then \
     #   Device-mapper:    dm_mod dm_crypt (LUKS encryption)
     #   Software RAID:    md_mod raid1 (DISK_MIRRORING_MODE, explicit RAID arrays)
     #   IPMI:             ipmi_msghandler ipmi_devintf ipmi_si ipmi_ssif
+    #   Watchdog:         in /modules/watchdog, see the first loop below
+    #
+    # Hardware watchdog drivers go to /modules/watchdog. BOOTy loads them only
+    # with WATCHDOG_ENABLE, so hosts without it keep their firmware watchdog
+    # behaviour: Intel TCO (iTCO_wdt, with lpc_ich and i2c_i801 that create
+    # its device), AMD (sp5100_tco), the BMC (ipmi_watchdog), ACPI WDAT
+    # (wdat_wdt) and the QEMU i6300esb. The modprobe root comes from MDIR, so
+    # the loop also works for a kernel package that installs under /usr.
+    mkdir -p /modules/watchdog && \
+    for w in iTCO_wdt lpc_ich i2c_i801 sp5100_tco ipmi_watchdog wdat_wdt i6300esb; do \
+        modprobe --show-depends -d "${MDIR%/lib/modules/*}" -S "$KVER" "$w" 2>/dev/null \
+            | awk '/^insmod /{print $2}' \
+            | while read -r dep; do \
+                [ -f "$dep" ] && cp -n "$dep" /modules/watchdog/ 2>/dev/null || true; \
+            done; \
+        find "$MDIR" -name "${w}.ko*" -exec cp -n {} /modules/watchdog/ \; 2>/dev/null || true; \
+    done && \
+    { [ "$TARGETARCH" != "amd64" ] || ls /modules/watchdog/iTCO_wdt.ko* /modules/watchdog/sp5100_tco.ko* \
+        /modules/watchdog/ipmi_watchdog.ko* /modules/watchdog/i6300esb.ko* >/dev/null; } && \
+    # The modules of the categories above:
     for m in \
         virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev \
         virtio_pci virtio_net failover net_failover \

@@ -88,6 +88,7 @@ type Config struct {
 
 	// Cross-cutting configuration sections.
 	Network   NetworkConfig   `yaml:"network"   json:"network"`
+	Watchdog  WatchdogConfig  `yaml:"watchdog"  json:"watchdog"`
 	Transport TransportConfig `yaml:"transport" json:"transport"`
 	Health    HealthConfig    `yaml:"health"    json:"health"`
 	Telemetry TelemetryConfig `yaml:"telemetry" json:"telemetry"`

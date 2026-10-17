@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/dustin/go-humanize"
+
+	"github.com/telekom/BOOTy/pkg/watchdog"
 )
 
 // WriteCounter counts the number of bytes written to it. It implements to the io.Writer interface
@@ -34,19 +36,30 @@ func tickerProgress(byteCounter uint64) {
 	fmt.Printf("\rDownloading... %s complete", humanize.Bytes(byteCounter))
 }
 
+// progressTickInterval is the interval of the download progress; a test
+// seam.
+var progressTickInterval = 2 * time.Second
+
 // startProgressTicker starts a background goroutine that logs download progress
 // every 2 seconds. Returns a stop function that cleanly shuts down the goroutine.
 func startProgressTicker(counter *WriteCounter) func() {
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(progressTickInterval)
 	done := make(chan struct{})
 	var once sync.Once
 	go func() {
+		var last uint64
 		for {
 			select {
 			case <-done:
 				return
 			case <-ticker.C:
-				tickerProgress(counter.Total.Load())
+				total := counter.Total.Load()
+				tickerProgress(total)
+				if total != last {
+					// Written bytes are progress of the image step.
+					watchdog.Progress()
+					last = total
+				}
 			}
 		}
 	}()

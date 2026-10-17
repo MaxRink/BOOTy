@@ -24,6 +24,7 @@ on:
       - "pkg/rescue/**"
       - "pkg/runmode/**"
       - "pkg/realm/**"
+      - "pkg/watchdog/**"
       - "pkg/image/**"
       - "pkg/network/**"
       - "pkg/ux/**"
@@ -58,6 +59,7 @@ on:
       - "pkg/rescue/**"
       - "pkg/runmode/**"
       - "pkg/realm/**"
+      - "pkg/watchdog/**"
       - "pkg/image/**"
       - "pkg/network/**"
       - "pkg/ux/**"
@@ -174,6 +176,14 @@ jobs:
             test_regex: "^TestStandby.*QEMU$"
             privileged: true
             setup: ""
+          - scenario: hardware-watchdog
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestWatchdog.*QEMU$"
+            privileged: true
+            setup: ""
+            # Two QEMU runs with an i6300esb watchdog.
+            go_timeout: 25m
           - scenario: rescue-retry-stale-mounts
             qemu_extra: ""
             test_tag: e2e

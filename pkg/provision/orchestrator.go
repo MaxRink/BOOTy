@@ -35,6 +35,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/rescue"
 	"github.com/telekom/BOOTy/pkg/secureboot"
 	"github.com/telekom/BOOTy/pkg/telemetry"
+	"github.com/telekom/BOOTy/pkg/watchdog"
 )
 
 var readProcCmdline = func() ([]byte, error) {
@@ -200,6 +201,7 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 	// Ensure final telemetry is always flushed before exit/reboot.
 	// Uses context.Background() because ctx may be canceled during teardown/error.
 	defer o.flushTelemetry(context.Background())
+	defer watchdog.Idle()
 	steps := o.provisionSteps()
 
 	cp, err := o.loadOrCreateCheckpoint()
@@ -223,6 +225,7 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 			continue
 		}
 		o.log.Info("provisioning step", "step", step.Name, "index", i+1, "total", len(steps))
+		watchdog.Step(step.Name)
 		if err := o.executeStep(ctx, step, cp); err != nil {
 			return err
 		}

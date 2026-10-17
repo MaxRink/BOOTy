@@ -16,6 +16,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
 	"github.com/telekom/BOOTy/pkg/oob"
+	"github.com/telekom/BOOTy/pkg/watchdog"
 )
 
 // Deprovision runs the deprovisioning pipeline.
@@ -24,6 +25,7 @@ import (
 // Mode "decommission" wipes all disks and removes all EFI boot entries on a
 // best-effort basis, so defect or missing devices do not stop it.
 func (o *Orchestrator) Deprovision(ctx context.Context) error {
+	defer watchdog.Idle()
 	mode := o.cfg.Mode
 	if mode == "" {
 		mode = "hard"
@@ -36,6 +38,7 @@ func (o *Orchestrator) Deprovision(ctx context.Context) error {
 	tracker := o.collector.Steps()
 
 	for i, step := range steps {
+		watchdog.Step(step.Name)
 		o.log.Info("deprovisioning step", "step", step.Name, "index", i+1, "total", len(steps))
 		tracker.StartStep(step.Name)
 		err := WithCode(step.Name, step.Fn(ctx))

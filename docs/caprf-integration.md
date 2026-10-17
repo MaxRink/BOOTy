@@ -400,6 +400,38 @@ For `shell` and `wait`, BOOTy installs `RESCUE_SSH_PUBKEY` for root, sets
 `RESCUE_PASSWORD_HASH`, starts `dropbear` if the ramdisk has it, and mounts
 the disks when `RESCUE_AUTO_MOUNT=true`.
 
+## Hardware watchdog
+
+Runbook for `WATCHDOG_ENABLE=true`. The keys and the budget table are in
+[configuration.md](configuration.md#hardware-watchdog).
+
+- A host that resets during a run without a CAPRF error callback: look for
+  `BOOTY-WDT-001` in the shipped log, in the `BOOTY1 ... code=BOOTY-WDT-001
+  step=...` serial status line, or in the `BootyLastResult` UEFI variable
+  that the next run logs. It names the step that made no progress. The hardware reset follows at most
+  `WATCHDOG_TIMEOUT_SEC` later. Raise the budget of that step with
+  `WATCHDOG_STEP_BUDGETS` when the step is slow but healthy, for example
+  `{"wipe-disks":259200}` for very large disks.
+- `hardware watchdog not armed` in the log: no driver found a device. Check
+  the driver of the platform (`iTCO_wdt`, `sp5100_tco`, `ipmi_watchdog`,
+  `wdat_wdt`) and the firmware setting that hides the TCO timer, or set
+  `WATCHDOG_IPMI_FALLBACK=true`.
+- `WATCHDOG_HANDOFF=keep` caveats. Use it only when the target OS takes the
+  watchdog over:
+  - The target must open the device and pet it before the timeout runs out.
+    The time counts from the handoff and includes the kexec or the firmware
+    POST of a reboot and the boot of the target. Set `WATCHDOG_TIMEOUT_SEC`
+    longer than that, and configure the target (systemd
+    `RuntimeWatchdogSec`, `watchdog` daemon). Otherwise the host resets in a
+    loop after every provisioning.
+  - Drivers that stop the watchdog on reboot (`watchdog_stop_on_reboot`)
+    disarm it at kexec and reboot anyway; `keep` then has no effect. The BMC
+    watchdog of the IPMI fallback stays armed.
+  - A power off always disarms the watchdog, also with `keep`: an armed BMC
+    watchdog would power the host on again.
+  - A kernel with `nowayout` ignores the magic close, so with `stop` the
+    watchdog also stays armed. Do not boot BOOTy with `nowayout`.
+
 ## Enable CAPRF legacy compatibility
 
 CAPRF sets `CAPRF_LEGACY_COMPAT=true` in `/deploy/vars` when it runs BOOTy

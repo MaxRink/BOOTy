@@ -240,6 +240,15 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   skipped), retries, and the error and failure code of a failed step, for
   provision and deprovision runs. A deprovision run now posts the summary too
   (#706).
+- Hardware watchdog: `WATCHDOG_ENABLE` arms `/dev/watchdog` (iTCO, AMD TCO,
+  IPMI, ACPI WDAT, i6300esb) or, with `WATCHDOG_IPMI_FALLBACK`, the BMC
+  watchdog, and pets it only while the provisioning step makes progress
+  (step start, image bytes, disk commands) within its budget. A
+  stuck step or a hung kernel resets the host (`BOOTY-WDT-001`). BOOTy
+  disarms it at kexec, reboot and power off, or leaves it armed for the
+  target OS with `WATCHDOG_HANDOFF=keep`. `WATCHDOG_TIMEOUT_SEC`,
+  `WATCHDOG_DEVICE`, `WATCHDOG_STEP_BUDGETS`, YAML `watchdog.*`. See
+  [hardware watchdog](docs/configuration.md#hardware-watchdog) (#721)
 - GoBGP mode applies the netplan device settings of the provision VXLAN device,
   the bridge and the NICs like systemd-networkd (MTU, MAC, learning, ARP proxy,
   hairpin, link-local, `accept-ra`), and `frr.conf` `[no] ip[v6] forwarding`.
