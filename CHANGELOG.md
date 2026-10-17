@@ -428,6 +428,9 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 
 ### CI, build and tests
 
+- The initramfs build downloads LVM2 from four mirrors in turn and keeps the
+  first download that matches the pinned checksum, instead of failing when
+  `mirrors.kernel.org` times out (#739).
 - config: `testdata/full.yaml` and `TestLoadFullYAMLReference` cover every native
   CAPRF parity option (#682)
 - The `WIPE_ALL_DISKS` target in-use test uses a fixture with only the target

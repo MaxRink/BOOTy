@@ -4,14 +4,26 @@
 FROM gcc:16 AS lvm
 ARG LVM2_VERSION=2.03.27
 ARG LVM2_SHA256=3133415905b9b46d152d064865d52f32eee4fcbeb0e8a69e3510caeaae0c56a9
-# A single TLS hiccup on the mirror must not fail the whole build.
-# The checksum below still gates the artifact, so retries cannot hide a
-# corrupt download.
-RUN wget --tries=5 --waitretry=10 --retry-connrefused --timeout=30 \
-      --retry-on-http-error=429,500,502,503,504 \
-      -O "LVM2.${LVM2_VERSION}.tgz" \
-      "https://mirrors.kernel.org/sourceware/lvm2/LVM2.${LVM2_VERSION}.tgz"
-RUN echo "${LVM2_SHA256}  LVM2.${LVM2_VERSION}.tgz" | sha256sum -c -
+# One mirror that is down or fails TLS must not fail the whole build: try
+# each mirror in turn, and accept a download only if it matches the pinned
+# checksum, so any mirror is safe.
+RUN set -eu; \
+    f="LVM2.${LVM2_VERSION}.tgz"; \
+    for url in \
+      "https://mirrors.kernel.org/sourceware/lvm2/${f}" \
+      "https://sourceware.org/pub/lvm2/${f}" \
+      "https://sourceware.org/pub/lvm2/releases/${f}" \
+      "https://ftp.gwdg.de/pub/linux/sources.redhat.com/lvm2/${f}"; do \
+      if wget --tries=3 --waitretry=5 --retry-connrefused --timeout=30 \
+           --retry-on-http-error=429,500,502,503,504 -O "${f}" "${url}" \
+         && echo "${LVM2_SHA256}  ${f}" | sha256sum -c -; then \
+        exit 0; \
+      fi; \
+      echo "LVM2 download from ${url} failed, trying the next mirror" >&2; \
+      rm -f "${f}"; \
+    done; \
+    echo "LVM2 ${LVM2_VERSION}: no mirror delivered a file with the pinned checksum" >&2; \
+    exit 1
 RUN tar -xf "LVM2.${LVM2_VERSION}.tgz"
 WORKDIR LVM2.${LVM2_VERSION}
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y libaio-dev libdevmapper-dev
