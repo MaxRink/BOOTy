@@ -180,6 +180,9 @@ func (c *Config) validatePrimaryEnums() []string {
 			return validateEnumLower(c.FailureAction, "failureAction (FAILURE_ACTION)", FailureActionReboot, FailureActionWait)
 		},
 		func() string {
+			return validateEnumLower(c.Telemetry.OOBStatus, "telemetry.oobStatus (OOB_STATUS)", OOBStatusSerial, OOBStatusOff)
+		},
+		func() string {
 			return validateEnumLower(c.Provision.Disk.WipeDepth, "provision.disk.wipeDepth (WIPE_DEPTH)", WipeDepthThorough, WipeDepthQuick)
 		},
 		func() string {
@@ -429,6 +432,7 @@ func (c *Config) normalize() {
 		&c.Provision.Firmware.NumVFsMode,
 		&c.Provision.Disk.WipeDepth,
 		&c.Provision.Disk.SecureEraseFallback,
+		&c.Telemetry.OOBStatus,
 		&c.Provision.Disk.RAIDSuperblockClear,
 		&c.Provision.Disk.GrowPartition,
 		&c.Agent.DeprovisionSuccessAction,

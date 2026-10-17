@@ -27,6 +27,8 @@ on:
       - "pkg/image/**"
       - "pkg/network/**"
       - "pkg/ux/**"
+      - "pkg/oob/**"
+      - "oob_status.go"
       - "go.mod"
       - "go.sum"
       - "main.go"
@@ -59,6 +61,8 @@ on:
       - "pkg/image/**"
       - "pkg/network/**"
       - "pkg/ux/**"
+      - "pkg/oob/**"
+      - "oob_status.go"
       - "go.mod"
       - "go.sum"
       - "main.go"
@@ -207,6 +211,14 @@ jobs:
             qemu_extra: ""
             test_tag: e2e
             test_regex: "^TestUEFIEFIBootEntry"
+            privileged: true
+            setup: ""
+          # Forced network failure under OVMF: the BOOTY1 console line and the
+          # BootyLastResult variable, read again after a reboot (NVRAM persists).
+          - scenario: oob-status
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestOOBStatus"
             privileged: true
             setup: ""
           - scenario: production-templates

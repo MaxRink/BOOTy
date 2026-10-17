@@ -25,6 +25,7 @@ step (step `*`). Any other error gets the code of its step.
 | `BOOTY-HW-003` | hardware | `health-checks` | A health check failed. |
 | `BOOTY-HW-004` | hardware | `setup-mellanox` | Mellanox NIC setup failed. |
 | `BOOTY-CFG-001` | config | `validate-provision-inputs` | Provisioning inputs are invalid. |
+| `BOOTY-CFG-002` | config | `config` | The vars file or the configuration is invalid. |
 | `BOOTY-IMG-001` | permanent | `verify-image` | Image signature verification failed. |
 | `BOOTY-IMG-002` | transient | `stream-image` | Image download or write failed. |
 | `BOOTY-IMG-003` | permanent | `*` | Image checksum mismatch. |

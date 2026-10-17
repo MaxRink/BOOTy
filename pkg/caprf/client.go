@@ -1683,6 +1683,7 @@ func applyIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 		"BGP_MULTIPATH_RELAX":        &cfg.Network.BGP.MultipathRelax,
 		"BGP_FAST_EXTERNAL_FAILOVER": &cfg.Network.BGP.FastExternalFailover,
 		"BGP_EBGP_REQUIRES_POLICY":   &cfg.Network.BGP.EBGPRequiresPolicy,
+		"OOB_EFI_VAR":                &cfg.Telemetry.OOBEFIVar,
 	}[key]; ok {
 		// A typo must not silently pick a value, so only booleans parse.
 		v, err := strconv.ParseBool(value)

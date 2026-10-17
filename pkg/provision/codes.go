@@ -56,6 +56,7 @@ var failureCodes = []FailureCode{
 	{"BOOTY-HW-004", ClassHardware, "setup-mellanox", "Mellanox NIC setup failed."},
 
 	{"BOOTY-CFG-001", ClassConfig, "validate-provision-inputs", "Provisioning inputs are invalid."},
+	{"BOOTY-CFG-002", ClassConfig, "config", "The vars file or the configuration is invalid."},
 
 	{"BOOTY-IMG-001", ClassPermanent, "verify-image", "Image signature verification failed."},
 	{"BOOTY-IMG-002", ClassTransient, "stream-image", "Image download or write failed."},
@@ -122,6 +123,7 @@ const (
 	CodeNetworkSetup     = "BOOTY-NET-001"
 	CodeConnectivity     = "BOOTY-NET-002"
 	CodeAuth             = "BOOTY-NET-003"
+	CodeConfig           = "BOOTY-CFG-002"
 	codeChecksumMismatch = "BOOTY-IMG-003"
 	codeFormatProbe      = "BOOTY-IMG-004"
 	codeDiskInUse        = "BOOTY-DSK-010"

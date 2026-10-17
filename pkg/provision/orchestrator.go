@@ -31,6 +31,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/inventory"
 	"github.com/telekom/BOOTy/pkg/network"
 	networkpersist "github.com/telekom/BOOTy/pkg/network/persist"
+	"github.com/telekom/BOOTy/pkg/oob"
 	"github.com/telekom/BOOTy/pkg/rescue"
 	"github.com/telekom/BOOTy/pkg/secureboot"
 	"github.com/telekom/BOOTy/pkg/telemetry"
@@ -229,6 +230,7 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 	if rmErr := cp.Remove(); rmErr != nil {
 		o.log.Warn("failed to remove checkpoint", "error", rmErr)
 	}
+	oob.Done()
 	return nil
 }
 
@@ -319,6 +321,7 @@ func (o *Orchestrator) executeStep(ctx context.Context, step Step, cp *Checkpoin
 	if err != nil {
 		msg := stepFailureMessage(step.Name, err)
 		o.log.Error("provisioning step failed", "step", step.Name, "error", err)
+		oob.Fail(step.Name, CodeOf(err))
 		cp.Errors = append(cp.Errors, msg)
 		cp.FailureCount++
 		if saveErr := cp.Save(); saveErr != nil {

@@ -42,7 +42,7 @@ func TestFailureCodesAreUniqueAndComplete(t *testing.T) {
 			t.Errorf("%s: step and text must be set", c.Code)
 		}
 	}
-	for _, code := range []string{CodeGeneric, CodeCanceled, CodeNetworkSetup, CodeConnectivity, CodeAuth} {
+	for _, code := range []string{CodeGeneric, CodeCanceled, CodeNetworkSetup, CodeConnectivity, CodeAuth, CodeConfig} {
 		if !seen[code] {
 			t.Errorf("constant %s is not in the catalog", code)
 		}

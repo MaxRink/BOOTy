@@ -365,6 +365,8 @@ default and `iso` build flavors contain the FRR daemons.
 | `METRICS_URL` | (unset) | URL | Receives the metrics summary. |
 | `TELEMETRY_URL` | (unset) | URL | Fallback for `METRICS_URL`. |
 | `EVENT_URL` | (unset) | URL | Receives the last provisioning event. |
+| `OOB_STATUS` | `serial` | `serial`, `off` | Out-of-band status. `serial`: one `BOOTY1` status line on every active console (`/sys/class/tty/console/active`) at each phase change and at the end of a provision or deprovision run, also when the network fails. See [Out-of-band status](usage-security-telemetry.md#out-of-band-status). YAML `telemetry.oobStatus`. |
+| `OOB_EFI_VAR` | `false` | boolean | Write the result of a run to the `BootyLastResult` UEFI variable when it changes, and log the previous result at start. Needs efivarfs. YAML `telemetry.oobEFIVar`. |
 
 Provision and deprovision runs fill the `steps` list of the metrics summary:
 name, `durationMs`, `status` (`done`, `failed` or `skipped`), `retries`, and

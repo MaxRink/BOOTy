@@ -690,3 +690,24 @@ func writeTestFile(t *testing.T, name, content string) string {
 	}
 	return path
 }
+
+func TestLoadStrictYAMLOOBKeys(t *testing.T) {
+	path := writeTestFile(t, "oob.yaml", "telemetry:\n  oobStatus: off\n  oobEFIVar: true\n")
+	cfg, err := LoadWithOptions(LoadOptions{Path: path, Strict: true})
+	if err != nil {
+		t.Fatalf("LoadWithOptions() = %v", err)
+	}
+	if cfg.Telemetry.OOBStatus != OOBStatusOff || cfg.Telemetry.OOBEFIVar == nil || !*cfg.Telemetry.OOBEFIVar {
+		t.Fatalf("telemetry = %+v", cfg.Telemetry)
+	}
+	for name, content := range map[string]string{
+		"invalid status": "telemetry:\n  oobStatus: sel\n",
+		"unknown key":    "telemetry:\n  oobSEL: true\n",
+		"not a boolean":  "telemetry:\n  oobEFIVar: maybe\n",
+	} {
+		path := writeTestFile(t, "bad.yaml", content)
+		if _, err := LoadWithOptions(LoadOptions{Path: path, Strict: true}); err == nil {
+			t.Errorf("%s: LoadWithOptions() accepted %q", name, content)
+		}
+	}
+}

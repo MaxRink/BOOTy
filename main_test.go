@@ -28,6 +28,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/gobgp"
 	"github.com/telekom/BOOTy/pkg/network/netplan"
+	"github.com/telekom/BOOTy/pkg/oob"
 	"github.com/telekom/BOOTy/pkg/provision"
 	"github.com/telekom/BOOTy/pkg/realm"
 	"github.com/telekom/BOOTy/pkg/runmode"
@@ -1267,7 +1268,7 @@ func TestFailRunFailureActionWaitReportsAndWaits(t *testing.T) {
 	reporter := &recordingReporter{}
 	rebooted := make(chan struct{})
 	go func() {
-		failRun(ctx, &config.MachineConfig{FailureAction: config.FailureActionWait}, reporter, "setup failed", func() { close(rebooted) })
+		failRun(ctx, &config.MachineConfig{FailureAction: config.FailureActionWait}, reporter, "network-setup", "BOOTY-NET-001", "setup failed", func() { close(rebooted) })
 	}()
 	select {
 	case <-rebooted:
@@ -1285,9 +1286,30 @@ func TestFailRunFailureActionWaitReportsAndWaits(t *testing.T) {
 	}
 
 	called := false
-	failRun(context.Background(), &config.MachineConfig{}, nil, "x", func() { called = true })
+	failRun(context.Background(), &config.MachineConfig{}, nil, "config", "BOOTY-CFG-002", "x", func() { called = true })
 	if !called {
 		t.Fatal("default mode must reboot right away")
+	}
+}
+
+// FAILURE_ACTION=reboot also leaves a trace: the BOOTY1 failed line comes
+// before the reboot.
+func TestFailRunWritesStatusLineBeforeReboot(t *testing.T) {
+	console := filepath.Join(t.TempDir(), "ttyS0")
+	if err := os.WriteFile(console, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oob.Install(oob.NewReporter(&oob.Options{Serial: true, Consoles: []string{console}, Run: "0a1b2c3d"}))
+	t.Cleanup(func() { oob.Install(nil) })
+
+	var atReboot string
+	failRun(context.Background(), &config.MachineConfig{}, nil, "config", "BOOTY-CFG-002", "invalid vars file", func() {
+		data, _ := os.ReadFile(console)
+		atReboot = string(data)
+	})
+	want := "BOOTY1 run=0a1b2c3d phase=- code=BOOTY-CFG-002 step=config result=failed\n"
+	if atReboot != want {
+		t.Fatalf("console at reboot = %q, want %q", atReboot, want)
 	}
 }
 

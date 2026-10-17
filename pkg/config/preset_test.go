@@ -315,6 +315,7 @@ func TestParityOptionErrorsNameBothKeys(t *testing.T) {
 		"provision.firmware.numVFsMode (NUM_VFS_MODE)":               {Provision: ProvisionConfig{Firmware: FirmwareConfig{NumVFsMode: "x"}}},
 		"provision.disk.growPartition (GROW_PARTITION)":              {Provision: ProvisionConfig{Disk: DiskConfig{GrowPartition: "x"}}},
 		"provision.disk.wipeDepth (WIPE_DEPTH)":                      {Provision: ProvisionConfig{Disk: DiskConfig{WipeDepth: "x"}}},
+		"telemetry.oobStatus (OOB_STATUS)":                           {Telemetry: TelemetryConfig{OOBStatus: "x"}},
 		"provision.disk.raidSuperblockClear (RAID_SUPERBLOCK_CLEAR)": {Provision: ProvisionConfig{Disk: DiskConfig{RAIDSuperblockClear: "x"}}},
 		"provision.disk.secureEraseFallback (SECURE_ERASE_FALLBACK)": {Provision: ProvisionConfig{Disk: DiskConfig{SecureEraseFallback: "x"}}},
 	} {

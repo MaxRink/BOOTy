@@ -203,6 +203,15 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 
 ### Features
 
+- Out-of-band status: a fixed `BOOTY1 run=... phase=... code=... step=...
+  result=...` line on every active console at each phase change and at the
+  end of a run, also when the network setup fails (`OOB_STATUS`, default
+  `serial`). The network failure report to `ERROR_URL` carries its failure code.
+  A run that fails before a mode (vars file, network, token) now logs the
+  failure at `ERROR` and writes the status line also with
+  `FAILURE_ACTION=reboot` (#718).
+- `OOB_EFI_VAR=true` stores the end of a run in the `BootyLastResult` UEFI
+  variable when it changes, and the next run logs it (#718).
 - The `METRICS_URL` summary has step data: duration, status (done, failed or
   skipped), retries, and the error and failure code of a failed step, for
   provision and deprovision runs. A deprovision run now posts the summary too

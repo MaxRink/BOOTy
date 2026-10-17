@@ -41,12 +41,30 @@ func (r *EFIVarReader) ReadVar(name string) ([]byte, error) {
 }
 
 // WriteVar writes an EFI variable with the given attributes and data.
+// efivarfs marks an existing variable that is not on the kernel allow list
+// immutable (Linux 4.5+), so WriteVar clears the immutable flag before it
+// rewrites the variable and sets it again after, like libefivar. The data
+// goes in one write without O_TRUNC: efivarfs sets the whole variable per
+// write.
 func (r *EFIVarReader) WriteVar(name string, attrs uint32, data []byte) error {
 	path := filepath.Join(r.basePath, name)
 	buf := make([]byte, 4+len(data))
 	binary.LittleEndian.PutUint32(buf[:4], attrs)
 	copy(buf[4:], data)
-	if err := os.WriteFile(path, buf, 0o644); err != nil { //nolint:gosec // efivarfs requires 0644
+	restore, err := clearImmutable(path)
+	if err != nil {
+		return fmt.Errorf("writing efi var %s: %w", name, err)
+	}
+	defer restore()
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0o644) //nolint:gosec // efivarfs requires 0644
+	if err != nil {
+		return fmt.Errorf("writing efi var %s: %w", name, err)
+	}
+	_, err = f.Write(buf)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
 		return fmt.Errorf("writing efi var %s: %w", name, err)
 	}
 	return nil

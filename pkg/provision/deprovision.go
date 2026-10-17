@@ -15,6 +15,7 @@ import (
 
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
+	"github.com/telekom/BOOTy/pkg/oob"
 )
 
 // Deprovision runs the deprovisioning pipeline.
@@ -42,6 +43,7 @@ func (o *Orchestrator) Deprovision(ctx context.Context) error {
 		if err != nil {
 			msg := stepFailureMessage(step.Name, err)
 			o.log.Error("deprovisioning step failed", "step", step.Name, "error", err)
+			oob.Fail(step.Name, CodeOf(err))
 			DumpDebugState(step.Name)
 			if reportErr := o.provider.ReportStatus(ctx, config.StatusError, msg); reportErr != nil {
 				o.log.Error("failed to report error status", "error", reportErr)
@@ -49,6 +51,7 @@ func (o *Orchestrator) Deprovision(ctx context.Context) error {
 			return fmt.Errorf("deprovision step %s: %w", step.Name, err)
 		}
 	}
+	oob.Done()
 	return nil
 }
 
