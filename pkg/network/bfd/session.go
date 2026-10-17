@@ -34,6 +34,11 @@ type Session struct {
 
 	// desiredTx is the advertised DesiredMinTxInterval: slowTx until Up.
 	desiredTx time.Duration
+	// curRx is the Required Min RX Interval in use: slowTx until the Poll
+	// Sequence that starts at Up completes, like FRR bfdd (cur_timers).
+	// The Poll advertises the configured value; the detection time uses
+	// curRx, so the peer has the Poll Sequence to speed up.
+	curRx time.Duration
 	// polling is a Poll Sequence in progress (RFC 5880 6.5); sendFinal is a
 	// received Poll that still needs its Final.
 	polling   bool
@@ -46,7 +51,8 @@ type Session struct {
 // discr (nonzero, unique per system).
 func NewSession(t Timers, discr uint32) *Session {
 	// bfd.RemoteMinRxInterval starts at 1 microsecond (RFC 5880 6.8.1).
-	return &Session{timers: t, state: StateDown, localDiscr: discr, desiredTx: max(t.DesiredMinTx, slowTx), remoteMinRx: time.Microsecond}
+	return &Session{timers: t, state: StateDown, localDiscr: discr, desiredTx: max(t.DesiredMinTx, slowTx),
+		curRx: max(t.RequiredMinRx, slowTx), remoteMinRx: time.Microsecond}
 }
 
 // State returns the session state.
@@ -74,6 +80,7 @@ func (s *Session) Receive(p *Packet, now time.Time) bool {
 	s.remoteDetectMult = p.DetectMult
 	if p.Final && s.polling {
 		s.polling = false
+		s.curRx = s.timers.RequiredMinRx
 	}
 	s.lastRx = now
 	if p.Poll {
@@ -109,8 +116,9 @@ func (s *Session) transition(remote State) {
 func (s *Session) up() {
 	s.state = StateUp
 	s.diag = DiagNone
-	if s.desiredTx != s.timers.DesiredMinTx {
-		// A lower DesiredMinTx applies at once (RFC 5880 6.8.3).
+	if s.desiredTx != s.timers.DesiredMinTx || s.curRx != s.timers.RequiredMinRx {
+		// A lower DesiredMinTx applies at once (RFC 5880 6.8.3); the lower
+		// Required Min RX after the Poll Sequence.
 		s.desiredTx = s.timers.DesiredMinTx
 		s.polling = true
 	}
@@ -120,13 +128,14 @@ func (s *Session) down(d Diag) {
 	s.state = StateDown
 	s.diag = d
 	s.desiredTx = max(s.timers.DesiredMinTx, slowTx)
+	s.curRx = max(s.timers.RequiredMinRx, slowTx)
 	s.polling = false
 }
 
 // DetectionTime is the time after the last received packet after which
 // the session goes down (RFC 5880 6.8.4, asynchronous mode).
 func (s *Session) DetectionTime() time.Duration {
-	return time.Duration(s.remoteDetectMult) * max(s.timers.RequiredMinRx, s.remoteDesiredTx)
+	return time.Duration(s.remoteDetectMult) * max(s.curRx, s.remoteDesiredTx)
 }
 
 // CheckTimeout moves an Init or Up session to Down when no packet arrived
@@ -167,7 +176,11 @@ func (s *Session) Packet() Packet {
 		MyDiscriminator:   s.localDiscr,
 		YourDiscriminator: s.remoteDiscr,
 		DesiredMinTxUS:    toUS(s.desiredTx),
-		RequiredMinRxUS:   toUS(s.timers.RequiredMinRx),
+		RequiredMinRxUS:   toUS(s.curRx),
+	}
+	if s.polling {
+		// A Poll and the Final to a Poll advertise the new values.
+		p.RequiredMinRxUS = toUS(s.timers.RequiredMinRx)
 	}
 	if s.sendFinal {
 		p.Final = true

@@ -22,7 +22,10 @@ import (
 // instead of after the hold time.
 type carrierWatch struct {
 	peers map[string]string // interface -> peer address as added to GoBGP
-	down  map[string]bool
+	// current returns the peer address now, after the relearner moved it
+	// to a new link-local address; nil keeps the address of peers.
+	current func(iface string) string
+	down    map[string]bool
 	// disable and enable stop and start a peer; GoBGP by default.
 	disable, enable func(ctx context.Context, addr string) error
 	// announce sends a Router Advertisement on an interface whose carrier
@@ -96,6 +99,9 @@ func (w *carrierWatch) handle(iface string, carrier bool) {
 		return
 	}
 	w.down[iface] = !carrier
+	if w.current != nil {
+		addr = w.current(iface)
+	}
 	ctx := context.Background()
 	if !carrier {
 		w.log.Info("uplink lost carrier, stopping its BGP session", "interface", iface, "neighbor", addr)

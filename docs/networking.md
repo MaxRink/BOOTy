@@ -157,7 +157,16 @@ same resolution:
   `ipv4-unicast` in `families` when the session needs it.
 - The VRF of the `router bgp` block binds the session to that VRF.
 - An interface neighbor is unnumbered: BOOTy finds the peer's IPv6
-  link-local address on the interface.
+  link-local address on the interface. FRR's `neighbor PORT interface`
+  accepts any address on the port; a GoBGP peer has one. So a relearner
+  checks the unnumbered peers every second: a peer without session for
+  3 s on a port with carrier, whose address no longer answers on the BGP
+  port while another link-local neighbor does, moves to that address
+  (the switch came back with another MAC). A switch that does not answer
+  at setup gets its peer on a placeholder address that moves the same
+  way. Deviation: this adds 3 to 4 s (the 3 s grace and the 1 s round) to
+  the recovery after such a change; FRR follows the RA at once (lab: FRR
+  1.5 to 2.8 s, BOOTy 5.3 to 6.6 s after a 95 s outage with a new MAC).
 - `neighbor X allowas-in [N]` (native `allowASIn`, FRR's default N is 3)
   accepts paths with the own AS up to N times. GoBGP has one count per
   session, so a session uses the highest count of its families.

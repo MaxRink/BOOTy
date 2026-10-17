@@ -60,9 +60,10 @@ func TestSessionIgnoresOtherDiscriminator(t *testing.T) {
 	}
 }
 
-// RFC 5880 6.8.4: detection time = remote multiplier x max(local
-// RequiredMinRx, remote DesiredMinTx). No packet in that time: Down with
-// diagnostic 1.
+// RFC 5880 6.8.4: detection time = remote multiplier x max(Required Min
+// RX in use, remote DesiredMinTx). The Required Min RX in use is 1 s until
+// our Poll Sequence completes, like FRR bfdd. No packet in that time: Down
+// with diagnostic 1.
 func TestSessionDetectionTime(t *testing.T) {
 	now := time.Unix(100, 0)
 	s := NewSession(fabric, 11)
@@ -71,6 +72,12 @@ func TestSessionDetectionTime(t *testing.T) {
 	p := remote(StateInit, 11)
 	p.DetectMult = 4
 	s.Receive(p, now)
+	if got, want := s.DetectionTime(), 4*time.Second; got != want {
+		t.Fatalf("detection time during the Poll Sequence = %s, want %s (remote 4 x max(1 s, 300ms))", got, want)
+	}
+	final := remote(StateUp, 11)
+	final.DetectMult, final.Final = 4, true
+	s.Receive(final, now)
 	if got, want := s.DetectionTime(), 1200*time.Millisecond; got != want {
 		t.Fatalf("detection time = %s, want %s (remote 4 x max(150ms, 300ms))", got, want)
 	}
@@ -94,12 +101,12 @@ func TestSessionDetectionTime(t *testing.T) {
 func TestSessionPollFinal(t *testing.T) {
 	now := time.Now()
 	s := NewSession(fabric, 11)
-	if p := s.Packet(); p.DesiredMinTxUS != 1000000 || p.Poll || p.RequiredMinRxUS != 150000 {
-		t.Fatalf("down packet = %+v, want 1 s slow start and no Poll", p)
+	if p := s.Packet(); p.DesiredMinTxUS != 1000000 || p.Poll || p.RequiredMinRxUS != 1000000 {
+		t.Fatalf("down packet = %+v, want 1 s slow start for both timers and no Poll", p)
 	}
 	s.Receive(remote(StateInit, 11), now)
 	p := s.Packet()
-	if !p.Poll || p.DesiredMinTxUS != 150000 || p.State != StateUp || p.YourDiscriminator != 77 {
+	if !p.Poll || p.DesiredMinTxUS != 150000 || p.RequiredMinRxUS != 150000 || p.State != StateUp || p.YourDiscriminator != 77 {
 		t.Fatalf("first Up packet = %+v, want Poll with 150 ms", p)
 	}
 	if got := s.TxInterval(); got != 300*time.Millisecond {
@@ -117,11 +124,11 @@ func TestSessionPollFinal(t *testing.T) {
 	final := remote(StateUp, 11)
 	final.Final = true
 	s.Receive(final, now)
-	if p := s.Packet(); p.Poll || p.Final {
-		t.Fatalf("after the peer's Final = %+v, want neither bit", p)
+	if p := s.Packet(); p.Poll || p.Final || p.RequiredMinRxUS != 150000 {
+		t.Fatalf("after the peer's Final = %+v, want neither bit and 150 ms", p)
 	}
 	s.Receive(remote(StateDown, 11), now)
-	if p := s.Packet(); p.DesiredMinTxUS != 1000000 || p.Diag != DiagNeighborSaysDown {
+	if p := s.Packet(); p.DesiredMinTxUS != 1000000 || p.RequiredMinRxUS != 1000000 || p.Diag != DiagNeighborSaysDown {
 		t.Fatalf("after Down = %+v, want slow start again with diag 3", p)
 	}
 }

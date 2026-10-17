@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -187,5 +188,25 @@ func TestCarrierWatchRARepeat(t *testing.T) {
 	w.stopRATimers()
 	if n := count(300 * time.Millisecond); n != 1 {
 		t.Fatalf("RAs after carrier up and stop = %d, want 1", n)
+	}
+}
+
+// After the relearner moved a peer, the carrier watch stops and starts it
+// under its current address.
+func TestCarrierWatchCurrentAddress(t *testing.T) {
+	var calls []string
+	w := &carrierWatch{
+		peers:    map[string]string{"eth1": "fe80::1%eth1"},
+		current:  func(string) string { return "fe80::2%eth1" },
+		down:     map[string]bool{},
+		disable:  func(_ context.Context, addr string) error { calls = append(calls, "disable "+addr); return nil },
+		enable:   func(_ context.Context, addr string) error { calls = append(calls, "enable "+addr); return nil },
+		announce: func(string) {},
+		log:      slog.Default(),
+	}
+	w.handle("eth1", false)
+	w.handle("eth1", true)
+	if want := []string{"disable fe80::2%eth1", "enable fe80::2%eth1"}; !slices.Equal(calls, want) {
+		t.Fatalf("calls = %v, want %v", calls, want)
 	}
 }

@@ -10,14 +10,14 @@ import (
 
 // prodtplVariant is the template variant the lab runs (#630 section 4.3
 // matrix), set with PRODTPL_VARIANT next to PRODTPL_SUFFIX at deploy:
-// "two-uplinks" (default) or "one-uplink".
+// "two-uplinks" (default), "one-uplink" or "caprf-old" (one uplink).
 var prodtplVariant = cmp.Or(os.Getenv("PRODTPL_VARIANT"), "two-uplinks")
 
 // prodtplUplinks are the server NICs that the template peers on.
 var prodtplUplinks = []string{"ens1f0np0", "ens1f1np1"}
 
 func init() {
-	if prodtplVariant != "one-uplink" {
+	if prodtplVariant != "one-uplink" && prodtplVariant != "caprf-old" {
 		return
 	}
 	prodtplUplinks = prodtplUplinks[:1]

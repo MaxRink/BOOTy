@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -80,13 +81,21 @@ type UnderlayTier struct {
 	connected    func(netip.Addr, string) bool                 // overridable in tests; nil = connectedInVRF
 	resetBGP     func(context.Context, string, string)         // overridable in tests; nil = resetPeer
 	ifacePeers   map[string]string                             // interface -> unnumbered peer address as added
-	stopCarrier  chan struct{}                                 // stops the carrier watch
-	carrierDone  <-chan struct{}                               // closed when the carrier watch ended
-	raDone       chan struct{}                                 // closed when the periodic RA goroutine exits
-	peerCountFn  func(ctx context.Context) int                 // overridable in tests; nil = use countEstablishedPeers
-	pollInterval time.Duration                                 // overridable in tests; zero = use default (1s)
-	bfd          *bfd.Manager                                  // BFD sessions of the peers
-	stopLLDP     func()                                        // stops the LLDP senders and waits for them
+	// ifacePeerConfs are the GoBGP peers as added, by interface, to move
+	// to a new link-local address of the switch.
+	ifacePeerConfs map[string]*apipb.Peer
+	// peerMu guards peerDevs, ifacePeers and ifacePeerConfs after Setup,
+	// when the relearner changes them.
+	peerMu       sync.RWMutex
+	stopRelearn  context.CancelFunc            // stops the relearner
+	relearnDone  chan struct{}                 // closed when the relearner exits
+	stopCarrier  chan struct{}                 // stops the carrier watch
+	carrierDone  <-chan struct{}               // closed when the carrier watch ended
+	raDone       chan struct{}                 // closed when the periodic RA goroutine exits
+	peerCountFn  func(ctx context.Context) int // overridable in tests; nil = use countEstablishedPeers
+	pollInterval time.Duration                 // overridable in tests; zero = use default (1s)
+	bfd          *bfd.Manager                  // BFD sessions of the peers
+	stopLLDP     func()                        // stops the LLDP senders and waits for them
 }
 
 const defaultUnderlayDummyName = "dummy.underlay"
@@ -157,6 +166,7 @@ func (u *UnderlayTier) Setup(ctx context.Context) error {
 	if u.cfg.FastExternalFailover {
 		u.startCarrierWatch()
 	}
+	u.startRelearn()
 
 	// Start periodic Router Advertisements so FRR's zebra continuously
 	// knows our link-local addresses for BGP unnumbered peering.
@@ -226,6 +236,11 @@ func (u *UnderlayTier) Teardown(_ context.Context) error {
 	if u.stopRA != nil {
 		close(u.stopRA)
 		u.stopRA = nil
+	}
+	if u.stopRelearn != nil {
+		u.stopRelearn()
+		<-u.relearnDone // no peer changes after the server stops
+		u.stopRelearn = nil
 	}
 	if u.stopCarrier != nil {
 		close(u.stopCarrier)
@@ -698,7 +713,7 @@ func (u *UnderlayTier) startCarrierWatch() {
 	if len(peers) == 0 {
 		return
 	}
-	w := newCarrierWatch(u.bgp, peers, u.log)
+	w := u.newCarrierWatch(peers)
 	u.stopCarrier = make(chan struct{})
 	done, err := w.start(u.stopCarrier)
 	if err != nil {
@@ -710,6 +725,14 @@ func (u *UnderlayTier) startCarrierWatch() {
 	u.carrierDone = done
 }
 
+// newCarrierWatch returns the carrier watch of the peers; it acts on the
+// current address of each peer, which the relearner may change.
+func (u *UnderlayTier) newCarrierWatch(peers map[string]string) *carrierWatch {
+	w := newCarrierWatch(u.bgp, peers, u.log)
+	w.current = u.ifacePeer
+	return w
+}
+
 // peerDev returns the interface of an unnumbered peer address, with or
 // without a zone.
 func (u *UnderlayTier) peerDev(neighbor string) string {
@@ -717,6 +740,8 @@ func (u *UnderlayTier) peerDev(neighbor string) string {
 	if zone != "" {
 		return zone
 	}
+	u.peerMu.RLock()
+	defer u.peerMu.RUnlock()
 	return u.peerDevs[host]
 }
 
@@ -764,21 +789,28 @@ func sessionInterfaces(sessions []network.BGPSession) []string {
 func (u *UnderlayTier) addSessionPeers(ctx context.Context) error {
 	var added int
 	var lastErr error
+	discover := discoverLinkLocalPeer
+	if u.discoverPeer != nil {
+		discover = u.discoverPeer
+	}
 	for i := range u.cfg.Sessions {
 		s := &u.cfg.Sessions[i]
 		addr := s.Name
 		if s.Interface {
 			var err error
-			if addr, err = discoverLinkLocalPeer(ctx, s.Name); err != nil {
-				u.log.Warn("Failed to find unnumbered peer", "interface", s.Name, "error", err)
-				lastErr = err
-				continue
+			if addr, err = discover(ctx, s.Name); err != nil {
+				// Like FRR "neighbor PORT interface": the session exists
+				// before the switch answers.
+				addr = placeholderPeer(s.Name)
+				u.log.Warn("no link-local neighbor yet; the peer moves to the switch address when it answers",
+					"interface", s.Name, "error", err)
 			}
 		}
+		peer := buildSessionPeer(u.cfg, s, addr)
 		if s.Interface {
 			u.recordInterfacePeer(s.Name, addr)
+			u.ifacePeerConfs[s.Name] = peer
 		}
-		peer := buildSessionPeer(u.cfg, s, addr)
 		if err := u.bgp.AddPeer(ctx, &apipb.AddPeerRequest{Peer: peer}); err != nil {
 			u.log.Warn("Failed to add BGP peer", "neighbor", s.Name, "error", err)
 			lastErr = err
@@ -805,6 +837,9 @@ func (u *UnderlayTier) recordInterfacePeer(iface, addr string) {
 	u.peerDevs[host] = iface
 	if u.ifacePeers == nil {
 		u.ifacePeers = map[string]string{}
+	}
+	if u.ifacePeerConfs == nil {
+		u.ifacePeerConfs = map[string]*apipb.Peer{}
 	}
 	u.ifacePeers[iface] = addr
 }
@@ -847,11 +882,18 @@ func (u *UnderlayTier) addInterfacePeer(ctx context.Context, iface string, famil
 	}
 	addr, err := discover(ctx, iface)
 	if err != nil {
-		return fmt.Errorf("discover link-local peer on %s: %w", iface, err)
+		// A NIC with carrier is cabled to a switch that is not up yet.
+		if !hasCarrier(iface) {
+			return fmt.Errorf("discover link-local peer on %s: %w", iface, err)
+		}
+		addr = placeholderPeer(iface)
+		u.log.Warn("no link-local neighbor yet; the peer moves to the switch address when it answers",
+			"interface", iface, "error", err)
 	}
 
 	peer := buildInterfacePeer(u.cfg, iface, addr, families)
 	u.recordInterfacePeer(iface, addr)
+	u.ifacePeerConfs[iface] = peer
 
 	if u.cfg.AuthPassword != "" {
 		u.log.Info("tcp-md5 authentication configured for BGP peer", "interface", iface)

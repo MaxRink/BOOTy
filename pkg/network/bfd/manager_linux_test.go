@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"slices"
 	"testing"
 	"time"
 
@@ -28,7 +29,7 @@ func TestManagerSingleHopTTL(t *testing.T) {
 		default:
 		}
 	})
-	t.Cleanup(m.Close)
+	t.Cleanup(func() { closeWithin(t, m) })
 	timers := Timers{DesiredMinTx: time.Second, RequiredMinRx: time.Second, DetectMult: 3}
 	if err := m.Add(&Peer{Name: "self", Addr: netip.MustParseAddr("127.0.0.1"), Timers: timers}); err != nil {
 		t.Fatal(err)
@@ -80,5 +81,110 @@ func TestManagerSingleHopTTL(t *testing.T) {
 	send(255)
 	if !waitChange(change{StateUp, StateDown}, 2*time.Second) {
 		t.Fatal("a single-hop packet with TTL 255 did not take the session Down")
+	}
+}
+
+// A session with fast timers that talks to itself stays Up: on Up it
+// advertises 150 ms at once, so its next packet must follow within the
+// detection time of 450 ms, not after the 1 s of the slow start. Before,
+// it timed out about 450 ms after Up, like FRR bfdd did at the leaves.
+func TestManagerFastTxAfterUp(t *testing.T) {
+	changes := make(chan change, 64)
+	m := NewManager(slog.Default(), func(_ *Peer, from, to State, _ Diag) {
+		select {
+		case changes <- change{from, to}:
+		default:
+		}
+	})
+	t.Cleanup(func() { closeWithin(t, m) })
+	timers := Timers{DesiredMinTx: 150 * time.Millisecond, RequiredMinRx: 150 * time.Millisecond, DetectMult: 3}
+	if err := m.Add(&Peer{Name: "self", Addr: netip.MustParseAddr("127.0.0.1"), Timers: timers}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(10 * time.Second)
+	for up := false; !up; {
+		select {
+		case c := <-changes:
+			up = c.to == StateUp
+		case <-deadline:
+			t.Fatal("the session did not come Up")
+		}
+	}
+	select {
+	case c := <-changes:
+		t.Fatalf("session left Up: %v -> %v", c.from, c.to)
+	case <-time.After(3 * time.Second):
+	}
+}
+
+// Replace moves a session to a new address: the old one stops and the
+// new one comes Up with its own packets.
+func TestManagerReplace(t *testing.T) {
+	changes := make(chan string, 64)
+	m := NewManager(slog.Default(), func(p *Peer, _, to State, _ Diag) {
+		select {
+		case changes <- p.Name + " " + to.String():
+		default:
+		}
+	})
+	t.Cleanup(func() { closeWithin(t, m) })
+	timers := Timers{DesiredMinTx: time.Second, RequiredMinRx: time.Second, DetectMult: 3}
+	// 192.0.2.1 never answers; 127.0.0.1 is the session itself.
+	if err := m.Add(&Peer{Name: "old", Addr: netip.MustParseAddr("192.0.2.1"), Timers: timers}); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	var old *run
+	for _, r := range m.runs {
+		old = r
+	}
+	m.mu.Unlock()
+	if err := m.Replace("old", "new", netip.MustParseAddr("127.0.0.1")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-old.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the loop of the replaced session still runs")
+	}
+	m.mu.Lock()
+	for _, l := range m.listeners {
+		if slices.Contains(l.runs, old) {
+			t.Error("the listener still hands packets to the replaced session")
+		}
+	}
+	m.mu.Unlock()
+	if err := m.Replace("old", "x", netip.MustParseAddr("127.0.0.1")); err == nil {
+		t.Fatal("Replace of a removed session succeeded")
+	}
+	deadline := time.After(10 * time.Second)
+	for {
+		select {
+		case c := <-changes:
+			if c == "new Up" {
+				m.mu.Lock()
+				n := len(m.runs)
+				m.mu.Unlock()
+				if n != 1 {
+					t.Fatalf("%d sessions after Replace, want 1", n)
+				}
+				return
+			}
+		case <-deadline:
+			t.Fatal("the replaced session did not come Up")
+		}
+	}
+}
+
+// closeWithin closes a manager and fails instead of hanging when a session
+// loop does not end.
+func closeWithin(t *testing.T, m *Manager) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() { m.Close(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Error("Manager.Close did not return within 5 s")
 	}
 }

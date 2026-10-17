@@ -2,7 +2,9 @@
 # usage: eval "$(test/e2e/clab/prodtpl-variant.sh VARIANT)"
 # Prints the environment for the production template lab variant:
 # two-uplinks (default), one-uplink, or native-model (two uplinks; the
-# native server uses NETWORK_DEVICES and BGP_SESSIONS).
+# native server uses NETWORK_DEVICES and BGP_SESSIONS), or caprf-old (one
+# uplink; the native server has the config path of the old single-leaf
+# CAPRF fixture, for TestProdTplCAPRFOldOutage only).
 native=""
 case "${1:-two-uplinks}" in
 two-uplinks)
@@ -11,6 +13,8 @@ one-uplink)
 	suffix="-one-uplink" ;;
 native-model)
 	suffix="" native="-model" ;;
+caprf-old)
+	suffix="-one-uplink" native="-caprf-old" ;;
 *)
 	echo "unknown variant $1" >&2
 	exit 1 ;;
