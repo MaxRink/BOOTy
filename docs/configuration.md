@@ -356,7 +356,7 @@ default and `iso` build flavors contain the FRR daemons.
 | `HEALTH_MIN_CPUS` | `0` | integer | Minimum CPU count for `minimum-cpu`. `0` passes the check. |
 | `HEALTH_SKIP_CHECKS` | (unset) | check names separated by commas | Checks to skip: `disk-presence`, `disk-ioerr`, `memory-ecc`, `minimum-memory`, `minimum-cpu`, `nic-link-state`, `thermal-state`. |
 | `HEALTH_CHECK_URL` | (unset) | URL | Receives the check results as JSON. |
-| `INVENTORY_ENABLED` | `false` | boolean | Collect the hardware inventory. Failures are logged only. |
+| `INVENTORY_ENABLED` | `false` | boolean | Collect the hardware inventory. Failures are logged only. Each PF port of a NIC gets an `sriov` report, see [SR-IOV](sriov.md#report). |
 | `INVENTORY_URL` | (unset) | URL | Receives the inventory JSON. |
 | `FIRMWARE_REPORT` | `false` | boolean | Collect BIOS, BMC, NIC and storage controller firmware versions. `NIC_FIRMWARE_LOG=true` logs the NIC firmware versions also without it. |
 | `NIC_FIRMWARE_LOG` | `false` | boolean | Log a `nic_firmware` line with the firmware version of every NIC on each provision, like `provision.sh`. Does not need `FIRMWARE_REPORT`. YAML `provision.firmware.logNICs`. Preset: `true`. |

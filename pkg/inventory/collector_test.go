@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/telekom/BOOTy/pkg/sriov"
 )
 
 func writeFile(t *testing.T, dir, relPath, content string) {
@@ -382,5 +384,51 @@ func TestReadSysFile(t *testing.T) {
 	got = readSysFile(filepath.Join(dir, "nonexistent"))
 	if got != "" {
 		t.Errorf("readSysFile(nonexistent) = %q, want empty", got)
+	}
+}
+
+func TestCollectNICsAttachesSRIOV(t *testing.T) {
+	dir := t.TempDir()
+	origPath, origInspector := SysNetPath, sriovInspector
+	SysNetPath = dir
+	sriovInspector = func() *sriov.Inspector { return &sriov.Inspector{SysNet: SysNetPath} }
+	t.Cleanup(func() { SysNetPath, sriovInspector = origPath, origInspector })
+
+	writeFile(t, dir, "ens1f0np0/address", "aa:bb:cc:dd:ee:ff\n")
+	writeFile(t, dir, "ens1f0np0/type", "1\n")
+	writeFile(t, dir, "ens1f0np0/phys_port_name", "p0\n")
+	writeFile(t, dir, "ens1f0np0/device/sriov_totalvfs", "64\n")
+	writeFile(t, dir, "ens1f0np0/device/sriov_numvfs", "4\n")
+	writeFile(t, dir, "pf0vf0/phys_port_name", "pf0vf0\n")
+	writeFile(t, dir, "pf0vf0/device/.present", "")
+
+	nics := collectNICs()
+	attachSRIOV(nics)
+	if len(nics) != 2 {
+		t.Fatalf("got %d NICs, want 2", len(nics))
+	}
+	for _, n := range nics {
+		switch n.Name {
+		case "ens1f0np0":
+			if n.SRIOV == nil || !n.SRIOV.SRIOVCapable || n.SRIOV.TotalVFs != 64 || n.SRIOV.NumVFs != 4 ||
+				n.SRIOV.LinkType != sriov.LinkTypeEthernet || n.SRIOV.PhysPortName != "p0" {
+				t.Errorf("ens1f0np0 SR-IOV report = %+v", n.SRIOV)
+			}
+		case "pf0vf0":
+			if n.SRIOV != nil {
+				t.Errorf("representor pf0vf0 has an SR-IOV report: %+v", n.SRIOV)
+			}
+		}
+	}
+}
+
+func TestAttachSRIOVWithoutSysNet(t *testing.T) {
+	origInspector := sriovInspector
+	sriovInspector = func() *sriov.Inspector { return &sriov.Inspector{SysNet: filepath.Join(t.TempDir(), "missing")} }
+	t.Cleanup(func() { sriovInspector = origInspector })
+	nics := []NICInfo{{Name: "eth0"}}
+	attachSRIOV(nics)
+	if nics[0].SRIOV != nil {
+		t.Fatalf("SR-IOV report without sysfs: %+v", nics[0].SRIOV)
 	}
 }

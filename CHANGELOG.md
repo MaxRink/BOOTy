@@ -345,6 +345,13 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   ESP changes to the other disk. Soft deprovision refuses a mirrored root (#581)
 - `RAID_SUPERBLOCK_CLEAR` (`wiped`|`all`): disks on which provisioning zeroes
   old RAID superblocks (#581)
+- The hardware inventory reports SR-IOV per PF port from sysfs, devlink and
+  rtnetlink, without vendor tools: driver, firmware, PCI address and IDs,
+  NUMA node, link type, `sriov_totalvfs` and `sriov_numvfs`, the devlink
+  eSwitch mode and capability, `phys_switch_id`, `phys_port_name`, the port
+  count, the VF LAG capability, the devlink info versions (a pending
+  firmware reset shows) and the VF attributes. [SR-IOV](docs/sriov.md)
+  defines the handoff contract to the Kubernetes SR-IOV stack
 
 ### Security
 

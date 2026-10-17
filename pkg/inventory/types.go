@@ -1,7 +1,11 @@
 // Package inventory collects hardware inventory from sysfs and procfs.
 package inventory
 
-import "time"
+import (
+	"time"
+
+	"github.com/telekom/BOOTy/pkg/sriov"
+)
 
 // HardwareInventory is the full hardware report collected during provisioning.
 type HardwareInventory struct {
@@ -70,6 +74,9 @@ type NICInfo struct {
 	Speed    string `json:"speed"`
 	SRIOVVFs int    `json:"sriovVfs"`
 	Firmware string `json:"firmware"`
+	// SRIOV is the SR-IOV report of a PF port (docs/sriov.md). VFs and
+	// VF representors have none.
+	SRIOV *sriov.PF `json:"sriov,omitempty"`
 }
 
 // PCIDevice describes a PCI device from /sys/bus/pci/devices.

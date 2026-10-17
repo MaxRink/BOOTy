@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/telekom/BOOTy/pkg/sriov"
 )
 
 // Paths can be overridden in tests.
@@ -37,6 +39,7 @@ func Collect() (*HardwareInventory, error) {
 	inv.Memory = collectMemory()
 	inv.Disks = collectDisks()
 	inv.NICs = collectNICs()
+	attachSRIOV(inv.NICs)
 	inv.PCIDevices = collectPCI()
 	inv.Accelerators = findAccelerators(inv.PCIDevices)
 
@@ -310,6 +313,30 @@ func collectNICs() []NICInfo {
 		nics = append(nics, nic)
 	}
 	return nics
+}
+
+// sriovInspector returns the SR-IOV inspector for SysNetPath. Tests replace
+// it to keep devlink and rtnetlink of the test host out.
+var sriovInspector = func() *sriov.Inspector {
+	in := sriov.NewInspector()
+	in.SysNet = SysNetPath
+	return in
+}
+
+// attachSRIOV adds the SR-IOV report to every NIC that is a PF port. A
+// failed discovery leaves the NICs without it.
+func attachSRIOV(nics []NICInfo) {
+	pfs, err := sriovInspector().Discover()
+	if err != nil {
+		return
+	}
+	byName := make(map[string]*sriov.PF, len(pfs))
+	for i := range pfs {
+		byName[pfs[i].Interface] = &pfs[i]
+	}
+	for i := range nics {
+		nics[i].SRIOV = byName[nics[i].Name]
+	}
 }
 
 func collectPCI() []PCIDevice {
