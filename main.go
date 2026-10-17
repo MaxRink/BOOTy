@@ -761,6 +761,11 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 		netMode = activeMode
 	}
 
+	if err := syncClock(ctx, cfg, connectivityTarget); err != nil {
+		provision.DumpDebugState("time-sync")
+		return nil, err
+	}
+
 	// Acquire JWT after network is ready so the token endpoint is reachable.
 	if err := client.AcquireToken(ctx); err != nil {
 		slog.Error("failed to acquire jwt token", "error", err)

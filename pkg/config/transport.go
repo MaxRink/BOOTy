@@ -22,8 +22,8 @@ type TransportConfig struct {
 	TokenAlgorithm string `yaml:"tokenAlgorithm" json:"tokenAlgorithm"`
 
 	// TokenExpiresAt is the expiry of Token as an RFC 3339 time, for a token
-	// that BOOTy can not renew (no TokenURL). It needs a correct ramdisk
-	// clock (RTC); BOOTy does not sync the time. Prefer
+	// that BOOTy can not renew (no TokenURL). It needs a correct clock:
+	// BOOTy checks it after the time sync (TimeConfig). Prefer
 	// TokenExpiresInSeconds. BOOTy stops the run
 	// TokenRenewMarginSeconds before it, reports the reason and ends like a
 	// failed run (FailureAction).

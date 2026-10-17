@@ -63,6 +63,7 @@ RUN strip --strip-all sfdisk.static
 FROM golang:1.27.1-alpine AS dev
 ARG BOOTY_VERSION=dev
 ARG BOOTY_BUILD=unknown
+ARG BOOTY_COMMIT_TIME=
 ARG BOOTY_FLAVOR=full
 RUN set -eu; \
     n=0; \
@@ -89,6 +90,7 @@ RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
       -X main.Build=${BOOTY_BUILD} \
       -X github.com/telekom/BOOTy/pkg/buildinfo.version=${BOOTY_VERSION} \
       -X github.com/telekom/BOOTy/pkg/buildinfo.commit=${BOOTY_BUILD} \
+      -X github.com/telekom/BOOTy/pkg/buildinfo.commitTime=${BOOTY_COMMIT_TIME} \
       -X github.com/telekom/BOOTy/pkg/buildinfo.flavor=${BOOTY_FLAVOR}" -o init
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -w" -o esp-sync ./cmd/booty-esp-sync
 
@@ -711,6 +713,7 @@ COPY --from=gobgp-iso-builder /booty-gobgp.iso .
 FROM golang:1.27.1-trixie AS micro-dev
 ARG BOOTY_VERSION=dev
 ARG BOOTY_BUILD=unknown
+ARG BOOTY_COMMIT_TIME=
 ARG BOOTY_FLAVOR=micro
 COPY go.mod go.sum /go/src/github.com/telekom/BOOTy/
 WORKDIR /go/src/github.com/telekom/BOOTy
@@ -730,6 +733,7 @@ RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
       -X main.Build=${BOOTY_BUILD} \
       -X github.com/telekom/BOOTy/pkg/buildinfo.version=${BOOTY_VERSION} \
       -X github.com/telekom/BOOTy/pkg/buildinfo.commit=${BOOTY_BUILD} \
+      -X github.com/telekom/BOOTy/pkg/buildinfo.commitTime=${BOOTY_COMMIT_TIME} \
       -X github.com/telekom/BOOTy/pkg/buildinfo.flavor=${BOOTY_FLAVOR}" -o init
 
 FROM debian:trixie-slim AS micro-builder

@@ -8,6 +8,7 @@ import (
 
 	"github.com/telekom/BOOTy/pkg/disk"
 	"github.com/telekom/BOOTy/pkg/image"
+	"github.com/telekom/BOOTy/pkg/timesync"
 )
 
 // FailureClass groups failure codes by their likely cause.
@@ -46,6 +47,9 @@ var failureCodes = []FailureCode{
 	{"BOOTY-NET-001", ClassEnvironment, "network-setup", "Network setup failed."},
 	{"BOOTY-NET-002", ClassEnvironment, "network-setup", "Connectivity check to the provisioning server failed."},
 	{"BOOTY-NET-003", ClassEnvironment, "network-setup", "Token exchange or token renewal start failed."},
+
+	{"BOOTY-TIM-001", ClassEnvironment, "time-sync", "Time sync failed with TIME_SYNC=require: no usable time source, or the clock could not be set."},
+	{"BOOTY-TIM-002", ClassEnvironment, AnyStep, "A TLS certificate is not valid at the local clock: clock skew or an expired certificate."},
 
 	{"BOOTY-RPT-001", ClassTransient, "report-init", "Init callback failed."},
 	{"BOOTY-RPT-002", ClassTransient, "report-success", "Success callback failed."},
@@ -128,6 +132,8 @@ const (
 	CodeConnectivity     = "BOOTY-NET-002"
 	CodeAuth             = "BOOTY-NET-003"
 	CodeConfig           = "BOOTY-CFG-002"
+	CodeNoTime           = timesync.CodeNoTime
+	CodeCertTime         = timesync.CodeCertTime
 	codeChecksumMismatch = "BOOTY-IMG-003"
 	codeFormatProbe      = "BOOTY-IMG-004"
 	codeDiskInUse        = "BOOTY-DSK-010"
@@ -152,6 +158,8 @@ var sentinelCodes = []struct {
 	{disk.ErrAmbiguousRootPartition, codeAmbiguousRoot},
 	{ErrEFIVarsUnavailable, codeEFIVars},
 	{ErrVerifyRebootUnsupported, codeVerifyReboot},
+	{timesync.ErrNoTime, CodeNoTime},
+	{timesync.ErrClockSkew, CodeCertTime},
 }
 
 // FailureCodes returns a copy of the code catalog.

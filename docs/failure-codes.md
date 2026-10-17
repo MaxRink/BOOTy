@@ -18,6 +18,8 @@ step (step `*`). Any other error gets the code of its step.
 | `BOOTY-NET-001` | environment | `network-setup` | Network setup failed. |
 | `BOOTY-NET-002` | environment | `network-setup` | Connectivity check to the provisioning server failed. |
 | `BOOTY-NET-003` | environment | `network-setup` | Token exchange or token renewal start failed. |
+| `BOOTY-TIM-001` | environment | `time-sync` | Time sync failed with TIME_SYNC=require: no usable time source, or the clock could not be set. |
+| `BOOTY-TIM-002` | environment | `*` | A TLS certificate is not valid at the local clock: clock skew or an expired certificate. |
 | `BOOTY-RPT-001` | transient | `report-init` | Init callback failed. |
 | `BOOTY-RPT-002` | transient | `report-success` | Success callback failed. |
 | `BOOTY-HW-001` | hardware | `collect-inventory` | Hardware inventory collection failed. |

@@ -411,6 +411,24 @@ rescue:
   autoMountDisks: false
 
 # ---------------------------------------------------------------------------
+# Time: clock sync before the first TLS certificate check.
+# ---------------------------------------------------------------------------
+time:
+  # sync (TIME_SYNC): off | auto (default) | require
+  sync: require
+
+  # ntpServers (NTP_SERVERS): SNTP servers, host or host:port; DHCP option 42 servers follow
+  ntpServers:
+    - ntp1.example.com
+    - "192.0.2.123:123"
+
+  # maxSkewSeconds (TIME_MAX_SKEW_SEC): largest NTP to CAPRF Date difference (default: 300)
+  maxSkewSeconds: 120
+
+  # writeRTC (TIME_WRITE_RTC): write the synced time to the RTC (default: true)
+  writeRTC: false
+
+# ---------------------------------------------------------------------------
 # Provision — settings for the provisioning pipeline.
 # Only read when mode is "provision" or "dry-run".
 # ---------------------------------------------------------------------------

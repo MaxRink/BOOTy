@@ -57,6 +57,7 @@ jobs:
             docker buildx build --platform linux/amd64 --target "${target}" \
               --build-arg "BOOTY_VERSION=pr" \
               --build-arg "BOOTY_BUILD=${HEAD_SHA}" \
+              --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" \
               --build-arg "BOOTY_FLAVOR=${flavor}" \
               --output "type=local,dest=${out_dir}" -f initrd.Dockerfile .
 

@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strings"
+	"time"
 )
 
 // Flavor represents an initramfs build flavor.
@@ -39,7 +40,10 @@ var (
 	version   = "dev"
 	commit    = "unknown"
 	buildDate = "unknown"
-	flavor    = "full"
+	// commitTime is the committer time of the built commit (RFC 3339), set
+	// by the build: -X .../pkg/buildinfo.commitTime=$(git log -1 --format=%cI).
+	commitTime = ""
+	flavor     = "full"
 )
 
 // validFlavors is the set of known build flavors.
@@ -48,6 +52,16 @@ var validFlavors = map[Flavor]bool{
 	FlavorGoBGP: true,
 	FlavorSlim:  true,
 	FlavorMicro: true,
+}
+
+// CommitTime returns the committer time of the built commit, stamped at
+// build time. ok is false when the build did not stamp a valid time.
+func CommitTime() (t time.Time, ok bool) {
+	t, err := time.Parse(time.RFC3339, strings.TrimSpace(commitTime))
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t, true
 }
 
 // Get returns the current build info.

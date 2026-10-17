@@ -31,6 +31,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/crash"
 	"github.com/telekom/BOOTy/pkg/health"
 	"github.com/telekom/BOOTy/pkg/network/netplan"
+	"github.com/telekom/BOOTy/pkg/timesync"
 )
 
 // Client communicates with the CAPRF provisioning server.
@@ -895,6 +896,9 @@ func classifyTransportError(err error, op string) (cause string, timeout bool, s
 		return "connection refused", false, nil
 	case errors.Is(err, syscall.ECONNRESET):
 		return "connection reset", false, nil
+	case timesync.IsCertTimeError(err):
+		// The text is built by BOOTy from the certificate dates only.
+		return timesync.ExplainCertTime(err, time.Time{}).Error(), false, timesync.ErrClockSkew
 	case errors.As(err, &certErr), errors.As(err, &authorityErr), errors.As(err, &hostnameErr), errors.As(err, &recordErr):
 		return "tls error", false, nil
 	case op == "parse":
@@ -1146,6 +1150,9 @@ func applyVar(cfg *config.MachineConfig, key, value string) error {
 		return err
 	}
 	if handled, err := applyUint32Var(cfg, key, value); handled {
+		return err
+	}
+	if handled, err := applyTimeVar(cfg, key, value); handled {
 		return err
 	}
 	if handled, err := applyTokenVar(cfg, key, value); handled {

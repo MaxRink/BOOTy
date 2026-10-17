@@ -6,11 +6,13 @@ TARGET := booty
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.0.0)
 BUILD := $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
+# Committer time of HEAD, the earliest time the time sync accepts.
+COMMIT_TIME := $(shell git log -1 --format=%cI 2>/dev/null)
 
 TARGETOS=linux
 TARGETARCH ?= $(shell go env GOARCH)
 
-GO_LDFLAGS = -s -w -X=main.Version=$$VERSION -X=main.Build=$$BUILD -extldflags -static
+GO_LDFLAGS = -s -w -X=main.Version=$$VERSION -X=main.Build=$$BUILD -X=github.com/telekom/BOOTy/pkg/buildinfo.commitTime=$(COMMIT_TIME) -extldflags -static
 # grpcnotrace drops gRPC's x/net/trace event log. GoBGP sets
 # grpc.EnableTracing = false, so the traced code never runs.
 GO_TAGS = grpcnotrace
@@ -162,51 +164,51 @@ test:
 	@echo "Coverage report: $(COVERAGE_HTML)"
 
 dockerx86: check-docker-vars
-	@docker buildx build --platform linux/amd64 --load -t "$${REPOSITORY}:$${DOCKERTAG}" -f initrd.Dockerfile .
+	@docker buildx build --build-arg "BOOTY_COMMIT_TIME=$(COMMIT_TIME)" --platform linux/amd64 --load -t "$${REPOSITORY}:$${DOCKERTAG}" -f initrd.Dockerfile .
 
 docker: check-docker-vars
-	@docker buildx build --platform linux/amd64,linux/arm64 --push -t "$${REPOSITORY}:$${DOCKERTAG}" -f initrd.Dockerfile .
+	@docker buildx build --build-arg "BOOTY_COMMIT_TIME=$(COMMIT_TIME)" --platform linux/amd64,linux/arm64 --push -t "$${REPOSITORY}:$${DOCKERTAG}" -f initrd.Dockerfile .
 
 iso:
-	@docker buildx build --platform linux/amd64 --target iso --output type=local,dest=. -f initrd.Dockerfile .
+	@docker buildx build --build-arg "BOOTY_COMMIT_TIME=$(COMMIT_TIME)" --platform linux/amd64 --target iso --output type=local,dest=. -f initrd.Dockerfile .
 	@echo ISO built: booty.iso
 
 slim:
-	@docker buildx build --platform linux/amd64 --target slim --output type=local,dest=. -f initrd.Dockerfile .
+	@docker buildx build --build-arg "BOOTY_COMMIT_TIME=$(COMMIT_TIME)" --platform linux/amd64 --target slim --output type=local,dest=. -f initrd.Dockerfile .
 	@echo Slim initramfs built: initramfs.cpio.zst
 
 micro:
-	@docker buildx build --platform linux/amd64 --target micro --output type=local,dest=. -f initrd.Dockerfile .
+	@docker buildx build --build-arg "BOOTY_COMMIT_TIME=$(COMMIT_TIME)" --platform linux/amd64 --target micro --output type=local,dest=. -f initrd.Dockerfile .
 	@echo Micro initramfs built: initramfs.cpio.gz
 
 gobgp:
-	@docker buildx build --platform linux/amd64 --target gobgp --output type=local,dest=. -f initrd.Dockerfile .
+	@docker buildx build --build-arg "BOOTY_COMMIT_TIME=$(COMMIT_TIME)" --platform linux/amd64 --target gobgp --output type=local,dest=. -f initrd.Dockerfile .
 	@echo GoBGP initramfs built: initramfs.cpio.zst
 
 gobgp-iso:
-	@docker buildx build --platform linux/amd64 --target gobgp-iso --output type=local,dest=. -f initrd.Dockerfile .
+	@docker buildx build --build-arg "BOOTY_COMMIT_TIME=$(COMMIT_TIME)" --platform linux/amd64 --target gobgp-iso --output type=local,dest=. -f initrd.Dockerfile .
 	@echo GoBGP ISO built: booty-gobgp.iso
 
 dockerx86slim: check-docker-vars
-	@docker buildx build --platform linux/amd64 --target slim --load -t "$${REPOSITORY}:$${DOCKERTAG}-slim" -f initrd.Dockerfile .
+	@docker buildx build --build-arg "BOOTY_COMMIT_TIME=$(COMMIT_TIME)" --platform linux/amd64 --target slim --load -t "$${REPOSITORY}:$${DOCKERTAG}-slim" -f initrd.Dockerfile .
 
 dockerx86micro: check-docker-vars
-	@docker buildx build --platform linux/amd64 --target micro --load -t "$${REPOSITORY}:$${DOCKERTAG}-micro" -f initrd.Dockerfile .
+	@docker buildx build --build-arg "BOOTY_COMMIT_TIME=$(COMMIT_TIME)" --platform linux/amd64 --target micro --load -t "$${REPOSITORY}:$${DOCKERTAG}-micro" -f initrd.Dockerfile .
 
 dockerx86gobgp: check-docker-vars
-	@docker buildx build --platform linux/amd64 --target gobgp --load -t "$${REPOSITORY}:$${DOCKERTAG}-gobgp" -f initrd.Dockerfile .
+	@docker buildx build --build-arg "BOOTY_COMMIT_TIME=$(COMMIT_TIME)" --platform linux/amd64 --target gobgp --load -t "$${REPOSITORY}:$${DOCKERTAG}-gobgp" -f initrd.Dockerfile .
 
 arm64: check-docker-vars
-	@docker buildx build --platform linux/arm64 --load -t "$${REPOSITORY}:$${DOCKERTAG}-arm64" -f initrd.Dockerfile .
+	@docker buildx build --build-arg "BOOTY_COMMIT_TIME=$(COMMIT_TIME)" --platform linux/arm64 --load -t "$${REPOSITORY}:$${DOCKERTAG}-arm64" -f initrd.Dockerfile .
 
 arm64-slim:
 	@mkdir -p dist/arm64
-	@docker buildx build --platform linux/arm64 --target slim --output type=local,dest=dist/arm64 -f initrd.Dockerfile .
+	@docker buildx build --build-arg "BOOTY_COMMIT_TIME=$(COMMIT_TIME)" --platform linux/arm64 --target slim --output type=local,dest=dist/arm64 -f initrd.Dockerfile .
 	@echo ARM64 slim initramfs built: dist/arm64/initramfs.cpio.zst
 
 arm64-gobgp:
 	@mkdir -p dist/arm64
-	@docker buildx build --platform linux/arm64 --target gobgp --output type=local,dest=dist/arm64 -f initrd.Dockerfile .
+	@docker buildx build --build-arg "BOOTY_COMMIT_TIME=$(COMMIT_TIME)" --platform linux/arm64 --target gobgp --output type=local,dest=dist/arm64 -f initrd.Dockerfile .
 	@echo ARM64 GoBGP initramfs built: dist/arm64/initramfs.cpio.zst
 
 test-iso:

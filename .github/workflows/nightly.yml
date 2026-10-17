@@ -57,6 +57,7 @@ jobs:
             go build -ldflags "-s -w \
               -X main.Version=${NIGHTLY_VERSION} \
               -X main.Build=$(date -u +%Y%m%dT%H%M%S) \
+              -X github.com/telekom/BOOTy/pkg/buildinfo.commitTime=$(git log -1 --format=%cI) \
               -linkmode external -extldflags '-static'" \
             -o booty-${{ matrix.arch }}
 
@@ -76,6 +77,7 @@ jobs:
             ${TARGET_ARG} \
             --build-arg "BOOTY_VERSION=${NIGHTLY_VERSION}" \
             --build-arg "BOOTY_BUILD=${{ github.sha }}" \
+            --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" \
             --build-arg "BOOTY_FLAVOR=${BUILD_FLAVOR}" \
             --output type=local,dest=out-${{ matrix.flavor }} \
             -f initrd.Dockerfile .
@@ -289,6 +291,7 @@ jobs:
           docker buildx build --platform linux/amd64 \
             --build-arg "BOOTY_VERSION=${NIGHTLY_VERSION}" \
             --build-arg "BOOTY_BUILD=${{ github.sha }}" \
+            --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" \
             --build-arg "BOOTY_FLAVOR=full" \
             --provenance=true \
             --push \

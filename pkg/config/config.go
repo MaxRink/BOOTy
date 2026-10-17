@@ -93,6 +93,7 @@ type Config struct {
 	Health    HealthConfig    `yaml:"health"    json:"health"`
 	Telemetry TelemetryConfig `yaml:"telemetry" json:"telemetry"`
 	Rescue    RescueConfig    `yaml:"rescue"    json:"rescue"`
+	Time      TimeConfig      `yaml:"time"      json:"time"`
 
 	// Per-mode configuration sections.
 	Provision   ProvisionConfig   `yaml:"provision"   json:"provision"`

@@ -473,6 +473,7 @@ jobs:
             ${{ matrix.target }} \
             --build-arg "BOOTY_VERSION=ci" \
             --build-arg "BOOTY_BUILD=${{ github.sha }}" \
+            --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" \
             --build-arg "BOOTY_FLAVOR=${BUILD_FLAVOR}" \
             --output type=local,dest=out-${{ matrix.flavor }}-arm64 \
             -f initrd.Dockerfile .

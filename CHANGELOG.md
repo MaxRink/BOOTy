@@ -197,6 +197,14 @@ behaviour.
   reboot, power off or the rescue shell, BOOTy waits up to the new
   `LOG_FLUSH_TIMEOUT_SEC` (default 5, `0` to 60) for the queued lines to arrive
   (#711).
+- BOOTy sets the clock before the first request that checks a TLS
+  certificate: from `NTP_SERVERS`, the DHCP option 42 servers or the `Date`
+  header of the CAPRF connectivity target, whose certificate chain is checked
+  at the time it claims, within a window from the commit time of the build
+  (`BOOTY_COMMIT_TIME`) to five years after it. It writes the RTC. A host with a wrong RTC now
+  provisions over TLS without `SKIP_TLS_VERIFY`. `TIME_SYNC=off` keeps the old
+  behaviour. A certificate that is not valid at the local clock now gives an
+  error that names the skew (`BOOTY-TIM-002`) (#713).
 
 ### Behaviour behind `CAPRF_LEGACY_COMPAT=true`
 
@@ -390,6 +398,9 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   It waits up to 30 s for the 2xx of that status. Without `REBOOT_URL` the
   run fails (`sriov-verify-reboot-unsupported`); `SRIOV_VERIFY_REBOOT=off`
   hands off without the check
+- Time sync before TLS: `TIME_SYNC` (`off`|`auto`|`require`), `NTP_SERVERS`,
+  `TIME_MAX_SKEW_SEC` and `TIME_WRITE_RTC`, YAML `time.*`. See
+  [time sync](docs/configuration.md#time-sync) (#713)
 
 ### Security
 

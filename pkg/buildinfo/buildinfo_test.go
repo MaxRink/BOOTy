@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGet(t *testing.T) {
@@ -215,6 +216,21 @@ func TestEstimateComponents_Fields(t *testing.T) {
 		}
 		if c.SizeMB <= 0 {
 			t.Errorf("component %q has non-positive size: %f", c.Component, c.SizeMB)
+		}
+	}
+}
+
+func TestCommitTime(t *testing.T) {
+	orig := commitTime
+	t.Cleanup(func() { commitTime = orig })
+	commitTime = "2026-10-01T08:30:00+02:00"
+	if got, ok := CommitTime(); !ok || !got.Equal(time.Date(2026, 10, 1, 6, 30, 0, 0, time.UTC)) {
+		t.Fatalf("CommitTime() = %v, %v", got, ok)
+	}
+	for _, bad := range []string{"", "unknown", "2026-10-01"} {
+		commitTime = bad
+		if _, ok := CommitTime(); ok {
+			t.Errorf("CommitTime() with %q reports ok", bad)
 		}
 	}
 }

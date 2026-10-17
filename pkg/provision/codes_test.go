@@ -4,6 +4,7 @@ package provision
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -18,6 +19,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/disk"
 	"github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/telemetry"
+	"github.com/telekom/BOOTy/pkg/timesync"
 )
 
 var updateDocs = flag.Bool("update", false, "rewrite docs/failure-codes.md")
@@ -42,7 +44,7 @@ func TestFailureCodesAreUniqueAndComplete(t *testing.T) {
 			t.Errorf("%s: step and text must be set", c.Code)
 		}
 	}
-	for _, code := range []string{CodeGeneric, CodeCanceled, CodeNetworkSetup, CodeConnectivity, CodeAuth, CodeConfig} {
+	for _, code := range []string{CodeGeneric, CodeCanceled, CodeNetworkSetup, CodeConnectivity, CodeAuth, CodeConfig, CodeNoTime, CodeCertTime} {
 		if !seen[code] {
 			t.Errorf("constant %s is not in the catalog", code)
 		}
@@ -310,4 +312,21 @@ step (step ` + "`*`" + `). Any other error gets the code of its step.
 		fmt.Fprintf(&b, "| `%s` | %s | `%s` | %s |\n", c.Code, c.Class, c.Step, c.Text)
 	}
 	return b.String()
+}
+
+// The time sync errors keep their codes in every step, also behind
+// wrappers such as the redacted image download error.
+func TestTimeSyncFailureCodes(t *testing.T) {
+	skew := timesync.ExplainCertTime(x509.CertificateInvalidError{
+		Cert: &x509.Certificate{NotBefore: time.Now().Add(time.Hour), NotAfter: time.Now().Add(2 * time.Hour)}, Reason: x509.Expired,
+	}, time.Now())
+	if got := CodeOf(WithCode("stream-image", fmt.Errorf("fetching image: %w", skew))); got != CodeCertTime {
+		t.Errorf("clock skew in stream-image: code %q, want %s", got, CodeCertTime)
+	}
+	if got := CodeOf(WithCode("report-init", fmt.Errorf("post: %w", timesync.ErrClockSkew))); got != CodeCertTime {
+		t.Errorf("clock skew sentinel in report-init: code %q, want %s", got, CodeCertTime)
+	}
+	if got := CodeOf(WithCode("report-init", timesync.ErrNoTime)); got != CodeNoTime {
+		t.Errorf("no time: code %q, want %s", got, CodeNoTime)
+	}
 }

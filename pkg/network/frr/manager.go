@@ -21,6 +21,7 @@ import (
 
 	"github.com/telekom/BOOTy/pkg/executil"
 	"github.com/telekom/BOOTy/pkg/network"
+	"github.com/telekom/BOOTy/pkg/timesync"
 	"github.com/telekom/t-caas-go-library/pkg/redact"
 )
 
@@ -1097,6 +1098,41 @@ func recoverFRR(ctx context.Context, log *slog.Logger, mgr *Manager, legacy bool
 	}
 }
 
+// probeConnectivity sends one HEAD request to target. It reports whether
+// the target answered; an error ends the wait.
+func probeConnectivity(ctx context.Context, client *http.Client, log *slog.Logger, target string, attempt int) (bool, error) {
+	logTarget := network.RedactHTTPURLForLog(target)
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, target, http.NoBody)
+	if err != nil {
+		return false, fmt.Errorf("create request: %w", redact.Wrap(err, target))
+	}
+	resp, err := client.Do(req) //nolint:gosec // target URL from trusted config, not user input
+	if err == nil {
+		_ = resp.Body.Close()
+		log.Info("Network connectivity established",
+			"target", logTarget, "attempt", attempt)
+		return true, nil
+	}
+	if reachableWithClockSkew(log, logTarget, attempt, err) {
+		return true, nil
+	}
+	log.Debug("Connectivity check failed",
+		"target", logTarget, "attempt", attempt, "error", redact.Wrap(err, target))
+	return false, nil
+}
+
+// reachableWithClockSkew reports whether err is a certificate that is not
+// valid at the local clock. The TLS server answered, so the path works; the
+// clock is synced next, before any request that sends data.
+func reachableWithClockSkew(log *slog.Logger, logTarget string, attempt int, err error) bool {
+	if !timesync.IsCertTimeError(err) {
+		return false
+	}
+	log.Warn("Network connectivity established, but the TLS certificate is not valid at the local clock",
+		"target", logTarget, "attempt", attempt, "error", timesync.ExplainCertTime(err, time.Time{}))
+	return true
+}
+
 // waitForHTTPWithFRR polls target, restarting FRR every 120s if needed, or
 // every 20s with LegacyFRRRecovery.
 func waitForHTTPWithFRR(ctx context.Context, target string, timeout time.Duration, mgr *Manager) error {
@@ -1107,7 +1143,6 @@ func waitForHTTPWithFRR(ctx context.Context, target string, timeout time.Duratio
 	if target == "" {
 		return fmt.Errorf("empty connectivity target URL")
 	}
-	logTarget := network.RedactHTTPURLForLog(target)
 	if timeout <= 0 {
 		// NETWORK_WAIT_MAX_ATTEMPTS=0 in legacy compat: no round, the run
 		// fails at once like the legacy loop, without the FRR state dump.
@@ -1126,21 +1161,10 @@ func waitForHTTPWithFRR(ctx context.Context, target string, timeout time.Duratio
 
 	for time.Now().Before(deadline) {
 		attempt++
-		req, err := http.NewRequestWithContext(ctx, http.MethodHead, target, http.NoBody)
-		if err != nil {
-			return fmt.Errorf("create request: %w", redact.Wrap(err, target))
+		reached, err := probeConnectivity(ctx, client, log, target, attempt)
+		if err != nil || reached {
+			return err
 		}
-
-		resp, err := client.Do(req) //nolint:gosec // target URL from trusted config, not user input
-		if err == nil {
-			_ = resp.Body.Close()
-			log.Info("Network connectivity established",
-				"target", logTarget, "attempt", attempt)
-			return nil
-		}
-
-		log.Debug("Connectivity check failed",
-			"target", logTarget, "attempt", attempt, "error", redact.Wrap(err, target))
 
 		if time.Since(lastRestart) >= restartInterval {
 			recoverFRR(ctx, log, mgr, legacy)

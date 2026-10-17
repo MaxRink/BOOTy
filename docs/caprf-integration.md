@@ -226,7 +226,7 @@ A long agent mode run outlives a token. BOOTy renews or stops in time:
   which are only fallbacks for a token that BOOTy can not renew.
 - Without `TOKEN_URL`, BOOTy can not renew `TOKEN`. With `TOKEN_EXPIRES_IN`
   (seconds from the start of BOOTy) or `TOKEN_EXPIRES_AT` (RFC 3339, needs a
-  correct ramdisk clock; BOOTy does not sync the time) it stops
+  correct clock; see [time sync](configuration.md#time-sync)) it stops
   `TOKEN_RENEW_MARGIN_SECONDS` before the expiry, while the token still works
   for the report. `TOKEN_EXPIRES_IN` wins. BOOTy starts after the virtual
   media insert and the boot, so it sees `TOKEN_EXPIRES_IN` late by that time;

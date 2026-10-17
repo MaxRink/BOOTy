@@ -103,6 +103,7 @@ func (c *Config) Validate() error {
 		errs = append(errs, err.Error())
 	}
 	errs = append(errs, validateTokenRenewal(&c.Transport)...)
+	errs = append(errs, validateTime(&c.Time)...)
 
 	if len(errs) > 0 {
 		return fmt.Errorf("config validation: %s", strings.Join(errs, "; "))

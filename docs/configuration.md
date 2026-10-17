@@ -128,7 +128,7 @@ values are false.
 | `TOKEN_URL` | (unset) | HTTPS URL | JWT endpoint. BOOTy exchanges `TOKEN` for a JWT after the network is up and renews it in the background. Plain HTTP is accepted only for `localhost`, `127.0.0.1` and `::1`. Requires `TOKEN` and `HOSTNAME`. A failed exchange or an exhausted renewal ends the run. |
 | `TOKEN_ALGORITHM` | (unset) | `RS256`, `ES256` | JWT signing algorithm that BOOTy requests from `TOKEN_URL`. Empty leaves the choice to the server. |
 | `TOKEN_EXPIRES_IN` | (unset) | integer, seconds | Lifetime of `TOKEN`, counted from the start of BOOTy, when there is no `TOKEN_URL` to renew it. It does not depend on the ramdisk clock. BOOTy starts only after the virtual media insert and the boot, so the count runs late by that time: CAPRF subtracts a boot allowance from the value it renders. Wins over `TOKEN_EXPIRES_AT`. BOOTy stops the active task `TOKEN_RENEW_MARGIN_SECONDS` before the expiry, reports the reason to `ERROR_URL` and ends like a failed run (`FAILURE_ACTION`). Ignored with `TOKEN_URL`: the `expires_in` of the token exchange at start is authoritative. YAML `transport.tokenExpiresInSeconds`. |
-| `TOKEN_EXPIRES_AT` | (unset) | RFC 3339 time | Expiry of `TOKEN` when there is no `TOKEN_URL`, like `TOKEN_EXPIRES_IN`. It needs a correct ramdisk clock (RTC): BOOTy does not sync the time. Prefer `TOKEN_EXPIRES_IN`. Unset (both): the expiry is unknown and BOOTy does not stop. Ignored with `TOKEN_URL`. YAML `transport.tokenExpiresAt`. |
+| `TOKEN_EXPIRES_AT` | (unset) | RFC 3339 time | Expiry of `TOKEN` when there is no `TOKEN_URL`, like `TOKEN_EXPIRES_IN`. It needs a correct clock: BOOTy checks it after the [time sync](#time-sync), and with `TIME_SYNC=off` or without a time source it uses the RTC. Prefer `TOKEN_EXPIRES_IN`. Unset (both): the expiry is unknown and BOOTy does not stop. Ignored with `TOKEN_URL`. YAML `transport.tokenExpiresAt`. |
 | `TOKEN_RENEW_MARGIN_SECONDS` | `0` (20% of the token lifetime) | integer, seconds | How long before the token expiry the renewal starts (`TOKEN_URL`), or BOOTy stops (`TOKEN_EXPIRES_AT`). At most half the lifetime. For `TOKEN_EXPIRES_IN` and `TOKEN_EXPIRES_AT` the lifetime is the time left at the start, so the default is 20% of it. YAML `transport.tokenRenewMarginSeconds`. |
 | `TOKEN_RENEW_RETRIES` | `0` (5) | integer, 1-100 | Renewal attempts before the renewal fails for good. The attempts also stop when the token expires. Then BOOTy stops the active task, reports the reason and ends like a failed run. YAML `transport.tokenRenewRetries`. |
 | `TOKEN_RENEW_BACKOFF_SECONDS` | `0` (1) | integer, seconds | Wait after the first failed renewal attempt; it doubles after each failure up to 60 seconds and never goes past the expiry. YAML `transport.tokenRenewBackoffSeconds`. |
@@ -140,6 +140,67 @@ The CAPRF callback, connectivity check and image HTTP clients use the
 standard proxy variables (`https_proxy`, `http_proxy`, `no_proxy`) from the
 process environment. The `TOKEN_URL` client uses no proxy and always verifies
 TLS, also with `SKIP_TLS_VERIFY=true` or `EXPORT_VARS=true`.
+
+## Time sync
+
+A wrong RTC (a board swap, a dead CMOS battery, a BIOS reset) makes every
+TLS certificate look not yet valid or expired. BOOTy therefore sets the
+clock after the network connectivity check and before the first request
+that checks a certificate or sends data: the JWT exchange, the CAPRF
+callbacks, the crash artifact upload and the image download.
+
+- The connectivity check counts a certificate that is not valid at the local
+  clock as reachable: the TLS server answered.
+- NTP: BOOTy queries `NTP_SERVERS` in order, then the NTP servers of the DHCP
+  lease (option 42), with SNTP (RFC 4330, 2 s per server). The first good
+  answer counts. CAPRF renders `NTP_SERVERS` into the vars file like any
+  other key.
+- CAPRF `Date` header: BOOTy sends one `HEAD` request without credentials to
+  the connectivity target (`INIT_URL`, else `SUCCESS_URL`), with the normal
+  certificate check against the system roots. When the local clock is
+  outside the validity period of the server certificate, it sends the
+  request again with the check at a time inside that period. In both cases
+  it then checks the chain, the host name and the key usage again at the
+  time of the `Date` header. The time is then authenticated: the server
+  holds the key of a certificate that is valid at the time it claims. With
+  `SKIP_TLS_VERIFY` or an `http` URL the time is not authenticated.
+- Choice: NTP is the most precise. When the authenticated `Date` time also
+  answers and differs from NTP by more than `TIME_MAX_SKEW_SEC`, BOOTy logs an
+  error and uses the `Date` time, because plain NTP is not authenticated.
+  Without NTP, the `Date` time is used.
+- Plausible window: BOOTy never sets the clock to a time before the floor or
+  more than five years after it. The floor is the committer time of the
+  built commit, which the build stamps into the binary
+  (`-X github.com/telekom/BOOTy/pkg/buildinfo.commitTime=$(git log -1 --format=%cI)`;
+  the Makefile, `initrd.Dockerfile` (build argument `BOOTY_COMMIT_TIME`) and
+  the CI, nightly and release workflows set it). A binary without the stamp
+  uses the Go VCS stamp (`vcs.time`, only in `go build` from a git checkout;
+  the Docker build has no `.git`), and the floor is never earlier than
+  2026-01-01. A local `go build` without the stamp therefore falls back to
+  2026-01-01.
+- When the clock is already plausible (inside that window), BOOTy does not
+  set it back by more than `TIME_MAX_SKEW_SEC` on the `Date` header alone; it
+  logs an error and keeps the clock (`TIME_SYNC=require` fails). NTP may set
+  it back.
+- BOOTy steps the clock when the skew is larger than the resolution of the
+  source (0.5 s for NTP, 2 s for `Date`), logs the skew (`skew_seconds`) and
+  writes the RTC in UTC (`TIME_WRITE_RTC`), so the installed OS starts with
+  the right time.
+- Without a source, BOOTy keeps the RTC time. A clock before the build of
+  BOOTy is logged as an error (`BOOTY-TIM-001`). `TIME_SYNC=require` fails the
+  run instead.
+- A certificate that is still not valid at the local clock gives an error
+  that names the skew and the time source (`BOOTY-TIM-002`), for the CAPRF
+  callbacks and the image download, instead of the bare x509 error.
+  Both codes are in the [failure code table](failure-codes.md): a run that
+  fails on them reports the code to `ERROR_URL` and in the step data.
+
+| Key | Default | Values | Description |
+|-----|---------|--------|-------------|
+| `TIME_SYNC` | (unset) (`auto`) | `off`, `auto`, `require` | `off` keeps the RTC time. `auto` syncs from the sources that answer and logs failures. `require` fails the run (`BOOTY-TIM-001`) when no source gives a usable time, or when the clock can not be set. Dry-run mode does not sync. YAML `time.sync`. |
+| `NTP_SERVERS` | (unset) | up to 8 hosts or `host:port`, comma or space separated | SNTP servers, queried before the DHCP option 42 servers. Default port 123. An IPv6 address with a port needs brackets (`[2001:db8::123]:123`). URLs are rejected. YAML `time.ntpServers` (list). |
+| `TIME_MAX_SKEW_SEC` | `0` (300) | integer, seconds, 1-86400 | Largest difference between the NTP time and the authenticated CAPRF `Date` time; above it BOOTy uses the `Date` time. Also the largest backward step of a plausible clock on the `Date` header alone. YAML `time.maxSkewSeconds`. |
+| `TIME_WRITE_RTC` | (unset) (`true`) | boolean (`true`, `false`, `1`, `0`, `yes`, `no`) | Write the synced time to the RTC in UTC after the clock was stepped. A failed write is logged. Other values are rejected. YAML `time.writeRTC`. |
 
 ## CAPRF legacy compatibility
 

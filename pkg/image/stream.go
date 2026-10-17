@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/v1/types"
 	"github.com/telekom/BOOTy/pkg/network"
+	"github.com/telekom/BOOTy/pkg/timesync"
 )
 
 const imageCopyBufferSize = 16 << 20 // 16 MiB
@@ -365,7 +366,7 @@ func httpGetWithRetry(ctx context.Context, url string) (io.ReadCloser, error) {
 		resp, err := imageHTTPClient.Do(req) //nolint:gosec // URL from trusted config
 		if err != nil {
 			cancel()
-			redactedErr := &redactedSourceError{rawSource: url, err: err}
+			redactedErr := &redactedSourceError{rawSource: url, err: timesync.ExplainCertTime(err, time.Time{})}
 			lastErr = fmt.Errorf("fetching image %s (attempt %d/%d): %w", redactedURL, attempt+1, maxRetries, redactedErr)
 			slog.Warn("HTTP request failed, retrying", "attempt", attempt+1, "error", redactedErr, "backoff", backoff)
 			if attempt < maxRetries-1 {

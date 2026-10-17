@@ -30,6 +30,7 @@ on:
       - "pkg/ux/**"
       - "pkg/oob/**"
       - "oob_status.go"
+      - "pkg/timesync/**"
       - "go.mod"
       - "go.sum"
       - "main.go"
@@ -65,6 +66,7 @@ on:
       - "pkg/ux/**"
       - "pkg/oob/**"
       - "oob_status.go"
+      - "pkg/timesync/**"
       - "go.mod"
       - "go.sum"
       - "main.go"
@@ -164,6 +166,14 @@ jobs:
             setup: ""
             # More than ten QEMU runs, some of them wait for minutes.
             go_timeout: 40m
+          - scenario: time-sync
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestTimeSync.*QEMU$"
+            privileged: true
+            setup: ""
+            # Three QEMU runs with the guest RTC in 2001.
+            go_timeout: 25m
           - scenario: disk-wipe
             qemu_extra: ""
             test_tag: e2e

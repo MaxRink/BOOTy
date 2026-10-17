@@ -226,6 +226,7 @@ func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- struc
 		}
 		winner.won, winner.iface = true, ifName
 		d.remember(dhcpApplied{link: link, addr: addr, route: route})
+		recordLeaseNTPServers(lease)
 		d.log.Info("DHCP lease obtained", "iface", ifName, "addr", addr.IPNet.String())
 		select {
 		case leased <- struct{}{}:
@@ -306,7 +307,20 @@ func (d *DHCPMode) applyRenewal(link netlink.Link, ifName string, addr *netlink.
 	}
 	kept = append(kept, dhcpApplied{link: link, addr: addr, route: route})
 	d.applied = kept
+	recordLeaseNTPServers(lease)
 	d.log.Info("DHCP lease renewed", "iface", ifName, "addr", addr.IPNet.String())
+}
+
+// recordLeaseNTPServers keeps the NTP servers (option 42) of the applied
+// lease for the time sync.
+func recordLeaseNTPServers(lease *dhclient.Lease) {
+	var data []byte
+	for _, opt := range lease.OtherOptions {
+		if opt.Type == layers.DHCPOptNTPServers {
+			data = opt.Data
+		}
+	}
+	setDHCPNTPServers(data)
 }
 
 // leaseAddr builds the interface address from a lease. A lease without a

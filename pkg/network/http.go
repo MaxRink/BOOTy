@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/telekom/t-caas-go-library/pkg/redact"
+
+	"github.com/telekom/BOOTy/pkg/timesync"
 )
 
 // WaitForHTTP polls target with HTTP HEAD until reachable.
@@ -54,6 +56,14 @@ func WaitForHTTP(ctx context.Context, target string, timeout time.Duration) erro
 			return nil
 		}
 
+		if timesync.IsCertTimeError(err) {
+			// The server answered the TLS handshake, so the network path
+			// works. The clock is synced next, before any request that
+			// sends data.
+			slog.Warn("network connectivity established, but the TLS certificate is not valid at the local clock",
+				"target", logTarget, "attempt", attempt, "error", timesync.ExplainCertTime(err, time.Time{}))
+			return nil
+		}
 		slog.Debug("connectivity check failed", "target", logTarget, "attempt", attempt, "error", redactHTTPErrorForLog(err, target))
 
 		select {

@@ -261,7 +261,12 @@ func TestOnBoundReplacesStateAndTeardownRemovesIt(t *testing.T) {
 		FixedAddress: net.ParseIP("10.0.2.15"),
 		Netmask:      net.CIDRMask(24, 32),
 		Router:       []net.IP{net.ParseIP("10.0.2.2")},
+		OtherOptions: []dhclient.Option{{Type: layers.DHCPOptNTPServers, Data: []byte{10, 0, 2, 3}}},
 	})
+	t.Cleanup(func() { setDHCPNTPServers(nil) })
+	if got := DHCPNTPServers(); len(got) != 1 || got[0] != "10.0.2.3" {
+		t.Fatalf("DHCP NTP servers = %v, want [10.0.2.3]", got)
+	}
 
 	select {
 	case <-leased:
