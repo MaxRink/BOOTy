@@ -28,39 +28,58 @@ RUN CGO_ENABLED=1 GOOS=linux go build -a \
     -o /booty
 
 # ── Stage 2: Extract a bootable kernel ────────────────────────────────
-FROM debian:bookworm-slim AS kernel
-RUN apt-get -o Acquire::Retries=5 update && \
-    apt-get -o Acquire::Retries=5 install -y --no-install-recommends kmod && \
-    REAL_PKG=$(apt-cache depends linux-image-amd64 | awk '/Depends:/{print $2}' | head -1) && \
-    apt-get -o Acquire::Retries=5 download "$REAL_PKG" && \
-    dpkg-deb -x linux-image-*.deb /tmp/kernel && \
-    cp /tmp/kernel/boot/vmlinuz-* /vmlinuz && \
-    KVER=$(ls /tmp/kernel/lib/modules/ | head -1) && \
-    MDIR="/tmp/kernel/lib/modules/$KVER" && \
+FROM debian:trixie-slim AS kernel
+# Same kernel as initrd.Dockerfile: the Debian-signed trixie kernel, or the
+# KERNEL_SUITE one (trixie-backports splits it into linux-image/-binary/
+# -modules/-base packages).
+ARG KERNEL_SUITE=
+RUN if [ -n "$KERNEL_SUITE" ]; then \
+        echo "deb http://deb.debian.org/debian $KERNEL_SUITE main" > /etc/apt/sources.list.d/kernel-suite.list; \
+    fi && \
+    apt-get -o Acquire::Retries=5 update && \
+    apt-get -o Acquire::Retries=5 install -y --no-install-recommends kmod xz-utils && \
+    KERNEL_PKG=$(apt-cache depends ${KERNEL_SUITE:+-t "$KERNEL_SUITE"} linux-image-amd64 | awk '/Depends: linux-image-/{print $2; exit}') && \
+    test -n "$KERNEL_PKG" && \
+    KPKG_VER=${KERNEL_PKG#linux-image-} && \
+    mkdir -p /tmp/debs && cd /tmp/debs && \
+    for p in linux-image linux-binary linux-modules linux-base; do \
+        if apt-cache show "$p-$KPKG_VER" >/dev/null 2>&1; then \
+            apt-get -o Acquire::Retries=5 download "$p-$KPKG_VER"; \
+        fi; \
+    done && \
+    for d in *.deb; do dpkg-deb -x "$d" /tmp/kernel; done && \
+    cd / && \
+    MROOT=/tmp/kernel/usr && { [ -d "$MROOT/lib/modules" ] || MROOT=/tmp/kernel; } && \
+    KVER=$(ls "$MROOT/lib/modules/" | head -1) && \
+    MDIR="$MROOT/lib/modules/$KVER" && \
+    VMLINUZ=$(ls /tmp/kernel/boot/vmlinuz-* "$MDIR/vmlinuz" 2>/dev/null | head -1) && \
+    cp "$VMLINUZ" /vmlinuz && \
     mkdir -p /modules && \
-    depmod -b /tmp/kernel "$KVER" && \
+    depmod -b "$MROOT" "$KVER" && \
     for m in \
         virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev \
         virtio_pci virtio_net failover net_failover \
         scsi_mod sd_mod virtio_blk virtio_scsi \
-        ext4 jbd2 mbcache crc32c_generic xfs btrfs fat vfat nls_cp437 nls_iso8859-1 \
+        ext4 jbd2 mbcache crc32c_generic crc32c-cryptoapi xfs btrfs fat vfat nls_cp437 nls_iso8859-1 \
         vrf dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc \
         e1000e igb igc ixgbe i40e ice iavf \
         tg3 bnxt_en \
         mlx4_core mlx4_en mlx5_core mlxfw \
         be2net; do \
-        modprobe --show-depends -d /tmp/kernel -S "$KVER" "$m" 2>/dev/null \
+        modprobe --show-depends -d "$MROOT" -S "$KVER" "$m" 2>/dev/null \
             | awk '/^insmod /{print $2}' \
             | while read -r dep; do \
                 [ -f "$dep" ] && cp -n "$dep" /modules/ 2>/dev/null || true; \
             done; \
         find "$MDIR" -name "${m}.ko*" -exec cp -n {} /modules/ \; 2>/dev/null || true; \
     done && \
-    echo "Extracted $(ls /modules/*.ko* 2>/dev/null | wc -l) kernel modules" && \
-    rm -rf /tmp/kernel *.deb /var/lib/apt/lists/*
+    find /modules -name '*.ko.xz' -exec xz -d {} + && \
+    if ls /modules/*.ko.* >/dev/null 2>&1; then echo "compressed modules left in /modules" >&2; exit 1; fi && \
+    echo "Extracted $(ls /modules/*.ko 2>/dev/null | wc -l) kernel modules of $KVER" && \
+    rm -rf /tmp/kernel /tmp/debs /var/lib/apt/lists/*
 
 # ── Stage 3: Assemble initramfs ───────────────────────────────────────
-FROM debian:bookworm-slim AS initramfs
+FROM debian:trixie-slim AS initramfs
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     cpio busybox-static curl gnupg lsb-release ca-certificates \
     e2fsprogs dosfstools gdisk parted lvm2 fdisk util-linux mdadm \
@@ -149,7 +168,7 @@ COPY test/e2e/clab/vrnetlab/init-wrapper.sh /initramfs/init
 RUN chmod +x /initramfs/init
 
 # ── Stage 4: Runtime container with QEMU ──────────────────────────────
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     qemu-system-x86 qemu-utils iproute2 bridge-utils cpio gzip procps \
     && rm -rf /var/lib/apt/lists/*

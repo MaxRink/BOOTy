@@ -83,7 +83,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -w" -o esp-sync ./c
 # Build a removable UEFI fallback loader that BOOTy can copy into a target ESP.
 # The embedded config loads EFI/BOOT/grub.cfg from the ESP; BOOTy writes that
 # handoff config at provisioning time so the selected A/B root slot is explicit.
-FROM debian:bookworm-slim AS efi-fallback
+FROM debian:trixie-slim AS efi-fallback
 ARG TARGETARCH
 RUN set -eux; \
     apt-get -o Acquire::Retries=5 update; \
@@ -112,7 +112,7 @@ RUN set -eux; \
       "boot/grub/grub.cfg=/tmp/booty-efi-fallback.cfg"
 
 # Build FRR (BGP/BFD/Zebra) for EVPN networking — use FRR official stable repo
-FROM debian:bookworm-slim AS frr
+FROM debian:trixie-slim AS frr
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     curl gnupg lsb-release ca-certificates && \
     curl --fail --location --show-error --silent \
@@ -152,57 +152,87 @@ RUN mkdir -p /frr-libs && \
         [ -n "$lib" ] && [ -f "$lib" ] && cp -L --parents "$lib" /frr-libs/ 2>/dev/null || true; \
     done
 
-# Extract kernel, storage, and NIC driver modules for bare-metal servers
-FROM debian:bookworm-slim AS kernel
+# Extract kernel, storage, and NIC driver modules for bare-metal servers.
+# The kernel is the Debian-signed linux-image-amd64 (or -arm64) of Debian 13
+# trixie: Linux 6.12 LTS with its security updates. It chains to the Debian CA
+# through shim, so it boots with Secure Boot, and its modules are signed with
+# the key built into the kernel, so they load under lockdown.
+# KERNEL_SUITE=trixie-backports selects the newest Debian-signed kernel (7.x).
+# Do not make it the default: md arrays created on Linux 6.19 or later store a
+# logical block size in the superblock, and kernels up to 6.18 (all supported
+# target OS kernels today) refuse to assemble them. BOOTy creates the
+# DISK_MIRRORING_MODE and explicit RAID arrays that the installed OS assembles.
+# Upstream keeps this by design (commit a4166f1c4893) and has no opt-out.
+FROM debian:trixie-slim AS kernel
 ARG TARGETARCH
-RUN apt-get -o Acquire::Retries=5 update && \
-    apt-get -o Acquire::Retries=5 install -y --no-install-recommends kmod && \
-    KERNEL_PKG=$([ "$TARGETARCH" = "arm64" ] && echo "linux-image-arm64" || echo "linux-image-amd64") && \
-    REAL_PKG=$(apt-cache depends "$KERNEL_PKG" | awk '/Depends:/{print $2}' | head -1) && \
-    apt-get -o Acquire::Retries=5 download "$REAL_PKG" && \
-    dpkg-deb -x linux-image-*.deb /tmp/kernel && \
-    cp /tmp/kernel/boot/vmlinuz-* /vmlinuz && \
-    KVER=$(ls /tmp/kernel/lib/modules/ | head -1) && \
-    MDIR="/tmp/kernel/lib/modules/$KVER" && \
+ARG KERNEL_SUITE=
+RUN if [ -n "$KERNEL_SUITE" ]; then \
+        echo "deb http://deb.debian.org/debian $KERNEL_SUITE main" > /etc/apt/sources.list.d/kernel-suite.list; \
+    fi && \
+    apt-get -o Acquire::Retries=5 update && \
+    apt-get -o Acquire::Retries=5 install -y --no-install-recommends kmod xz-utils && \
+    KERNEL_META=$([ "$TARGETARCH" = "arm64" ] && echo "linux-image-arm64" || echo "linux-image-amd64") && \
+    KERNEL_PKG=$(apt-cache depends ${KERNEL_SUITE:+-t "$KERNEL_SUITE"} "$KERNEL_META" | awk '/Depends: linux-image-/{print $2; exit}') && \
+    test -n "$KERNEL_PKG" && \
+    # Newer Debian kernels split linux-image-<ver> into linux-binary (signed
+    # vmlinuz), linux-modules and linux-base packages; fetch whichever exist.
+    KPKG_VER=${KERNEL_PKG#linux-image-} && \
+    mkdir -p /tmp/debs && cd /tmp/debs && \
+    for p in linux-image linux-binary linux-modules linux-base; do \
+        if apt-cache show "$p-$KPKG_VER" >/dev/null 2>&1; then \
+            apt-get -o Acquire::Retries=5 download "$p-$KPKG_VER"; \
+        fi; \
+    done && \
+    for d in *.deb; do dpkg-deb -x "$d" /tmp/kernel; done && \
+    cd / && \
+    # usrmerge: trixie kernels install modules under /usr/lib/modules.
+    MROOT=/tmp/kernel/usr && { [ -d "$MROOT/lib/modules" ] || MROOT=/tmp/kernel; } && \
+    KVER=$(ls "$MROOT/lib/modules/" | head -1) && \
+    MDIR="$MROOT/lib/modules/$KVER" && \
+    # The vmlinuz is /boot/vmlinuz-<ver> or, in the split packages, <MDIR>/vmlinuz.
+    VMLINUZ=$(ls /tmp/kernel/boot/vmlinuz-* "$MDIR/vmlinuz" 2>/dev/null | head -1) && \
+    cp "$VMLINUZ" /vmlinuz && \
     mkdir -p /modules && \
     # Generate modules.dep for modprobe dependency resolution
-    depmod -b /tmp/kernel "$KVER" && \
+    depmod -b "$MROOT" "$KVER" && \
     # Target modules — transitive dependencies resolved via modprobe --show-depends.
     # Module categories:
     #   QEMU/KVM virtio:  virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev virtio_pci virtio_net failover net_failover
-    #   Storage (SCSI):   scsi_mod sd_mod virtio_blk virtio_scsi
+    #   Storage (SCSI):   scsi_mod sd_mod sg virtio_blk virtio_scsi (sg: SCSI generic for sg3-utils)
     #   Storage (HW):     nvme ahci megaraid_sas mpt3sas smartpqi hpsa loop
     #   Software RAID:    md_mod raid0 raid1 raid10 raid456 (mdadm; RAID 5/6 need raid456)
     #   EFI variables:    efivarfs (efibootmgr)
-    #   Filesystems:      ext4 jbd2 mbcache crc32c_generic xfs btrfs fat vfat nls_cp437 nls_iso8859-1 nls_ascii
+    #   Filesystems:      ext4 jbd2 mbcache crc32c_generic crc32c-cryptoapi xfs btrfs fat vfat nls_cp437 nls_iso8859-1 nls_ascii
     #   VRF/VXLAN/bridge: vrf dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc
     #   VLAN:             8021q (bonding is left out: loading it creates bond0)
-    #   Intel NICs:       e1000e igb igc ixgbe i40e ice iavf
+    #   Intel NICs:       e1000e igb igc ixgbe i40e ice iavf igbvf ixgbevf (iavf, igbvf, ixgbevf: SR-IOV VFs)
     #   Broadcom NICs:    tg3 bnxt_en
     #   Mellanox/NVIDIA:  mlx4_core mlx4_en mlx5_core mlxfw
     #   Emulex/Broadcom:  be2net
+    #   Other 10-100G:    qede (QLogic FastLinQ) cxgb4 (Chelsio T4-T6) sfc (AMD/Solarflare) ionic (AMD Pensando)
     #   Device-mapper:    dm_mod dm_crypt (LUKS encryption)
     #   Software RAID:    md_mod raid1 (DISK_MIRRORING_MODE, explicit RAID arrays)
     #   IPMI:             ipmi_msghandler ipmi_devintf ipmi_si ipmi_ssif
     for m in \
         virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev \
         virtio_pci virtio_net failover net_failover \
-        scsi_mod sd_mod virtio_blk virtio_scsi \
+        scsi_mod sd_mod sg virtio_blk virtio_scsi \
         nvme ahci megaraid_sas mpt3sas smartpqi hpsa loop \
         md_mod raid0 raid1 raid10 raid456 \
         efivarfs \
-        ext4 jbd2 mbcache crc32c_generic xfs btrfs fat vfat nls_cp437 nls_iso8859-1 nls_ascii \
+        ext4 jbd2 mbcache crc32c_generic crc32c-cryptoapi xfs btrfs fat vfat nls_cp437 nls_iso8859-1 nls_ascii \
         vrf dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc \
         8021q \
-        e1000e igb igc ixgbe i40e ice iavf \
+        e1000e igb igc ixgbe i40e ice iavf igbvf ixgbevf \
         tg3 bnxt_en \
         mlx4_core mlx4_en mlx5_core mlxfw \
         be2net \
+        qede cxgb4 sfc ionic \
         dm_mod dm_crypt \
         md_mod raid1 \
         ipmi_msghandler ipmi_devintf ipmi_si ipmi_ssif; do \
         # Copy module + all transitive dependencies via modprobe
-        modprobe --show-depends -d /tmp/kernel -S "$KVER" "$m" 2>/dev/null \
+        modprobe --show-depends -d "$MROOT" -S "$KVER" "$m" 2>/dev/null \
             | awk '/^insmod /{print $2}' \
             | while read -r dep; do \
                 [ -f "$dep" ] && cp -n "$dep" /modules/ 2>/dev/null || true; \
@@ -210,16 +240,21 @@ RUN apt-get -o Acquire::Retries=5 update && \
         # Fallback: direct find if modprobe doesn't resolve (builtin or alias)
         find "$MDIR" -name "${m}.ko*" -exec cp -n {} /modules/ \; 2>/dev/null || true; \
     done && \
-    echo "Extracted $(ls /modules/*.ko* 2>/dev/null | wc -l) kernel modules" && \
-    rm -rf /tmp/kernel *.deb /var/lib/apt/lists/*
+    # Trixie kernels ship xz-compressed modules. BOOTy loads modules with
+    # finit_module(fd, "", 0), which takes plain ELF objects, and the
+    # initramfs is zstd-compressed as a whole. The signature stays appended.
+    find /modules -name '*.ko.xz' -exec xz -d {} + && \
+    if ls /modules/*.ko.* >/dev/null 2>&1; then echo "compressed modules left in /modules" >&2; exit 1; fi && \
+    echo "Extracted $(ls /modules/*.ko 2>/dev/null | wc -l) kernel modules of $KVER" && \
+    rm -rf /tmp/kernel /tmp/debs /var/lib/apt/lists/*
 
 # Build disk, system, and firmware tools
-FROM debian:bookworm-slim AS tools
+FROM debian:trixie-slim AS tools
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     binutils \
     mdadm util-linux fdisk e2fsprogs xfsprogs btrfs-progs parted gdisk kpartx dosfstools \
     efibootmgr dmidecode ethtool curl iproute2 bridge-utils \
-    hdparm nvme-cli mstflint lldpd gpgv qemu-utils \
+    hdparm nvme-cli sg3-utils mstflint lldpd gpgv qemu-utils \
     dropbear-bin cryptsetup-bin ipmitool \
     && rm -rf /var/lib/apt/lists/*
 
@@ -234,7 +269,7 @@ RUN mkdir -p /tool-libs /tool-libs-full && \
         /usr/sbin/xfs_growfs /usr/sbin/xfs_repair \
         /usr/bin/btrfs /usr/sbin/parted /usr/sbin/sgdisk /usr/sbin/sfdisk \
         /sbin/partprobe /usr/bin/partx /usr/sbin/kpartx /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
-        /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme \
+        /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme /usr/bin/sg_sanitize /usr/bin/sg_format \
         /usr/bin/mstconfig /usr/bin/mstflint /usr/sbin/lldpcli /usr/sbin/lldpd \
         /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk /sbin/blkid /usr/sbin/losetup \
         /sbin/cryptsetup /usr/bin/ipmitool 2>/dev/null \
@@ -262,7 +297,7 @@ RUN strip --strip-all \
         /usr/sbin/xfs_growfs /usr/sbin/xfs_repair \
         /usr/bin/btrfs /usr/sbin/parted /usr/sbin/sgdisk /usr/sbin/sfdisk \
         /sbin/partprobe /usr/bin/partx /usr/sbin/kpartx /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
-        /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme \
+        /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme /usr/bin/sg_sanitize /usr/bin/sg_format \
         /usr/bin/mstconfig /usr/bin/mstflint /usr/sbin/lldpcli /usr/sbin/lldpd \
         /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk /sbin/blkid /usr/sbin/losetup /usr/bin/gpgv /usr/bin/qemu-img \
         /sbin/cryptsetup /usr/bin/ipmitool
@@ -272,7 +307,7 @@ RUN strip --strip-all \
 # that caused CI failures when the site was unreachable.
 FROM busybox:1.38.0-musl AS busybox-bin
 
-FROM debian:bookworm-slim AS busybox
+FROM debian:trixie-slim AS busybox
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     cpio ca-certificates zstd cloud-guest-utils \
     && rm -rf /var/lib/apt/lists/*
@@ -341,9 +376,11 @@ COPY --from=tools /usr/bin/curl bin/curl
 COPY --from=tools /sbin/ip bin/ip
 COPY --from=tools /sbin/bridge bin/bridge
 
-# Secure erase tools
+# Secure erase tools (sg3-utils: SCSI SANITIZE and FORMAT UNIT for SAS disks)
 COPY --from=tools /sbin/hdparm bin/hdparm
 COPY --from=tools /usr/sbin/nvme bin/nvme
+COPY --from=tools /usr/bin/sg_sanitize bin/sg_sanitize
+COPY --from=tools /usr/bin/sg_format bin/sg_format
 
 # LUKS disk encryption
 COPY --from=tools /sbin/cryptsetup sbin/cryptsetup
@@ -391,7 +428,7 @@ RUN find . -print0 > ../initramfs.files \
     && rm ../initramfs.cpio
 
 # ── ISO build stage (optional, triggered by --target=iso) ──────────────────
-FROM debian:bookworm-slim AS iso-builder
+FROM debian:trixie-slim AS iso-builder
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     xorriso syslinux syslinux-common isolinux curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -421,7 +458,7 @@ FROM scratch AS iso
 COPY --from=iso-builder /booty.iso .
 
 # ── Slim target: BOOTy + busybox shell + minimal tools, no FRR/LVM ────────
-FROM debian:bookworm-slim AS slim-builder
+FROM debian:trixie-slim AS slim-builder
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends cpio zstd ca-certificates cloud-guest-utils \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build/initramfs
@@ -499,7 +536,7 @@ FROM scratch AS slim
 COPY --from=slim-builder /initramfs.cpio.zst .
 
 # ── GoBGP target: like default but without FRR (GoBGP is in-process Go) ───
-FROM debian:bookworm-slim AS gobgp-builder
+FROM debian:trixie-slim AS gobgp-builder
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends cpio zstd \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build/initramfs
@@ -555,9 +592,11 @@ COPY --from=tools /usr/bin/curl bin/curl
 COPY --from=tools /sbin/ip bin/ip
 COPY --from=tools /sbin/bridge bin/bridge
 
-# Secure erase tools
+# Secure erase tools (sg3-utils: SCSI SANITIZE and FORMAT UNIT for SAS disks)
 COPY --from=tools /sbin/hdparm bin/hdparm
 COPY --from=tools /usr/sbin/nvme bin/nvme
+COPY --from=tools /usr/bin/sg_sanitize bin/sg_sanitize
+COPY --from=tools /usr/bin/sg_format bin/sg_format
 
 # LUKS disk encryption
 COPY --from=tools /sbin/cryptsetup sbin/cryptsetup
@@ -599,7 +638,7 @@ RUN prune-initramfs-libs.sh .
 
 # Package GoBGP initramfs with zstd compression (no FRR binaries — GoBGP runs in-process)
 # zstd -19 achieves ~10–20% better ratio than gzip with much faster decompression.
-# The Debian bookworm 6.1 kernel has CONFIG_RD_ZSTD=y built-in.
+# The Debian kernel has CONFIG_RD_ZSTD=y built-in.
 RUN find . -print0 > ../initramfs.files \
     && cpio --null -ov --format=newc < ../initramfs.files > ../initramfs.cpio \
     && rm ../initramfs.files \
@@ -610,7 +649,7 @@ FROM scratch AS gobgp
 COPY --from=gobgp-builder /initramfs.cpio.zst .
 
 # ── GoBGP ISO target ──────────────────────────────────────────────────────
-FROM debian:bookworm-slim AS gobgp-iso-builder
+FROM debian:trixie-slim AS gobgp-iso-builder
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     xorriso syslinux syslinux-common isolinux curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -637,7 +676,7 @@ FROM scratch AS gobgp-iso
 COPY --from=gobgp-iso-builder /booty-gobgp.iso .
 
 # ── Micro target: pure-Go BOOTy only, no external binaries ────────────────
-FROM golang:1.27.1-bookworm AS micro-dev
+FROM golang:1.27.1-trixie AS micro-dev
 ARG BOOTY_VERSION=dev
 ARG BOOTY_BUILD=unknown
 ARG BOOTY_FLAVOR=micro
@@ -661,7 +700,7 @@ RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
       -X github.com/telekom/BOOTy/pkg/buildinfo.commit=${BOOTY_BUILD} \
       -X github.com/telekom/BOOTy/pkg/buildinfo.flavor=${BOOTY_FLAVOR}" -o init
 
-FROM debian:bookworm-slim AS micro-builder
+FROM debian:trixie-slim AS micro-builder
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends cpio ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build/initramfs

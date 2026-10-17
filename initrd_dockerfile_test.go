@@ -240,7 +240,7 @@ func TestSlimDockerfileIncludesResizeAndRepairTools(t *testing.T) {
 		t.Fatalf("cannot read initrd.Dockerfile: %v", err)
 	}
 	text := string(data)
-	start := strings.Index(text, "FROM debian:bookworm-slim AS slim-builder")
+	start := strings.Index(text, "FROM debian:trixie-slim AS slim-builder")
 	if start < 0 {
 		t.Fatal("cannot find slim-builder stage")
 	}

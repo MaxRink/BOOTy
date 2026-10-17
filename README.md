@@ -175,13 +175,26 @@ The `initrd.Dockerfile` supports multiple build targets via `--target`:
 
 | Target | Size | Networking | Disk Tools | Use Case |
 |--------|------|-----------|------------|----------|
-| *(default)* | ~52 MB | FRR/EVPN + DHCP | Full (LVM, sfdisk, mdadm) | Production bare-metal provisioning |
-| `gobgp` | ~47 MB | GoBGP/EVPN + DHCP | Full (LVM, sfdisk, mdadm) | Production without FRR dependency |
-| `iso` | ~100 MB | FRR/EVPN + DHCP | Full | Bootable ISO for Redfish virtual media |
-| `gobgp-iso` | ~65 MB | GoBGP/EVPN + DHCP | Full | Bootable GoBGP ISO for Redfish virtual media |
-| `slim` | ~42 MB | DHCP only | Provisioning basics, no LVM/FRR | Lightweight provisioning without BGP |
+| *(default)* | ~47 MB | FRR/EVPN + DHCP | Full (LVM, sfdisk, mdadm) | Production bare-metal provisioning |
+| `gobgp` | ~42 MB | GoBGP/EVPN + DHCP | Full (LVM, sfdisk, mdadm) | Production without FRR dependency |
+| `iso` | ~61 MB | FRR/EVPN + DHCP | Full | Bootable ISO for Redfish virtual media |
+| `gobgp-iso` | ~56 MB | GoBGP/EVPN + DHCP | Full | Bootable GoBGP ISO for Redfish virtual media |
+| `slim` | ~30 MB | DHCP only | Provisioning basics, no LVM/FRR | Lightweight provisioning without BGP |
 | `micro` | ~10 MB | None (pure Go) | None | Minimal agent, custom network stack |
-| `kernel-image` | ~8 MB | n/a | n/a | The Debian `vmlinuz` that matches the shipped modules, for QEMU tests |
+| `kernel-image` | ~12 MB | n/a | n/a | The Debian `vmlinuz` that matches the shipped modules, for QEMU tests |
+
+The build stages use Debian 13 (trixie) packages. The kernel and its modules
+come from the Debian-signed `linux-image-amd64` (or `linux-image-arm64`) of
+trixie, Linux 6.12 LTS with security updates. The kernel carries the Debian
+Secure Boot signature (loaded through a shim that trusts the Debian CA) and its
+modules are signed, so they load under lockdown. `--build-arg KERNEL_SUITE=trixie-backports`
+selects the newest Debian-signed kernel (Linux 7.x). Do not use it with
+`DISK_MIRRORING_MODE` or explicit RAID: md arrays created on Linux 6.19 or
+later cannot be assembled by kernels up to 6.18, which includes the kernels of
+the usual target OS images. This is upstream behaviour by design (Linux commit
+a4166f1c4893, "md: Fix forward incompatibility from configurable logical block
+size"); no mdadm option, md module parameter or sysfs setting stops a new 1.x
+array from storing its logical block size.
 
 #### ARM64 Targets
 
@@ -228,11 +241,16 @@ automatically at boot from the `/modules/` directory in the initramfs.
 | **Intel** | `i40e` | X710, XL710, XXV710 | 10/25/40G |
 | **Intel** | `ice` | E810 | 25/50/100G |
 | **Intel** | `iavf` | Adaptive Virtual Function | VF |
+| **Intel** | `igbvf`, `ixgbevf` | I350 / 82576 VF, 82599 / X540 / X550 VF | VF |
 | **Broadcom** | `tg3` | NetXtreme BCM57xx | 1G |
 | **Broadcom** | `bnxt_en` | NetXtreme-E/C BCM573xx/574xx | 10/25/50/100G |
 | **NVIDIA/Mellanox** | `mlx4_core`/`mlx4_en` | ConnectX-3 | 10/40G |
 | **NVIDIA/Mellanox** | `mlx5_core` | ConnectX-4/5/6/7, BlueField | 10/25/40/50/100/200/400G |
 | **Emulex/Broadcom** | `be2net` | OneConnect OCe14xxx | 10G |
+| **QLogic/Marvell** | `qede` | FastLinQ QL41xxx/QL45xxx (needs `qed` firmware files, not shipped) | 10/25/40/50/100G |
+| **Chelsio** | `cxgb4` | T4/T5/T6 | 10/25/40/100G |
+| **AMD/Solarflare** | `sfc` | SFN8000, X2 series | 10/25/100G |
+| **AMD Pensando** | `ionic` | Pensando DSC | 25/100G |
 | **QEMU/KVM** | `virtio_net` | VirtIO NIC | Virtual |
 
 **Mellanox SR-IOV**: ConnectX-4+ cards are automatically detected via sysfs PCI vendor
@@ -257,7 +275,7 @@ asynchronously.
 | SAS/RAID HBA | `smartpqi`, `hpsa` | Microchip SmartRAID/SmartHBA, HPE Smart Array |
 | VM | `virtio_blk`, `virtio_scsi` | QEMU/KVM |
 | Software RAID | `md-mod`, `raid0`, `raid1`, `raid10`, `raid456` | `mdadm` RAID 0/1/10/5/6 |
-| Other | `loop`, `dm-mod`, `dm-crypt`, `efivarfs`, `8021q` | Loop images, LUKS, EFI variables, VLANs |
+| Other | `loop`, `dm-mod`, `dm-crypt`, `efivarfs`, `8021q`, `sg` | Loop images, LUKS, EFI variables, VLANs, SCSI generic access |
 
 ## Usage
 
@@ -1289,7 +1307,7 @@ a new binary:
 
 1. **Install the package** in the `tools` build stage:
 ```dockerfile
-# In the 'tools' stage (FROM debian:bookworm-slim AS tools)
+# In the 'tools' stage (FROM debian:trixie-slim AS tools)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     your-package \
     && rm -rf /var/lib/apt/lists/*

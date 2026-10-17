@@ -640,7 +640,8 @@ func TestVrnetlabAllVMsEnterCAPRF(t *testing.T) {
 
 // vrnetlabRequiredModules lists kernel modules that must be loaded for a
 // successful boot. If the Dockerfile module copy loop breaks (e.g. shell
-// comment parsing), this test catches it before a real deploy.
+// comment parsing), this test catches it before a real deploy. virtio_pci is
+// not listed: the Debian 6.12 kernel builds it in (CONFIG_VIRTIO_PCI=y).
 var vrnetlabRequiredModules = []string{
 	"ext4",          // root filesystem
 	"xfs",           // common data filesystem
@@ -652,7 +653,6 @@ var vrnetlabRequiredModules = []string{
 	"sd_mod",        // SCSI disk driver
 	"virtio_blk",    // virtio block storage (QEMU)
 	"virtio_scsi",   // virtio SCSI controller
-	"virtio_pci",    // PCI virtio transport (QEMU)
 	"virtio_net",    // virtio NIC
 	"vxlan",         // VXLAN overlay
 }

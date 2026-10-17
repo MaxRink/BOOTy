@@ -349,10 +349,16 @@ jobs:
           # mdadm --create fails and efibootmgr has no EFI variables.
           for flavor in default gobgp slim; do
             zstd -dc "out-${flavor}/initramfs.cpio.zst" | cpio -t 2>/dev/null > "${flavor}-modules.txt"
-            for ko in nvme nvme-core ahci libahci libata megaraid_sas mpt3sas scsi_transport_sas raid_class smartpqi hpsa md-mod raid1 raid10 raid456 efivarfs loop 8021q; do
+            for ko in nvme nvme-core ahci libahci libata sd_mod sg megaraid_sas mpt3sas scsi_transport_sas raid_class smartpqi hpsa md-mod raid1 raid10 raid456 efivarfs loop 8021q iavf igbvf ixgbevf qede cxgb4 sfc ionic; do
               grep -Eq "^(\./)?modules/${ko}\.ko$" "${flavor}-modules.txt" || { echo "FAIL: ${flavor} has no modules/${ko}.ko"; exit 1; }
             done
             if grep -Eq '^(\./)?modules/bonding\.ko' "${flavor}-modules.txt"; then echo "FAIL: ${flavor} ships bonding.ko, loading it creates bond0"; exit 1; fi
+            # SAS secure erase (SECURE_ERASE) runs sg_sanitize and sg_format; slim ships no erase tools.
+            if [ "${flavor}" != slim ]; then
+              for tool in sg_sanitize sg_format; do
+                grep -Eq "^(\./)?bin/${tool}$" "${flavor}-modules.txt" || { echo "FAIL: ${flavor} has no bin/${tool}"; exit 1; }
+              done
+            fi
             # Applet links must resolve inside the ramdisk, not to the build directory.
             # Device nodes need root to create; the links do not.
             mkdir -p "x-${flavor}" && (cd "x-${flavor}" && zstd -dc "../out-${flavor}/initramfs.cpio.zst" | cpio -id -f 'dev/*')
