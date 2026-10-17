@@ -54,7 +54,7 @@ ARG BOOTY_BUILD=unknown
 ARG BOOTY_FLAVOR=full
 RUN set -eu; \
     n=0; \
-    until apk add --no-cache git ca-certificates gcc linux-headers musl-dev upx; do \
+    until apk add --no-cache git ca-certificates gcc linux-headers musl-dev; do \
       n=$((n+1)); \
       if [ "$n" -ge 5 ]; then echo "apk add failed after $n attempts" >&2; exit 1; fi; \
       sleep 10; \
@@ -72,13 +72,12 @@ RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
 COPY . /go/src/github.com/telekom/BOOTy/
 RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
     --mount=type=cache,sharing=locked,id=goroot,target=/root/.cache/go-build \
-    CGO_ENABLED=1 GOOS=linux go build -a -trimpath -ldflags "-linkmode external -extldflags '-static' -s -w \
+    CGO_ENABLED=1 GOOS=linux go build -a -trimpath -tags grpcnotrace -ldflags "-linkmode external -extldflags '-static' -s -w \
       -X main.Version=${BOOTY_VERSION} \
       -X main.Build=${BOOTY_BUILD} \
       -X github.com/telekom/BOOTy/pkg/buildinfo.version=${BOOTY_VERSION} \
       -X github.com/telekom/BOOTy/pkg/buildinfo.commit=${BOOTY_BUILD} \
       -X github.com/telekom/BOOTy/pkg/buildinfo.flavor=${BOOTY_FLAVOR}" -o init
-RUN upx -9 init
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -w" -o esp-sync ./cmd/booty-esp-sync
 
 # Build a removable UEFI fallback loader that BOOTy can copy into a target ESP.
@@ -380,22 +379,9 @@ COPY --from=frr /frr-libs/ .
 # Kernel modules for common server NICs (flat directory, loaded via insmod)
 COPY --from=kernel /modules/ modules/
 
-# Reuse upx from the dev (Alpine) stage — upx-ucl is not in Debian bookworm main
-COPY --from=dev /usr/bin/upx /usr/local/bin/upx
-
-# UPX-compress FRR binaries (~50-60% reduction each).
-# Skipped: busybox (multi-applet), .so shared libs, .ko kernel modules, init (already compressed in dev stage).
-RUN for b in \
-        sbin/bgpd sbin/zebra sbin/bfdd bin/vtysh sbin/watchfrr \
-        sbin/mdadm bin/wipefs sbin/resize2fs sbin/e2fsck sbin/blkid bin/losetup \
-        sbin/mkfs.ext4 sbin/mkfs.vfat \
-        sbin/xfs_growfs sbin/xfs_repair sbin/mkfs.xfs bin/btrfs bin/parted bin/sgdisk bin/partprobe bin/kpartx \
-        bin/qemu-img bin/efibootmgr bin/dmidecode bin/ethtool bin/curl bin/ip bin/bridge \
-        bin/hdparm bin/nvme bin/mstconfig bin/mstflint bin/ipmitool \
-        bin/lldpcli sbin/lldpd bin/dropbear bin/dropbearkey bin/gpgv \
-        sbin/cryptsetup; do \
-    upx -9 "$b" 2>/dev/null || true; \
-done
+# Drop the libraries that no shipped executable loads.
+COPY hack/prune-initramfs-libs.sh /usr/local/bin/
+RUN prune-initramfs-libs.sh .
 
 # Package initramfs
 RUN find . -print0 > ../initramfs.files \
@@ -498,6 +484,10 @@ COPY --from=tools /tool-libs/ .
 # of the Debian kernel, and slim ships mdadm and the disk tools.
 COPY --from=kernel /modules/ modules/
 
+# Drop the libraries of the tools that slim does not ship.
+COPY hack/prune-initramfs-libs.sh /usr/local/bin/
+RUN prune-initramfs-libs.sh .
+
 # Package slim initramfs
 RUN find . -print0 > ../initramfs.files \
     && cpio --null -ov --format=newc < ../initramfs.files > ../initramfs.cpio \
@@ -512,8 +502,6 @@ COPY --from=slim-builder /initramfs.cpio.zst .
 FROM debian:bookworm-slim AS gobgp-builder
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends cpio zstd \
     && rm -rf /var/lib/apt/lists/*
-# Reuse upx from the dev (Alpine) stage — upx-ucl is not in Debian bookworm main
-COPY --from=dev /usr/bin/upx /usr/local/bin/upx
 WORKDIR /build/initramfs
 RUN mkdir -p dev proc run sys tmp etc && \
     mknod -m 600 dev/console c 5 1 && \
@@ -605,18 +593,9 @@ COPY --from=tools /tool-libs-full/ .
 # Kernel modules for common server NICs (flat directory, loaded via insmod)
 COPY --from=kernel /modules/ modules/
 
-# UPX-compress tool binaries (~60% reduction per binary).
-# Skipped: busybox (multi-applet), .so shared libs, .ko kernel modules.
-RUN for b in \
-        sbin/mdadm bin/wipefs sbin/resize2fs sbin/e2fsck sbin/blkid bin/losetup \
-        sbin/mkfs.ext4 sbin/mkfs.vfat \
-        sbin/xfs_growfs sbin/xfs_repair sbin/mkfs.xfs bin/btrfs bin/parted bin/sgdisk bin/partprobe bin/kpartx \
-        bin/qemu-img bin/efibootmgr bin/dmidecode bin/ethtool bin/curl bin/ip bin/bridge \
-        bin/hdparm bin/nvme bin/mstconfig bin/mstflint bin/ipmitool \
-        bin/lldpcli sbin/lldpd bin/dropbear bin/dropbearkey bin/lsblk bin/gpgv \
-        sbin/cryptsetup sbin/lvm bin/sfdisk; do \
-    upx -9 "$b" 2>/dev/null || true; \
-done
+# Drop the libraries that no shipped executable loads.
+COPY hack/prune-initramfs-libs.sh /usr/local/bin/
+RUN prune-initramfs-libs.sh .
 
 # Package GoBGP initramfs with zstd compression (no FRR binaries — GoBGP runs in-process)
 # zstd -19 achieves ~10–20% better ratio than gzip with much faster decompression.
@@ -675,7 +654,7 @@ RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
 COPY . /go/src/github.com/telekom/BOOTy/
 RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
     --mount=type=cache,sharing=locked,id=goroot,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux go build -a -trimpath -ldflags "-s -w \
+    CGO_ENABLED=0 GOOS=linux go build -a -trimpath -tags grpcnotrace -ldflags "-s -w \
       -X main.Version=${BOOTY_VERSION} \
       -X main.Build=${BOOTY_BUILD} \
       -X github.com/telekom/BOOTy/pkg/buildinfo.version=${BOOTY_VERSION} \

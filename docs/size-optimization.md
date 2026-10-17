@@ -41,45 +41,25 @@ sections the size saving is minor, but it is a best-practice for:
 
 ## Not Implemented (breaking / risky / needs validation)
 
-### UPX compression (`−61%` binary)
+### UPX compression (removed)
 
-UPX can compress the `init` binary from ~22 MB to ~8.7 MB. However:
+The initramfs builds used to UPX-pack `init`. That made the ramdisk
+larger: the packed binary does not compress further, and `zstd -19 --long`
+compresses the plain Go binary better than UPX does. Measured on linux/amd64
+(default flavor): 55,601,291 bytes with UPX, 53,323,769 bytes without. The
+UPX stub also unpacks `init` into anonymous memory at boot, so the ramdisk
+held the 10 MB packed file and a 25.7 MB unpacked copy.
 
-- **PID 1 risk**: `init` runs as PID 1. The kernel hands control to it directly
-  after mounting the initramfs. UPX works by prepending a stub that
-  `mmap`s memory, decompresses, and `execv`s the real binary. This requires
-  `/proc` (for `/proc/self/exe`) to already be mounted — which PID 1 itself
-  is responsible for mounting. This creates a chicken-and-egg problem that
-  must be validated with a real QEMU boot before enabling.
-- **Initramfs double-compression**: the initramfs is `cpio.gz`. UPX-compressed
-  binaries consist largely of already-compressed data, so the outer `gzip`
-  gains little on them. The net saving on total initramfs size is smaller than
-  the raw binary numbers suggest.
-- **Boot latency**: decompression at every boot adds ~50–200 ms per binary
-  (negligible, but measurable).
-- **UPX `--best` vs `-9`**: `--best` (LZMA) is 0.9% smaller but takes 431 s
-  vs 13 s for `-9`; neither is viable for CI without a dedicated cache step.
+The UPX loops for the tool binaries never ran: `upx` came from the Alpine
+build stage and needs the musl loader, which the Debian builder stages do
+not have. See [proposal-artifact-size.md](proposal-artifact-size.md) for the
+current measurements and the remaining ideas.
 
-**Recommended path if you want to pursue UPX:**
-1. Add `upx` to the `dev` Docker stage (not CI runner).
-2. Compress only non-PID-1 binaries (FRR daemons, tool binaries) where the
-   risk is lower.
-3. Validate PID 1 UPX in the existing `test-kvm` QEMU boot test before
-   enabling for the `init` binary.
+### `xz` / `zstd` initramfs compression
 
-### `xz` / `zstd` initramfs compression (`−10–15%` vs gzip)
-
-The `cpio` is currently compressed with `gzip`. Switching to `xz` would
-reduce the final initramfs by roughly 10–15% with no runtime penalty (the
-kernel decompresses it once at boot). `zstd` offers similar or better ratios
-at much faster decompression.
-
-**Why not implemented now**: requires the **kernel** to have been built with
-`CONFIG_RD_XZ` / `CONFIG_RD_ZSTD`. The kernel used here is the stock Debian
-`linux-image-amd64`, which does support both, but the kernel stage in
-`initrd.Dockerfile` would also need updating, and the ISO boot label would
-need no changes (the kernel auto-detects compression). The change is low-risk
-but touches the kernel stage which is outside the scope of this PR.
+The default, slim and gobgp ramdisks use `zstd -19 --long`; micro uses
+gzip. `xz` is about 10% smaller but decompresses about 5 times slower. See
+[proposal-artifact-size.md](proposal-artifact-size.md#2-opt-in-xz-compression-for-slow-delivery-paths).
 
 ### Dead-code / profile-guided optimization (PGO)
 
@@ -90,8 +70,5 @@ improvement. Requires instrumenting a boot run to collect a profile first.
 
 ### Stripping tool binaries with `strip -s`
 
-The tool binaries copied from Debian packages (`mdadm`, `parted`, `cryptsetup`,
-etc.) include symbol tables and are not stripped by default. Running
-`strip -s` on them in the `tools` stage before the `ldd` scan would reduce
-their size by 20–40% each, saving several MB in the full/gobgp variants.
-Non-breaking, but a separate PR to keep the diff reviewable.
+Implemented: the tools stage runs `strip --strip-all` on every tool binary
+after it collects their libraries with `ldd`.

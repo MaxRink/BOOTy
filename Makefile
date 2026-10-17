@@ -11,6 +11,9 @@ TARGETOS=linux
 TARGETARCH ?= $(shell go env GOARCH)
 
 GO_LDFLAGS = -s -w -X=main.Version=$$VERSION -X=main.Build=$$BUILD -extldflags -static
+# grpcnotrace drops gRPC's x/net/trace event log. GoBGP sets
+# grpc.EnableTracing = false, so the traced code never runs.
+GO_TAGS = grpcnotrace
 
 SRC = $(shell find . -type f -name '*.go' -not -path "./vendor/*")
 
@@ -84,13 +87,13 @@ build: check-build-vars
 		printf '%s\n' "$$TARGET is up to date"; \
 		exit 0; \
 	fi; \
-	GOOS="$$TARGETOS" GOARCH="$$TARGETARCH" go build -trimpath -ldflags "$(GO_LDFLAGS)" -o "$$TARGET"; \
+	GOOS="$$TARGETOS" GOARCH="$$TARGETARCH" go build -trimpath -tags "$(GO_TAGS)" -ldflags "$(GO_LDFLAGS)" -o "$$TARGET"; \
 	printf '%s\n' "$$build_vars" > "$$vars_file"
 
 build-all: check-build-vars $(SRC)
 	@mkdir -p dist/amd64 dist/arm64
-	@GOOS="$$TARGETOS" GOARCH=amd64 go build -trimpath -ldflags "$(GO_LDFLAGS)" -o "dist/amd64/$$TARGET"
-	@GOOS="$$TARGETOS" GOARCH=arm64 go build -trimpath -ldflags "$(GO_LDFLAGS)" -o "dist/arm64/$$TARGET"
+	@GOOS="$$TARGETOS" GOARCH=amd64 go build -trimpath -tags "$(GO_TAGS)" -ldflags "$(GO_LDFLAGS)" -o "dist/amd64/$$TARGET"
+	@GOOS="$$TARGETOS" GOARCH=arm64 go build -trimpath -tags "$(GO_TAGS)" -ldflags "$(GO_LDFLAGS)" -o "dist/arm64/$$TARGET"
 	@CGO_ENABLED=0 GOOS="$$TARGETOS" GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o dist/amd64/booty-esp-sync ./cmd/booty-esp-sync
 	@CGO_ENABLED=0 GOOS="$$TARGETOS" GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o dist/arm64/booty-esp-sync ./cmd/booty-esp-sync
 
@@ -104,7 +107,7 @@ clean: check-build-vars
 
 install: check-build-vars
 	@echo Building and Installing project
-	@go install -trimpath -ldflags "$(GO_LDFLAGS)"
+	@go install -trimpath -tags "$(GO_TAGS)" -ldflags "$(GO_LDFLAGS)"
 
 uninstall: check-build-vars clean
 	@target_path=$$(command -v -- "$$TARGET" 2>/dev/null || true); \
