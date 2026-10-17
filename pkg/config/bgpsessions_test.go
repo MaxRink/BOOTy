@@ -18,6 +18,8 @@ const bm4xNativeSessions = `
 asn: 4210000017
 defaults: traditional
 multipathRelax: true
+bfdProfiles:
+  - {name: fabric, transmitInterval: 150, receiveInterval: 150}
 peerGroups:
   - name: dcgw
     vrf: Vrf_underlay
@@ -80,7 +82,8 @@ func TestNativeSessionsEqualFRRConf(t *testing.T) {
 
 // Statements BOOTy does not support fail in both forms: a local-as mode
 // other than no-prepend replace-as, local-as equal to remote-as, a member
-// remote-as next to a peer-group remote-as, an allowas-in count above 10.
+// remote-as next to a peer-group remote-as, an allowas-in count above 10,
+// a BFD interval below 10 ms.
 func TestNativeSessionsRejectLikeFRRConf(t *testing.T) {
 	for _, tt := range []struct {
 		name, frr, native, want string
@@ -108,6 +111,12 @@ func TestNativeSessionsRejectLikeFRRConf(t *testing.T) {
 			"router bgp 65000\n neighbor 192.0.2.1 remote-as 65001\n address-family ipv4 unicast\n  neighbor 192.0.2.1 allowas-in 11\n",
 			"asn: 65000\nsessions:\n  - {name: 192.0.2.1, remoteAS: \"65001\", allowASIn: 11, families: [ipv4-unicast]}\n",
 			"invalid allowas-in count",
+		},
+		{
+			"BFD interval",
+			"bfd\n profile fast\n  transmit-interval 5\n",
+			"asn: 65000\nbfdProfiles:\n  - {name: fast, transmitInterval: 5}\nsessions:\n  - {name: 192.0.2.1, remoteAS: \"65001\", families: [ipv4-unicast]}\n",
+			"transmit-interval 5 out of range 10-60000",
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

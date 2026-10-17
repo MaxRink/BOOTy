@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"maps"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,6 +26,7 @@ import (
 
 	exec "github.com/telekom/BOOTy/pkg/executil"
 	"github.com/telekom/BOOTy/pkg/network"
+	"github.com/telekom/BOOTy/pkg/network/bfd"
 )
 
 // Underlay network constants.
@@ -74,12 +76,15 @@ type UnderlayTier struct {
 	fibDone      chan struct{}                                 // closed when the FIB writer has removed its routes
 	peerDevs     map[string]string                             // unnumbered peer address -> interface
 	discoverPeer func(context.Context, string) (string, error) // overridable in tests; nil = discoverLinkLocalPeer
+	connected    func(netip.Addr, string) bool                 // overridable in tests; nil = connectedInVRF
+	resetBGP     func(context.Context, string, string)         // overridable in tests; nil = resetPeer
 	ifacePeers   map[string]string                             // interface -> unnumbered peer address as added
 	stopCarrier  chan struct{}                                 // stops the carrier watch
 	carrierDone  <-chan struct{}                               // closed when the carrier watch ended
 	raDone       chan struct{}                                 // closed when the periodic RA goroutine exits
 	peerCountFn  func(ctx context.Context) int                 // overridable in tests; nil = use countEstablishedPeers
 	pollInterval time.Duration                                 // overridable in tests; zero = use default (1s)
+	bfd          *bfd.Manager                                  // BFD sessions of the peers
 }
 
 const defaultUnderlayDummyName = "dummy.underlay"
@@ -145,6 +150,7 @@ func (u *UnderlayTier) Setup(ctx context.Context) error {
 		return fmt.Errorf("announce underlay route: %w", err)
 	}
 
+	u.startBFD()
 	if u.cfg.InstallRoutes {
 		u.startFIBWriter()
 	}
@@ -230,6 +236,10 @@ func (u *UnderlayTier) Teardown(_ context.Context) error {
 		u.stopFIB()
 		<-u.fibDone
 		u.stopFIB = nil
+	}
+	if u.bfd != nil {
+		u.bfd.Close()
+		u.bfd = nil
 	}
 
 	if u.bgp != nil {
@@ -704,9 +714,12 @@ func (u *UnderlayTier) acceptVRFConnections() error {
 	return nil
 }
 
+// hasVRFSession reports a BGP session in a VRF: an frr.conf or native
+// session with a VRF, BGP_NEIGHBOR_VRF, or native unnumbered peers on the
+// VRF_NAME NICs (FRR puts them into the "router bgp" of that VRF).
 func (u *UnderlayTier) hasVRFSession() bool {
 	if len(u.cfg.Sessions) == 0 {
-		return u.cfg.NeighborVRF != ""
+		return u.cfg.NeighborVRF != "" || u.cfg.VRFName != "" && u.cfg.PeerMode != network.PeerModeNumbered
 	}
 	for i := range u.cfg.Sessions {
 		if sessionVRF(&u.cfg.Sessions[i]) != "" {
@@ -734,9 +747,6 @@ func (u *UnderlayTier) addSessionPeers(ctx context.Context) error {
 	var lastErr error
 	for i := range u.cfg.Sessions {
 		s := &u.cfg.Sessions[i]
-		if s.BFD {
-			u.log.Warn("BFD is not implemented yet; the session runs without it", "neighbor", s.Name, "profile", s.BFDProfile)
-		}
 		addr := s.Name
 		if s.Interface {
 			var err error

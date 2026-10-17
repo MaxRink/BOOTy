@@ -101,4 +101,26 @@ func TestNativeUnnumberedPeerSelector(t *testing.T) {
 	if got := sel.table("198.51.100.1"); got != 20 || vrfs[20] != "Vrf_peers" || vrfs[10] != "Vrf_underlay" {
 		t.Errorf("table of a numbered peer = %d, vrfs %v; want 20 and both VRFs", got, vrfs)
 	}
+
+	// frr.conf sessions: an interface session in Vrf_underlay gets its
+	// VRF table and its local-as, a session in the default VRF the main
+	// table and the router AS.
+	u = &UnderlayTier{cfg: &Config{ASN: 4210000017, Sessions: []network.BGPSession{
+		{Name: "eth9", Interface: true, VRF: "Vrf_underlay", LocalASN: 65501},
+		{Name: "198.51.100.1", VRF: "default"},
+	}}}
+	u.recordInterfacePeer("eth9", "fe80::2%eth9")
+	sel, vrfs = u.fibSelector(testVRFTable)
+	if got := sel.table("fe80::2"); got != 10 || vrfs[10] != "Vrf_underlay" {
+		t.Errorf("table of the Vrf_underlay session = %d, vrfs %v; want 10", got, vrfs)
+	}
+	if got := sel.localAS("fe80::2"); got != 65501 {
+		t.Errorf("local AS of the Vrf_underlay session = %d, want its local-as 65501", got)
+	}
+	if got := sel.table("198.51.100.1"); got != unix.RT_TABLE_MAIN {
+		t.Errorf("table of the default VRF session = %d, want main", got)
+	}
+	if got := sel.localAS("198.51.100.1"); got != 4210000017 {
+		t.Errorf("local AS of the default VRF session = %d, want the router AS", got)
+	}
 }

@@ -24,7 +24,8 @@ func linkUpdate(name string, flags uint32) netlink.LinkUpdate {
 }
 
 // Carrier loss stops the session once, a repeated loss does nothing, the
-// carrier coming back starts it once, and other interfaces are ignored.
+// carrier coming back sends an RA and starts the session once, and other
+// interfaces are ignored.
 // IFF_LOWER_UP is the carrier; IFF_UP alone is not.
 func TestCarrierWatchDisableEnable(t *testing.T) {
 	var calls []string
@@ -39,7 +40,8 @@ func TestCarrierWatchDisableEnable(t *testing.T) {
 			calls = append(calls, "enable "+addr)
 			return nil
 		},
-		log: slog.Default(),
+		announce: func(iface string) { calls = append(calls, "RA "+iface) },
+		log:      slog.Default(),
 	}
 	steps := []struct {
 		update netlink.LinkUpdate
@@ -49,9 +51,9 @@ func TestCarrierWatchDisableEnable(t *testing.T) {
 		{linkUpdate("ens1f0np0", unix.IFF_UP), []string{"disable fe80::1%ens1f0np0"}},
 		{linkUpdate("ens1f0np0", unix.IFF_UP), []string{"disable fe80::1%ens1f0np0"}},
 		{linkUpdate("eth9", 0), []string{"disable fe80::1%ens1f0np0"}},
-		{linkUpdate("ens1f0np0", unix.IFF_UP|unix.IFF_LOWER_UP), []string{"disable fe80::1%ens1f0np0", "enable fe80::1%ens1f0np0"}},
-		{linkUpdate("ens1f0np0", unix.IFF_UP|unix.IFF_LOWER_UP), []string{"disable fe80::1%ens1f0np0", "enable fe80::1%ens1f0np0"}},
-		{netlink.LinkUpdate{}, []string{"disable fe80::1%ens1f0np0", "enable fe80::1%ens1f0np0"}},
+		{linkUpdate("ens1f0np0", unix.IFF_UP|unix.IFF_LOWER_UP), []string{"disable fe80::1%ens1f0np0", "RA ens1f0np0", "enable fe80::1%ens1f0np0"}},
+		{linkUpdate("ens1f0np0", unix.IFF_UP|unix.IFF_LOWER_UP), []string{"disable fe80::1%ens1f0np0", "RA ens1f0np0", "enable fe80::1%ens1f0np0"}},
+		{netlink.LinkUpdate{}, []string{"disable fe80::1%ens1f0np0", "RA ens1f0np0", "enable fe80::1%ens1f0np0"}},
 	}
 	for i, s := range steps {
 		w.handleUpdate(s.update)

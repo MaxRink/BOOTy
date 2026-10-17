@@ -39,6 +39,7 @@
   "BGPHold": 0,
   "BFDTransmitMS": 0,
   "BFDReceiveMS": 0,
+  "BFDDetectMult": 0,
   "BGPPeerMode": "numbered",
   "BGPInterfaces": "",
   "BGPNeighbors": "10.254.0.3",
@@ -65,7 +66,10 @@
       "AllowASIn": 0,
       "FastExternalFailover": true,
       "BFD": false,
-      "BFDProfile": ""
+      "BFDProfile": "",
+      "BFDTransmitMS": 0,
+      "BFDReceiveMS": 0,
+      "BFDDetectMult": 0
     }
   ],
   "BGPMultipathRelax": false,

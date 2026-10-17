@@ -117,10 +117,21 @@ network:
         bfdProfile: fabric
         families: [l2vpn-evpn]
 
-    # bfdTransmitMS/bfdReceiveMS: FRR-only BFD intervals in milliseconds (0 = disabled).
-    # GoBGP does not support BFD; use keepalive/hold timers for faster failure detection.
+    # bfdProfiles (BFD_PROFILES): BFD profiles of bfdProfile, like frr.conf
+    # "bfd / profile NAME"; unset values use 300 ms, 300 ms, 3. A non-empty
+    # list replaces the frr.conf profiles.
+    bfdProfiles:
+      - name: fabric
+        transmitInterval: 150   # ms, 10-60000
+        receiveInterval: 150    # ms, 10-60000
+        detectMultiplier: 3     # 2-255
+
+    # bfdTransmitMS/bfdReceiveMS: BFD intervals in milliseconds (0 = disabled),
+    # set together; GoBGP runs BFD on the native peers with them.
+    # bfdDetectMultiplier: 2-255 (0 = 3)
     bfdTransmitMS: 0
     bfdReceiveMS: 0
+    bfdDetectMultiplier: 0
 
     # connectRetry/localAS/neighborVRF: native peer options (GoBGP), like
     # FRR "timers connect", "local-as N no-prepend replace-as" and

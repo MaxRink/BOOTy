@@ -1321,25 +1321,26 @@ func applyNetworkStringVar(cfg *config.MachineConfig, key, value string) bool {
 
 func applyUint32Var(cfg *config.MachineConfig, key, value string) (bool, error) {
 	uint32Fields := map[string]*uint32{
-		"asn_server":           &cfg.Network.BGP.ASN,
-		"provision_vni":        &cfg.Network.EVPN.ProvisionVNI,
-		"leaf_asn":             &cfg.Network.EVPN.LeafASN,
-		"local_asn":            &cfg.Network.EVPN.LocalASN,
-		"VRF_TABLE_ID":         &cfg.Network.VRF.TableID,
-		"vrf_table_id":         &cfg.Network.VRF.TableID,
-		"BGP_KEEPALIVE":        &cfg.Network.BGP.Keepalive,
-		"bgp_keepalive":        &cfg.Network.BGP.Keepalive,
-		"BGP_HOLD":             &cfg.Network.BGP.Hold,
-		"bgp_hold":             &cfg.Network.BGP.Hold,
-		"BFD_TRANSMIT_MS":      &cfg.Network.BGP.BFDTransmitMS,
-		"bfd_transmit_ms":      &cfg.Network.BGP.BFDTransmitMS,
-		"BFD_RECEIVE_MS":       &cfg.Network.BGP.BFDReceiveMS,
-		"bfd_receive_ms":       &cfg.Network.BGP.BFDReceiveMS,
-		"BGP_REMOTE_ASN":       &cfg.Network.BGP.RemoteASN,
-		"bgp_remote_asn":       &cfg.Network.BGP.RemoteASN,
-		"BGP_LOCAL_AS":         &cfg.Network.BGP.LocalAS,
-		"BGP_CONNECT_RETRY":    &cfg.Network.BGP.ConnectRetry,
-		"OVERLAY_VRF_TABLE_ID": &cfg.Network.VRF.OverlayTableID,
+		"asn_server":            &cfg.Network.BGP.ASN,
+		"provision_vni":         &cfg.Network.EVPN.ProvisionVNI,
+		"leaf_asn":              &cfg.Network.EVPN.LeafASN,
+		"local_asn":             &cfg.Network.EVPN.LocalASN,
+		"VRF_TABLE_ID":          &cfg.Network.VRF.TableID,
+		"vrf_table_id":          &cfg.Network.VRF.TableID,
+		"BGP_KEEPALIVE":         &cfg.Network.BGP.Keepalive,
+		"bgp_keepalive":         &cfg.Network.BGP.Keepalive,
+		"BGP_HOLD":              &cfg.Network.BGP.Hold,
+		"bgp_hold":              &cfg.Network.BGP.Hold,
+		"BFD_TRANSMIT_MS":       &cfg.Network.BGP.BFDTransmitMS,
+		"bfd_transmit_ms":       &cfg.Network.BGP.BFDTransmitMS,
+		"BFD_RECEIVE_MS":        &cfg.Network.BGP.BFDReceiveMS,
+		"BFD_DETECT_MULTIPLIER": &cfg.Network.BGP.BFDDetectMultiplier,
+		"bfd_receive_ms":        &cfg.Network.BGP.BFDReceiveMS,
+		"BGP_REMOTE_ASN":        &cfg.Network.BGP.RemoteASN,
+		"bgp_remote_asn":        &cfg.Network.BGP.RemoteASN,
+		"BGP_LOCAL_AS":          &cfg.Network.BGP.LocalAS,
+		"BGP_CONNECT_RETRY":     &cfg.Network.BGP.ConnectRetry,
+		"OVERLAY_VRF_TABLE_ID":  &cfg.Network.VRF.OverlayTableID,
 	}
 
 	if ptr, ok := uint32Fields[key]; ok {
@@ -1651,7 +1652,11 @@ func applyIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 		*strict = &v
 		return true, nil
 	}
-	if list, ok := map[string]*[]config.BGPSessionConfig{"BGP_SESSIONS": &cfg.Network.BGP.Sessions, "BGP_PEER_GROUPS": &cfg.Network.BGP.PeerGroups}[key]; ok {
+	if list, ok := map[string]any{
+		"BGP_SESSIONS":    &cfg.Network.BGP.Sessions,
+		"BGP_PEER_GROUPS": &cfg.Network.BGP.PeerGroups,
+		"BFD_PROFILES":    &cfg.Network.BGP.BFDProfiles,
+	}[key]; ok {
 		// A JSON list, like network.bgp.sessions in YAML.
 		if err := json.Unmarshal([]byte(value), list); err != nil {
 			return true, fmt.Errorf("invalid %s: %w", key, err)

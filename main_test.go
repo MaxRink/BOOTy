@@ -1838,6 +1838,30 @@ func TestMergeInferredEVPNModeNumberedLab(t *testing.T) {
 	}
 }
 
+// network.bgp.bfdProfiles replaces the frr.conf profiles: the frr.conf BFD
+// sessions take the native timers, an unknown profile the FRR defaults.
+func TestApplyNativeBFDProfiles(t *testing.T) {
+	tx := uint32(150)
+	netCfg := &network.Config{BGPSessions: []network.BGPSession{
+		{Name: "a", BFD: true, BFDProfile: "fabric", BFDTransmitMS: 300, BFDReceiveMS: 300, BFDDetectMult: 3},
+		{Name: "b", BFD: true, BFDProfile: "other", BFDTransmitMS: 50, BFDReceiveMS: 50, BFDDetectMult: 5},
+		{Name: "c"},
+	}}
+	bgp := &config.BGPConfig{BFDProfiles: []config.BFDProfileConfig{{Name: "fabric", TransmitInterval: &tx, DetectMultiplier: new(uint32(4))}}}
+	if err := applyNativeSessions(bgp, netCfg); err != nil {
+		t.Fatal(err)
+	}
+	got := netCfg.BGPSessions
+	if got[0].BFDTransmitMS != 150 || got[0].BFDReceiveMS != 300 || got[0].BFDDetectMult != 4 ||
+		got[1].BFDTransmitMS != 300 || got[1].BFDDetectMult != 3 || got[2].BFDTransmitMS != 0 {
+		t.Fatalf("sessions = %+v", got)
+	}
+	bad := &config.BGPConfig{BFDProfiles: []config.BFDProfileConfig{{Name: "fabric", DetectMultiplier: new(uint32(1))}}}
+	if err := applyNativeSessions(bad, netCfg); err == nil || !strings.Contains(err.Error(), "detect-multiplier 1 out of range 2-255") {
+		t.Fatalf("applyNativeSessions() = %v, want the range error", err)
+	}
+}
+
 // The BM4X lab failure (#662): the rendered bm4x templates without
 // provision_gateway must pass the GoBGP config check after the netplan
 // merge, because the L3VNI selects Type-5 only. Chains the real parse,
@@ -1944,6 +1968,32 @@ func TestApplyBGPOptions(t *testing.T) {
 			t.Fatalf("sessions = %+v, want %+v", n.BGPSessions, want)
 		}
 	})
+	// The BFD keys are native wins: set values replace the frr.conf
+	// profile values of the sessions with bfd.
+	t.Run("BFD timers win", func(t *testing.T) {
+		n := &network.Config{BGPSessions: []network.BGPSession{
+			{Name: "eth1", Interface: true, BFD: true, BFDTransmitMS: 300, BFDReceiveMS: 300, BFDDetectMult: 3},
+			{Name: "eth2", Interface: true},
+		}}
+		applyBGPOptions(&config.BGPConfig{BFDTransmitMS: 150, BFDReceiveMS: 200, BFDDetectMultiplier: 5}, n)
+		want := []network.BGPSession{
+			{Name: "eth1", Interface: true, BFD: true, BFDTransmitMS: 150, BFDReceiveMS: 200, BFDDetectMult: 5},
+			{Name: "eth2", Interface: true},
+		}
+		if !reflect.DeepEqual(n.BGPSessions, want) {
+			t.Fatalf("sessions = %+v, want %+v", n.BGPSessions, want)
+		}
+	})
+}
+
+// The native BFD timers reach the network config.
+func TestNetworkConfigFromMachineConfigBFD(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Network.BGP.BFDTransmitMS, cfg.Network.BGP.BFDReceiveMS, cfg.Network.BGP.BFDDetectMultiplier = 150, 200, 5
+	n := networkConfigFromMachineConfig(cfg)
+	if n.BFDTransmitMS != 150 || n.BFDReceiveMS != 200 || n.BFDDetectMult != 5 {
+		t.Fatalf("BFD = %d/%d x%d, want 150/200 x5", n.BFDTransmitMS, n.BFDReceiveMS, n.BFDDetectMult)
+	}
 }
 
 func TestNetworkConfigFromMachineConfigOverlayVRF(t *testing.T) {

@@ -140,7 +140,6 @@ ip route show 10.0.0.1/32
 |---|---|---|
 | `provision gateway is required for GoBGP VXLAN data plane` | L2 or default route mode without `provision_gateway` | Set `provision_gateway`, or set `EVPN_TYPE5_ONLY=true` |
 | `type5Only and EnableL2 cannot both be enabled` | `EVPN_L2_ENABLED=true` and `EVPN_TYPE5_ONLY=true` | Set only one |
-| `gobgp mode does not support BFD` | `BFD_TRANSMIT_MS` or `BFD_RECEIVE_MS` set | Remove the BFD values or use FRR mode |
 | `timed out waiting for N BGP peer(s) to establish` | Fewer than `BGP_MIN_PEERS` sessions are up | Check cabling, `BGP_INTERFACES`, `BGP_NEIGHBORS` and the peer ASN |
 | No BGP sessions in unnumbered mode | The peer link-local address is not found through NDP | Check that the fabric NICs are up and that the peer sends IPv6 RAs or NDP replies |
 | BGP up, no EVPN routes processed | Route target mismatch | Set `vpn_rt` to the fabric route target, or align `asn_server:provision_vni` |

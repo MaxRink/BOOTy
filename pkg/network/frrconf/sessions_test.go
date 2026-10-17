@@ -52,7 +52,8 @@ exit-address-family
 		return Session{Name: name, Interface: true, VRF: "Vrf_underlay", RemoteASN: 65500,
 			LocalAS:       &LocalAS{ASN: 65501, NoPrepend: true, ReplaceAS: true},
 			KeepaliveTime: 30, HoldTime: 90, ConnectRetry: 30,
-			Families: []string{FamilyIPv4Unicast}, BFD: true, BFDProfile: "fabric", FastExternalFailover: true, Line: line}
+			Families: []string{FamilyIPv4Unicast}, BFD: true, BFDProfile: "fabric", FastExternalFailover: true,
+			BFDTransmitMS: 300, BFDReceiveMS: 300, BFDDetectMult: 3, Line: line}
 	}
 	dcgw := func(name string, keepalive, hold uint32, line int) Session {
 		return Session{Name: name, VRF: "Vrf_underlay", Internal: true, RemoteASN: 4210000017,
@@ -153,5 +154,57 @@ func TestSessionsAllowASIn(t *testing.T) {
 `)
 	if got[0].AllowASIn != 3 || got[1].AllowASIn != 5 {
 		t.Fatalf("AllowASIn = %d, %d, want 3 and 5", got[0].AllowASIn, got[1].AllowASIn)
+	}
+}
+
+// Mirrors FRR bfd_profiles_topo1 test_bfd_profile_values: the profile
+// values apply, unset values and unknown profiles give the defaults.
+func TestSessionsBFDProfileTimers(t *testing.T) {
+	cfg, err := Parse([]byte(`router bgp 65001
+ neighbor a peer-group
+ neighbor a remote-as external
+ neighbor a bfd profile fast
+ neighbor eth1 interface peer-group a
+ neighbor eth2 interface remote-as external
+ neighbor eth2 bfd profile half
+ neighbor eth3 interface remote-as external
+ neighbor eth3 bfd profile missing
+ neighbor eth4 interface remote-as external
+ neighbor eth4 bfd
+ neighbor eth5 interface remote-as external
+exit
+bfd
+ profile fast
+  transmit-interval 150
+  receive-interval 200
+  detect-multiplier 5
+ exit
+ profile half
+  receive-interval 100
+ exit
+exit
+`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	sessions, err := cfg.Sessions()
+	if err != nil {
+		t.Fatalf("Sessions: %v", err)
+	}
+	want := map[string][4]uint32{ // BFD on, tx, rx, multiplier
+		"eth1": {1, 150, 200, 5},
+		"eth2": {1, 300, 100, 3},
+		"eth3": {1, 300, 300, 3},
+		"eth4": {1, 300, 300, 3},
+		"eth5": {0, 0, 0, 0},
+	}
+	for _, s := range sessions {
+		on := uint32(0)
+		if s.BFD {
+			on = 1
+		}
+		if got := [4]uint32{on, s.BFDTransmitMS, s.BFDReceiveMS, s.BFDDetectMult}; got != want[s.Name] {
+			t.Errorf("%s: BFD %v, want %v", s.Name, got, want[s.Name])
+		}
 	}
 }

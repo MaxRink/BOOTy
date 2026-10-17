@@ -147,6 +147,22 @@ same resolution:
 - `neighbor X allowas-in [N]` (native `allowASIn`, FRR's default N is 3)
   accepts paths with the own AS up to N times. GoBGP has one count per
   session, so a session uses the highest count of its families.
+- `neighbor X bfd [profile P]` (native `bfd`, `bfdProfile`) runs BFD with
+  the timers of the `bfd` / `profile P` block (native
+  `network.bgp.bfdProfiles`, `BFD_PROFILES`). An unknown profile and unset
+  values use the FRR defaults 300 ms, 300 ms, 3. Intervals outside 10 to
+  60000 ms and a multiplier outside 2 to 255 fail in both forms. Like FRR
+  10.3, the session is multihop (RFC 5883) only for an iBGP peer that is
+  not on a connected network of its VRF. When BFD goes from Up to Down,
+  BOOTy resets the BGP session and connects again after 1 s, like the FRR
+  start timer. Known deviation: the peer gets Cease/Administrative Reset
+  (subcode 4), not Cease/BFD Down (subcode 10, RFC 9384), because the
+  GoBGP API sends no other subcode. Only the peer log shows it. A
+  second deviation: when the peer ends the session (for example `clear
+  bgp` on the leaf), GoBGP waits a fixed 5 s in Idle, where FRR waits 1 s,
+  and refuses connections in that time. BOOTy then connects by itself 1
+  to 2 s later; a peer that must open the session itself retries after
+  its connect timer.
 - `bgp bestpath as-path multipath-relax` (native `network.bgp.multipathRelax`,
   `BGP_MULTIPATH_RELAX`) installs equal-cost paths with different AS paths
   of the same length as one multipath route.
@@ -172,8 +188,7 @@ every 30 s BOOTy reinstalls all routes, so routes the kernel dropped come
 back. The session NICs get `ignore_routes_with_linkdown=1`, so a dead ECMP
 member is skipped at once.
 
-The merge rule of each key is in the table at the end of
-[Netplan and FRR config input](#netplan-and-frr-config-input).
+The merge rule of each key is in the table at the end of this subsection.
 
 With these sessions, the vars `BGP_PEER_MODE`, `BGP_INTERFACES`,
 `BGP_NEIGHBORS`, `BGP_REMOTE_ASN`, `BGP_KEEPALIVE` and `BGP_HOLD` no longer
@@ -207,11 +222,11 @@ These statements are parsed but not applied yet, and BOOTy logs one
 warning per statement: `route-map ... in|out`,
 `soft-reconfiguration inbound`, `[no] bgp ebgp-requires-policy` and
 `[no] bgp suppress-duplicates`.
-`neighbor X bfd` is logged as not implemented yet.
 
 Native config and parsed files merge like this: a native list
 (`network.bgp.sessions`) replaces the parsed list as a whole, with one info
-log line; there is no element-wise merge. A native scalar that is set
+log line; there is no element-wise merge. `network.bgp.bfdProfiles` replaces
+the `frr.conf` BFD profiles the same way, also for the `frr.conf` sessions. A native scalar that is set
 (`network.bgp.multipathRelax`) overrides the parsed value; unset keeps it.
 
 A key that exists in earlier releases keeps its rule for CAPRF
@@ -255,6 +270,9 @@ rule of every key:
 | `BGP_NEIGHBOR_VRF` | `router bgp N vrf X` | `network.bgp.neighborVRF` | session default |
 | `BGP_CONNECT_RETRY` | `neighbor X timers connect N` | `network.bgp.connectRetry` | session default |
 | `BGP_ALLOWAS_IN` | `neighbor X allowas-in N` | `network.bgp.allowASIn` | session default |
+| `BFD_PROFILES` | `frr.conf` `bfd` / `profile NAME` | `network.bgp.bfdProfiles` | list replaces, also for the `frr.conf` sessions |
+| `BFD_TRANSMIT_MS`, `BFD_RECEIVE_MS` | profile timers | `network.bgp.bfdTransmitMS`, `network.bgp.bfdReceiveMS` | native wins, for the sessions with BFD |
+| `BFD_DETECT_MULTIPLIER` | profile `detect-multiplier` | `network.bgp.bfdDetectMultiplier` | native wins, for the sessions with BFD |
 
 ### Strict input and the accepted grammar
 
@@ -389,7 +407,7 @@ on purpose although they are not in the templates:
 | Image flavors | Default and `iso` flavors only (`make iso`, `make docker`, `make dockerx86`). `slim`, `micro`, `gobgp` and `gobgp-iso` ship no FRR binaries | All flavors. The BOOTy binary is the same in every flavor |
 | Peer modes | Unnumbered only, on all detected physical NICs. `BGP_PEER_MODE`, `BGP_INTERFACES` and `BGP_NEIGHBORS` are ignored | With `frr.conf` neighbors or `BGP_SESSIONS`: one session per neighbor (see [BGP sessions](#bgp-sessions)). Otherwise `unnumbered`, `dual`, `numbered` (see [GoBGP peer modes](#gobgp-peer-modes)) |
 | Remote AS | Peer group with `remote-as external` (eBGP only) | Per session: number, `internal` or `external`. Without sessions: unnumbered learns it from the peer OPEN, numbered uses `BGP_REMOTE_ASN` (`0` means iBGP) |
-| BFD | Yes. `BFD_TRANSMIT_MS` and `BFD_RECEIVE_MS` together create the `datacenter` BFD profile on the fabric peers and the DCGWs | Not yet. `BFD_TRANSMIT_MS`/`BFD_RECEIVE_MS` are rejected; `neighbor X bfd` in `frr.conf` is logged as not implemented |
+| BFD | Yes. `BFD_TRANSMIT_MS` and `BFD_RECEIVE_MS` together create the `datacenter` BFD profile on the fabric peers and the DCGWs | Yes, BOOTy's own BFD (`pkg/network/bfd`): asynchronous mode, RFC 5881 single-hop (IPv4 and IPv6 link-local) and RFC 5883 multihop, Poll/Final, no echo, demand or authentication. `neighbor X bfd` in `frr.conf` with the profile timers (FRR defaults 300/300/3), or `BFD_TRANSMIT_MS` and `BFD_RECEIVE_MS` for the native peers. BFD down resets the BGP session, which connects again after 1 s like FRR 10.3 bgpd (Cease subcode 4 instead of 10) |
 | Authentication | `BGP_AUTH_PASSWORD` as TCP-MD5 on the fabric peer group and the DCGWs. Whitespace and control characters are rejected | `BGP_AUTH_PASSWORD` as TCP-MD5 on all peers |
 | Timers | `BGP_KEEPALIVE` and `BGP_HOLD` apply only when both are set. Otherwise FRR uses its `datacenter` defaults | Per session from `frr.conf` or `BGP_SESSIONS`, else the `frr defaults` profile. Without sessions: keepalive 3 s, hold 9 s, connect retry 5 s; hold must be 0 or at least 3 and keepalive must not exceed hold / 3 |
 | Peer readiness | Not checked. The connectivity check only polls the target URL | `BGP_MIN_PEERS` established peers (default 1) before the target poll |

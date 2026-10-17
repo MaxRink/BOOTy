@@ -39,6 +39,7 @@
   "BGPHold": 0,
   "BFDTransmitMS": 0,
   "BFDReceiveMS": 0,
+  "BFDDetectMult": 0,
   "BGPPeerMode": "unnumbered",
   "BGPInterfaces": "",
   "BGPNeighbors": "",
@@ -65,7 +66,10 @@
       "AllowASIn": 3,
       "FastExternalFailover": true,
       "BFD": true,
-      "BFDProfile": "fabric"
+      "BFDProfile": "fabric",
+      "BFDTransmitMS": 150,
+      "BFDReceiveMS": 150,
+      "BFDDetectMult": 3
     },
     {
       "Name": "ens1f1np1",
@@ -84,7 +88,10 @@
       "AllowASIn": 3,
       "FastExternalFailover": true,
       "BFD": true,
-      "BFDProfile": "fabric"
+      "BFDProfile": "fabric",
+      "BFDTransmitMS": 150,
+      "BFDReceiveMS": 150,
+      "BFDDetectMult": 3
     },
     {
       "Name": "198.51.100.1",
@@ -103,7 +110,10 @@
       "AllowASIn": 3,
       "FastExternalFailover": true,
       "BFD": true,
-      "BFDProfile": "fabric"
+      "BFDProfile": "fabric",
+      "BFDTransmitMS": 150,
+      "BFDReceiveMS": 150,
+      "BFDDetectMult": 3
     },
     {
       "Name": "198.51.100.2",
@@ -122,7 +132,10 @@
       "AllowASIn": 3,
       "FastExternalFailover": true,
       "BFD": true,
-      "BFDProfile": "fabric"
+      "BFDProfile": "fabric",
+      "BFDTransmitMS": 150,
+      "BFDReceiveMS": 150,
+      "BFDDetectMult": 3
     }
   ],
   "BGPMultipathRelax": true,

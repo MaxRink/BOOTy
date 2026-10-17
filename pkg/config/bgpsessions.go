@@ -79,6 +79,17 @@ func (r *RemoteAS) UnmarshalYAML(n *yaml.Node) error {
 	return nil
 }
 
+// BFDProfileConfig is a BFD profile, like the frr.conf "bfd / profile
+// NAME" block. Unset values use the FRR defaults (300 ms, 300 ms, 3).
+type BFDProfileConfig struct {
+	Name string `yaml:"name" json:"name"`
+	// TransmitInterval and ReceiveInterval are in milliseconds, 10-60000.
+	TransmitInterval *uint32 `yaml:"transmitInterval,omitempty" json:"transmitInterval,omitempty"`
+	ReceiveInterval  *uint32 `yaml:"receiveInterval,omitempty" json:"receiveInterval,omitempty"`
+	// DetectMultiplier is 2-255.
+	DetectMultiplier *uint32 `yaml:"detectMultiplier,omitempty" json:"detectMultiplier,omitempty"`
+}
+
 // localASModeReplace is the only local-as mode: "no-prepend replace-as".
 const localASModeReplace = "no-prepend-replace-as"
 
@@ -111,6 +122,11 @@ func (b *BGPConfig) frrModel() (*frrconf.Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	profiles, err := b.bfdProfiles()
+	if err != nil {
+		return nil, err
+	}
+	model.BFDProfiles = profiles
 	vrfName := func(vrf string) string { return cmp.Or(vrf, "default") }
 	routers := map[string]*frrconf.Router{}
 	var vrfs []string
@@ -185,6 +201,35 @@ func (b *BGPConfig) sessionGroup(s *BGPSessionConfig, vrf string, vrfName func(s
 		return -1, fmt.Errorf("network.bgp.sessions %s: VRF %s differs from the VRF %s of peer-group %s", s.Name, vrf, vrfName(gv), s.PeerGroup)
 	}
 	return i, nil
+}
+
+// BFDModel returns the native BFD profiles in the frr.conf model, checked
+// with the frr.conf ranges.
+func (b *BGPConfig) BFDModel() (*frrconf.Config, error) {
+	profiles, err := b.bfdProfiles()
+	if err != nil {
+		return nil, err
+	}
+	return &frrconf.Config{BFDProfiles: profiles}, nil
+}
+
+func (b *BGPConfig) bfdProfiles() ([]frrconf.BFDProfile, error) {
+	out := make([]frrconf.BFDProfile, 0, len(b.BFDProfiles))
+	for _, p := range b.BFDProfiles {
+		for _, iv := range []struct {
+			name string
+			v    *uint32
+		}{{"transmit-interval", p.TransmitInterval}, {"receive-interval", p.ReceiveInterval}} {
+			if iv.v != nil && (*iv.v < 10 || *iv.v > 60000) {
+				return nil, fmt.Errorf("network.bgp.bfdProfiles %s: %s %d out of range 10-60000", p.Name, iv.name, *iv.v)
+			}
+		}
+		if m := p.DetectMultiplier; m != nil && (*m < 2 || *m > 255) {
+			return nil, fmt.Errorf("network.bgp.bfdProfiles %s: detect-multiplier %d out of range 2-255", p.Name, *m)
+		}
+		out = append(out, frrconf.BFDProfile{Name: p.Name, TransmitInterval: p.TransmitInterval, ReceiveInterval: p.ReceiveInterval, DetectMultiplier: p.DetectMultiplier})
+	}
+	return out, nil
 }
 
 // addNeighbor adds a session or peer-group with its address families.

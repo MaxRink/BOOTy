@@ -46,7 +46,41 @@ type Session struct {
 	// BFD and BFDProfile request a BFD session.
 	BFD        bool
 	BFDProfile string
-	Line       int
+	// BFD timers from the profile, with the FRR defaults for unset
+	// values and for an unknown profile (doc/user/bfd.rst).
+	BFDTransmitMS uint32
+	BFDReceiveMS  uint32
+	BFDDetectMult uint32
+	Line          int
+}
+
+// FRR BFD defaults (bfdd/bfd.h BFD_DEFDESIREDMINTX,
+// BFD_DEFREQUIREDMINRX, BFD_DEFDETECTMULT).
+const (
+	DefaultBFDIntervalMS = 300
+	DefaultBFDDetectMult = 3
+)
+
+// BFDTimers returns the timers of a BFD profile. Like FRR, an unknown
+// profile gives the defaults (bfd_profiles_topo1).
+func (c *Config) BFDTimers(profile string) (tx, rx, mult uint32) {
+	tx, rx, mult = DefaultBFDIntervalMS, DefaultBFDIntervalMS, DefaultBFDDetectMult
+	for i := range c.BFDProfiles {
+		p := &c.BFDProfiles[i]
+		if p.Name != profile {
+			continue
+		}
+		if p.TransmitInterval != nil {
+			tx = *p.TransmitInterval
+		}
+		if p.ReceiveInterval != nil {
+			rx = *p.ReceiveInterval
+		}
+		if p.DetectMultiplier != nil {
+			mult = *p.DetectMultiplier
+		}
+	}
+	return tx, rx, mult
 }
 
 // ProfileTimers returns keepalive, hold and connect-retry defaults of an
@@ -119,6 +153,9 @@ func (c *Config) session(r *Router, n *Neighbor) (Session, error) {
 		if s.BFDProfile == "" {
 			s.BFDProfile = g.BFDProfile
 		}
+	}
+	if s.BFD {
+		s.BFDTransmitMS, s.BFDReceiveMS, s.BFDDetectMult = c.BFDTimers(s.BFDProfile)
 	}
 
 	s.Families = families(r, n)

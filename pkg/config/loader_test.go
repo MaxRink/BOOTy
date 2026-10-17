@@ -525,6 +525,7 @@ func TestLoadFullYAMLReference(t *testing.T) {
 		{"Network.BGP.MultipathRelax", *cfg.Network.BGP.MultipathRelax, true},
 		{"Network.BGP.Sessions", fmt.Sprintf("%s %v %s; %s %s %d", cfg.Network.BGP.Sessions[0].Name, cfg.Network.BGP.Sessions[0].Interface, cfg.Network.BGP.Sessions[0].PeerGroup, cfg.Network.BGP.Sessions[1].Name, cfg.Network.BGP.Sessions[1].RemoteAS, *cfg.Network.BGP.Sessions[1].ConnectRetry), "ens1f0np0 true leaf; 198.51.100.1 internal 5"},
 		{"Network.BGP.BFDTransmitMS", cfg.Network.BGP.BFDTransmitMS, uint32(0)},
+		{"Network.BGP.BFDProfiles", fmt.Sprintf("%s %d %d %d", cfg.Network.BGP.BFDProfiles[0].Name, *cfg.Network.BGP.BFDProfiles[0].TransmitInterval, *cfg.Network.BGP.BFDProfiles[0].ReceiveInterval, *cfg.Network.BGP.BFDProfiles[0].DetectMultiplier), "fabric 150 150 3"},
 		{"Network.BGP.BFDReceiveMS", cfg.Network.BGP.BFDReceiveMS, uint32(0)},
 		{"Network.EVPN.UnderlaySubnet", cfg.Network.EVPN.UnderlaySubnet, "192.168.4.0/24"},
 		{"Network.EVPN.ProvisionVNI", cfg.Network.EVPN.ProvisionVNI, uint32(100)},

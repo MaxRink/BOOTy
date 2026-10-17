@@ -2886,11 +2886,15 @@ func TestParseVarsNativeSessions(t *testing.T) {
 BGP_PEER_GROUPS=[{"name":"leaf","remoteAS":"65500","localAS":65501,"families":["ipv4-unicast"]}]
 BGP_SESSIONS=[{"name":"ens1f0np0","interface":true,"peerGroup":"leaf","allowASIn":3},{"name":"198.51.100.1","remoteAS":"internal","families":["l2vpn-evpn"]}]
 BGP_MULTIPATH_RELAX=true
+BFD_PROFILES=[{"name":"fabric","transmitInterval":150,"receiveInterval":150,"detectMultiplier":3}]
 `))
 	if err != nil {
 		t.Fatalf("ParseVars() error = %v", err)
 	}
 	b := cfg.Network.BGP
+	if len(b.BFDProfiles) != 1 || b.BFDProfiles[0].Name != "fabric" || *b.BFDProfiles[0].TransmitInterval != 150 || *b.BFDProfiles[0].DetectMultiplier != 3 {
+		t.Fatalf("BFD profiles = %+v", b.BFDProfiles)
+	}
 	if b.Defaults != "traditional" || len(b.PeerGroups) != 1 || b.PeerGroups[0].LocalAS != 65501 ||
 		len(b.Sessions) != 2 || !b.Sessions[0].Interface || b.Sessions[0].AllowASIn != 3 || b.Sessions[1].RemoteAS != "internal" ||
 		b.MultipathRelax == nil || !*b.MultipathRelax {
@@ -2909,6 +2913,7 @@ BGP_ALLOWAS_IN=0
 BGP_MULTIPATH_RELAX=true
 BGP_INSTALL_ROUTES=false
 BGP_FAST_EXTERNAL_FAILOVER=true
+BFD_DETECT_MULTIPLIER=4
 BRIDGE_MAC=02:54:c0:00:02:13
 VXLAN_LINK=dum.underlay
 UNDERLAY_DUMMY_NAME=dum.underlay
@@ -2922,6 +2927,9 @@ OVERLAY_VRF_TABLE_ID=20
 	b, e := cfg.Network.BGP, cfg.Network.EVPN
 	if b.LocalAS != 65501 || b.NeighborVRF != "Vrf_underlay" || b.ConnectRetry != 5 {
 		t.Errorf("BGP = local-as %d, VRF %q, connect %d", b.LocalAS, b.NeighborVRF, b.ConnectRetry)
+	}
+	if b.BFDDetectMultiplier != 4 {
+		t.Errorf("BFD_DETECT_MULTIPLIER = %d, want 4", b.BFDDetectMultiplier)
 	}
 	// An explicit 0 and an explicit false are set, not unset.
 	if b.AllowASIn == nil || *b.AllowASIn != 0 || b.InstallRoutes == nil || *b.InstallRoutes ||

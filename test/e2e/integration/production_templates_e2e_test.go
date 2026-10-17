@@ -450,6 +450,49 @@ func TestProdTplNativeVRFNameFIB(t *testing.T) {
 	}
 }
 
+// The leaf can open the sessions to the unnumbered peers in Vrf_underlay.
+// With the outbound BGP connects of the server dropped, a session cleared
+// on the leaf comes back with the leaf as client: on the shadow node (FRR
+// listens per VRF) and on native-vrf (tcp_l3mdev_accept for VRF_NAME).
+func TestProdTplLeafSessionVRFInbound(t *testing.T) {
+	for _, node := range []prodtplNode{prodtplShadowNode, prodtplNativeVRFNode} {
+		t.Run(node.name, func(t *testing.T) { prodtplLeafInbound(t, node) })
+	}
+}
+
+func prodtplLeafInbound(t *testing.T, node prodtplNode) {
+	ctx, cancel := context.WithTimeout(context.Background(), prodtplTimeout)
+	defer cancel()
+	// The FRR image has no ip6tables; the BOOTy test image runs it in the
+	// network namespace of the node.
+	ip6tables := func(ctx context.Context, op string) (string, error) {
+		args := []string{"run", "--rm", "--net", "container:" + prodtplContainer(node), "--cap-add", "NET_ADMIN",
+			"--entrypoint", "ip6tables", "booty-gobgp-test:latest",
+			op, "OUTPUT", "-p", "tcp", "--syn", "--dport", "179", "-j", "DROP"}
+		out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
+		return string(out), err
+	}
+	if out, err := ip6tables(ctx, "-I"); err != nil {
+		t.Fatalf("block outbound connects: %v\n%s", err, out)
+	}
+	defer func() { _, _ = ip6tables(context.Background(), "-D") }()
+	port := node.leafPorts[0]
+	if out, err := prodtplExec(ctx, prodtplLeaf, "vtysh", "-c", "clear bgp "+port); err != nil {
+		t.Fatalf("reset session: %v\n%s", err, out)
+	}
+	for {
+		n, err := prodtplNeighbor(ctx, prodtplLeaf, port)
+		if err == nil && n["bgpState"] == "Established" && n["portForeign"] == float64(179) {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("leaf -> %s session on %s not opened by the leaf: %v %v", node.name, port, n, err)
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
 // With outbound BGP connects from BOOTy dropped, dcgw01 must open the
 // session into Vrf_underlay and the BOOTy listener must accept it. Checked
 // for the frr.conf sessions (booty) and the native numbered peers (native).

@@ -1686,10 +1686,14 @@ jobs:
             TestProdTplFIBWithdraw \
             TestProdTplUplinkCarrierLoss \
             TestProdTplNativeVRFNameFIB \
+            TestProdTplLeafSessionVRFInbound \
+            TestProdTplCarrierLossPastBFD \
             TestProdTplRRSessionVRFInbound \
             TestProdTplType5IPv6Install \
             TestProdTplType5Origination \
-            TestProdTplType5CAPRFOverIPv6; do
+            TestProdTplType5CAPRFOverIPv6 \
+            TestProdTplBFDSessions \
+            TestProdTplBFDFailover; do
             if ! grep -q "^--- PASS: ${expected} " e2e-prodtpl.log; then
               echo "::error::${expected} did not pass"
               exit 1
@@ -1724,7 +1728,7 @@ jobs:
             } > "prodtpl-logs/${node}-network.txt" 2>&1
           done
           for node in leaf01 dcgw01 dcgw02 shadow; do
-            for cmd in "show bgp vrf all summary json" "show bgp vrf all neighbors json" "show bgp ipv4 unicast" "show bgp l2vpn evpn"; do
+            for cmd in "show bgp vrf all summary json" "show bgp vrf all neighbors json" "show bgp ipv4 unicast" "show bgp l2vpn evpn" "show bfd peers json"; do
               slug=$(echo "$cmd" | tr ' ' '-')
               timeout 15 sudo docker exec "clab-booty-prodtpl-lab-${node}" vtysh -c "$cmd" > "prodtpl-logs/${node}-${slug}.txt" 2>&1 || true
             done

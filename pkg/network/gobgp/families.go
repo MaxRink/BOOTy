@@ -8,13 +8,20 @@ import (
 	"github.com/telekom/BOOTy/pkg/network"
 )
 
+// idleHoldAfterReset is the time in seconds a peer waits in Idle after
+// ResetPeer (BFD down) before it connects again. FRR waits
+// BGP_INIT_START_TIMER (1 s) after a session with a NOTIFICATION ends
+// (bgpd/bgp_fsm.c bgp_stop_with_notify); the GoBGP default is 30 s.
+const idleHoldAfterReset = 1
+
 // bgpTimers returns the configured BGP keepalive/hold timers.
 func bgpTimers(cfg *Config) *apipb.Timers {
 	return &apipb.Timers{
 		Config: &apipb.TimersConfig{
-			ConnectRetry:      cfg.ConnectRetry,
-			KeepaliveInterval: cfg.KeepaliveInterval,
-			HoldTime:          cfg.HoldTime,
+			ConnectRetry:           cfg.ConnectRetry,
+			KeepaliveInterval:      cfg.KeepaliveInterval,
+			HoldTime:               cfg.HoldTime,
+			IdleHoldTimeAfterReset: idleHoldAfterReset,
 		},
 	}
 }
@@ -117,9 +124,10 @@ func buildSessionPeer(cfg *Config, s *network.BGPSession, addr string) *apipb.Pe
 			AuthPassword: cfg.AuthPassword,
 		},
 		Timers: &apipb.Timers{Config: &apipb.TimersConfig{
-			ConnectRetry:      uint64(s.ConnectRetry),
-			KeepaliveInterval: uint64(s.KeepaliveTime),
-			HoldTime:          uint64(s.HoldTime),
+			ConnectRetry:           uint64(s.ConnectRetry),
+			KeepaliveInterval:      uint64(s.KeepaliveTime),
+			HoldTime:               uint64(s.HoldTime),
+			IdleHoldTimeAfterReset: idleHoldAfterReset,
 		}},
 		AfiSafis:  sessionFamilies(s),
 		Transport: &apipb.Transport{MtuDiscovery: true},

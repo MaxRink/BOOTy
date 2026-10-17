@@ -184,6 +184,10 @@ BFD). BOOTy implements a minimal BFD in its own package
 
 - RFC 5880 and RFC 5881: single-hop, asynchronous mode, UDP 3784, IPv4 and
   IPv6 link-local.
+- RFC 5883 multihop (UDP 4784) for numbered peers outside the connected
+  prefixes, like FRR bgpd does for the iBGP route reflector peers of the
+  template; sent from the router ID in the session VRF, received with
+  FRR's default minimum TTL 254.
 - Desired min TX, required min RX and detect multiplier come from
   `bfd profile` and `neighbor ... bfd profile`. When unset, the FRR 8.2.2
   defaults apply: multiplier 3, 300 ms RX and TX (`doc/user/bfd.rst:147-171`).
@@ -192,13 +196,14 @@ BFD). BOOTy implements a minimal BFD in its own package
 - Poll/Final sequence for parameter changes (RFC 5880 6.5).
 - Demand mode and echo mode stay off. Authentication is not supported. A
   config that asks for authentication or echo fails the run.
-- BFD Up to Down stops the BGP session; BFD Up on a peer that is not
-  established starts a connect attempt at once. This is what FRR 8.2.2
-  does (`bgpd/bgp_bfd.c` `bfd_session_status_update`: `BGP_Stop` on
-  Up to Down, `BGP_Start` on Up). FRR does not hold the session down while
-  BFD is down; the normal connect timer runs, and BOOTy does the same
-  (GoBGP `ResetPeer` with `soft=false` on Down, and again on Up when the peer is not established, so the FSM starts connecting at once). Every state change is
-  logged.
+- BFD Up to Down stops the BGP session, like FRR 10.3 (`bgpd/bgp_bfd.c`
+  `bfd_session_status_update`: Cease/BFD Down and `BGP_Stop`). FRR then
+  waits `BGP_INIT_START_TIMER` (1 s) in Idle and connects again
+  (`bgp_stop_with_notify`). BOOTy uses GoBGP `ResetPeer` with an idle hold
+  time of 1 s after a reset (GoBGP default 30 s); GoBGP sends Cease
+  subcode 4, not 10. FRR also sends `BGP_Start` on BFD Up for a peer that
+  is not established; GoBGP has no API for it and connects 1 to 2 s after
+  Idle anyway. Every state change is logged.
 - Unit tests:
   - the state machine (RFC 5880 6.8.6 transitions)
   - detection time math (6.8.4)
@@ -309,7 +314,7 @@ Kept current as slices land.
 | C13, C14 | lab `route_map_tag_in`, `route_map_deny_tag_out` | same | planned |
 | C15 | lab `explicit_rt_import_export` | same | planned |
 | C16, C18, C20 L3VNI Type-5 only | `TestProdTplType5IPv6Install` (IPv6 Type-5 routes over `::ffff:<VTEP>`, neighbor and FDB entries, `lo` /128, blackhole /64; equal to the shadow node), `TestProdTplType5Origination` (dcgw01 installs the `network` routes of both servers alike), `TestProdTplType5CAPRFOverIPv6` (HTTP to the IPv6 CAPRF mock over the Type-5 default, from the `lo` /128) | same | on slice c the lab does not start (no Type-5-only inference: `provision gateway is required`); with `EVPN_TYPE5_ONLY` forced, all three fail and `TestProdTplFIBRoutes` fails too (the scope-link VTEP routes replace the FIB writer routes), see the slice d PR |
-| C19 | lab `bfd_profile_values`, `bfd_failover` | same | planned |
+| C19 | `TestProdTplBFDSessions` (leaf: single-hop sessions Up with the "fabric" profile 150/150/3 of every server; RRs: multihop sessions Up), `TestProdTplBFDFailover` (the leaf stops sending on one uplink with the carrier up; the next hop leaves the VRF table within 2.5 s instead of the 90 s hold time), each for BOOTy, the vars-only server and the shadow node; state machine, detection time and Poll/Final in `pkg/network/bfd` unit tests | same | without BOOTy BFD (slice n image) both tests fail for BOOTy and the vars-only server, see the BFD PR |
 | C20 | existing `E2E Pure Type-5 Fabric`, `E2E EVPN Boot (vrnetlab)` plus the new matrix | existing and new | existing |
 | VLAN, bond | existing `E2E ContainerLab` (LACP topology), VLAN unit and lab tests | existing | existing |
 | Full template set | differential lab + KVM ISO run | same + KVM | planned |

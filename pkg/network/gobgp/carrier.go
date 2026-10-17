@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	apipb "github.com/osrg/gobgp/v3/api"
 	"github.com/osrg/gobgp/v3/pkg/server"
@@ -24,7 +25,12 @@ type carrierWatch struct {
 	down  map[string]bool
 	// disable and enable stop and start a peer; GoBGP by default.
 	disable, enable func(ctx context.Context, addr string) error
-	log             *slog.Logger
+	// announce sends a Router Advertisement on an interface whose carrier
+	// came back. An FRR unnumbered peer forgets the neighbor address on
+	// interface down and refuses our connect until it gets an RA; zebra
+	// sends one at once on link up, the periodic RA comes up to 10 s later.
+	announce func(iface string)
+	log      *slog.Logger
 }
 
 func newCarrierWatch(bgp *server.BgpServer, peers map[string]string, log *slog.Logger) *carrierWatch {
@@ -36,6 +42,12 @@ func newCarrierWatch(bgp *server.BgpServer, peers map[string]string, log *slog.L
 		},
 		enable: func(ctx context.Context, addr string) error {
 			return bgp.EnablePeer(ctx, &apipb.EnablePeerRequest{Address: addr}) //nolint:wrapcheck // logged with the peer
+		},
+		announce: func(iface string) {
+			sendRouterAdvertisement(iface)
+			// Again after 1 s, in case the link-local address was still
+			// tentative; GoBGP connects 2 to 3 s after the enable.
+			time.AfterFunc(time.Second, func() { sendRouterAdvertisement(iface) })
 		},
 		log: log,
 	}
@@ -90,6 +102,7 @@ func (w *carrierWatch) handle(iface string, carrier bool) {
 		return
 	}
 	w.log.Info("uplink has carrier again, starting its BGP session", "interface", iface, "neighbor", addr)
+	w.announce(iface)
 	if err := w.enable(ctx, addr); err != nil {
 		w.log.Warn("start BGP session", "neighbor", addr, "error", err)
 	}

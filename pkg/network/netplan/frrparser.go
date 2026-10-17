@@ -167,6 +167,9 @@ func toBGPSession(s *frrconf.Session) network.BGPSession {
 		FastExternalFailover: s.FastExternalFailover,
 		BFD:                  s.BFD,
 		BFDProfile:           s.BFDProfile,
+		BFDTransmitMS:        s.BFDTransmitMS,
+		BFDReceiveMS:         s.BFDReceiveMS,
+		BFDDetectMult:        s.BFDDetectMult,
 	}
 	if s.LocalAS != nil {
 		out.LocalASN = s.LocalAS.ASN

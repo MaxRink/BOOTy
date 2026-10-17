@@ -181,7 +181,7 @@ func TestNewConfig(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "reject_bfd_pair",
+			name: "accept_bfd_pair",
 			netCfg: &network.Config{
 				UnderlayIP:     "10.0.0.1",
 				ASN:            65000,
@@ -191,8 +191,8 @@ func TestNewConfig(t *testing.T) {
 				BFDReceiveMS:   150,
 				BGPUnderlayAF:  "ipv4",
 				BGPOverlayType: "evpn-vxlan",
+				EVPNType5Only:  true,
 			},
-			wantErr: true,
 		},
 		{
 			name: "supported_underlay_af_and_overlay_type_wired",
@@ -1136,5 +1136,17 @@ func TestNativePeerOptions(t *testing.T) {
 	u.cfg = &Config{ASN: 65000}
 	if u.hasVRFSession() {
 		t.Fatal("no VRF without BGP_NEIGHBOR_VRF")
+	}
+	// Like FRR, unnumbered peers on the VRF_NAME NICs are in that VRF, so
+	// the leaf may connect into it (tcp_l3mdev_accept).
+	for _, mode := range []network.PeerMode{"", network.PeerModeUnnumbered, network.PeerModeDual} {
+		u.cfg = &Config{ASN: 65000, VRFName: "Vrf_underlay", PeerMode: mode}
+		if !u.hasVRFSession() {
+			t.Fatalf("peer mode %q: unnumbered peers in VRF_NAME must count as a VRF session", mode)
+		}
+	}
+	u.cfg = &Config{ASN: 65000, VRFName: "Vrf_underlay", PeerMode: network.PeerModeNumbered}
+	if u.hasVRFSession() {
+		t.Fatal("numbered peer mode: VRF_NAME alone has no session in a VRF")
 	}
 }

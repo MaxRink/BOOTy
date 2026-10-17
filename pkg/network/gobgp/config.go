@@ -92,6 +92,11 @@ type Config struct {
 	LocalAS     uint32
 	NeighborVRF string
 	AllowASIn   uint32
+	// BFDTransmitMS, BFDReceiveMS and BFDDetectMult turn BFD on for the
+	// native peers; Sessions carry their own BFD values.
+	BFDTransmitMS uint32
+	BFDReceiveMS  uint32
+	BFDDetectMult uint32
 	// InstallRoutes runs the FIB writer, like zebra.
 	InstallRoutes bool
 	// FastExternalFailover stops unnumbered sessions on carrier loss.
@@ -113,12 +118,9 @@ type Config struct {
 
 // NewConfig creates a GoBGP Config from network configuration.
 // It derives addresses using the shared FRR address-derivation logic
-// and applies GoBGP-specific defaults (aggressive hold timers, no BFD).
+// and applies GoBGP-specific defaults (aggressive hold timers).
 func NewConfig(netCfg *network.Config) (*Config, error) {
 	netCfg.ApplyDefaults()
-	if netCfg.BFDTransmitMS > 0 || netCfg.BFDReceiveMS > 0 {
-		return nil, fmt.Errorf("gobgp mode does not support BFD; use FRR mode or BGP keepalive/hold timers")
-	}
 
 	underlayIP, overlayIP, bridgeMAC, err := frr.DeriveAddresses(netCfg)
 	if err != nil {
@@ -173,6 +175,9 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		ConnectRetry:         uint64(netCfg.BGPConnectRetry),
 		InstallRoutes:        netCfg.BGPInstallRoutes,
 		FastExternalFailover: fastExternalFailover(netCfg),
+		BFDTransmitMS:        netCfg.BFDTransmitMS,
+		BFDReceiveMS:         netCfg.BFDReceiveMS,
+		BFDDetectMult:        netCfg.BFDDetectMult,
 	}
 
 	cfg.ApplyDefaults()
@@ -253,6 +258,9 @@ func (c *Config) Validate() error {
 	}
 	if err := c.validateTimers(); err != nil {
 		return err
+	}
+	if (c.BFDTransmitMS == 0) != (c.BFDReceiveMS == 0) {
+		return fmt.Errorf("BFD_TRANSMIT_MS and BFD_RECEIVE_MS must be set together")
 	}
 	if err := c.validateProvisioning(); err != nil {
 		return err
