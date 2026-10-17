@@ -1149,6 +1149,9 @@ func applyVar(cfg *config.MachineConfig, key, value string) error {
 	if key == "LOG_FLUSH_TIMEOUT_SEC" {
 		return applyLogFlushTimeoutVar(cfg, value)
 	}
+	if handled, err := applySRIOVVar(cfg, key, value); handled {
+		return err
+	}
 	return applySpecialVar(cfg, key, value)
 }
 

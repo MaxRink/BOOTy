@@ -545,6 +545,34 @@ provision:
     minBIOS: "2.10"
     minBMC: "4.50"
 
+  # sriov: desired SR-IOV profiles per host class (docs/sriov.md).
+  sriov:
+    # onDrift (SRIOV_ON_DRIFT): warn (default) | fail | apply
+    onDrift: fail
+    # nicTools (NIC_TOOLS): kernel | opensource (default) | vendor
+    nicTools: opensource
+    # profiles (SRIOV_PROFILES): one per NIC kind; a PF port may match one only.
+    profiles:
+      - name: cx6dx
+        match: {vendorId: "15b3", deviceId: "101d"}
+        firmware:
+          sriovEnabled: true
+          maxVFs: 64
+          linkType: eth
+          nvConfig:
+            - {name: CQE_COMPRESSION, value: "1"}
+        runtime:
+          numVFs: 8
+          eswitchMode: switchdev
+          vfDefaults: {spoofChk: true, trust: false}
+          vfs:
+            - {index: 0, mac: "02:00:00:00:00:10", vlan: 100}
+      - name: e810
+        match: {driver: ice}
+        optional: true
+        firmware:
+          fwLLDPAgent: false
+
   secureBoot:
     # reEnable: signal CAPRF to re-enable Secure Boot after provisioning
     reEnable: false

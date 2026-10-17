@@ -54,6 +54,7 @@ var failureCodes = []FailureCode{
 	{"BOOTY-HW-002", ClassHardware, "collect-firmware", "Firmware collection failed."},
 	{"BOOTY-HW-003", ClassHardware, "health-checks", "A health check failed."},
 	{"BOOTY-HW-004", ClassHardware, "setup-mellanox", "Mellanox NIC setup failed."},
+	{"BOOTY-HW-005", ClassHardware, "configure-sriov", "SR-IOV profile check or apply failed."},
 
 	{"BOOTY-CFG-001", ClassConfig, "validate-provision-inputs", "Provisioning inputs are invalid."},
 	{"BOOTY-CFG-002", ClassConfig, "config", "The vars file or the configuration is invalid."},

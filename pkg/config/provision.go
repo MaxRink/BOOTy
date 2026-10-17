@@ -1,5 +1,7 @@
 package config
 
+import "github.com/telekom/BOOTy/pkg/sriov"
+
 const (
 	// TargetOSLinux is the only explicit target OS class accepted by the
 	// current Linux/GRUB-oriented provisioning flow.
@@ -129,4 +131,7 @@ type ProvisionConfig struct {
 	AB             ABConfig             `yaml:"ab"             json:"ab"`
 	CrashArtifacts CrashArtifactsConfig `yaml:"crashArtifacts" json:"crashArtifacts"`
 	Inventory      InventoryConfig      `yaml:"inventory"      json:"inventory"`
+	// SRIOV holds the SR-IOV profiles and their drift handling
+	// (docs/sriov.md).
+	SRIOV sriov.Config `yaml:"sriov" json:"sriov"`
 }

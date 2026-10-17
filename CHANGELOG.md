@@ -352,6 +352,15 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   count, the VF LAG capability, the devlink info versions (a pending
   firmware reset shows) and the VF attributes. [SR-IOV](docs/sriov.md)
   defines the handoff contract to the Kubernetes SR-IOV stack
+- SR-IOV profiles per host class (`SRIOV_PROFILES`, YAML
+  `provision.sriov.profiles`): match PF ports by PCI vendor and device,
+  driver, MAC or interface name; firmware settings (SR-IOV enable, VF limit,
+  link type, Intel firmware LLDP agent, NV config, permanent devlink
+  parameters) and runtime settings (VF count, eSwitch mode, VF trust, spoof
+  check, VLAN, QoS, rates, MAC, link state) with strict validation. The new
+  `configure-sriov` step checks the firmware settings against the stored and
+  the active values and warns, fails or applies per `SRIOV_ON_DRIFT`;
+  `NIC_TOOLS` limits the tools
 
 ### Security
 
