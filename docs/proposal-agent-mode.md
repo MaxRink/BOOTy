@@ -7,6 +7,9 @@ The core standby loop, heartbeat, and command polling are implemented in
 `FetchCommands`). Both methods use real HTTP calls tested with `httptest.Server`.
 The E2E vrnetlab test suite validates standby heartbeat delivery end-to-end.
 
+Cycle time, running from RAM and the CAPRF reuse path:
+[agent-fast-cycle.md](agent-fast-cycle.md).
+
 ## Summary
 
 Extend BOOTy to support a **hot standby** mode where machines boot into the

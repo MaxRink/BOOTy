@@ -90,6 +90,7 @@ Design, Affected Files, Risks, and Effort Estimate.
 | Proposal | Status |
 |----------|--------|
 | [Agent / Standby Mode](proposal-agent-mode.md) | Implemented |
+| [Fast deprovision and provision cycle](agent-fast-cycle.md) | In progress |
 | [GoBGP Network Stack](proposal-gobgp.md) | Implemented |
 | [CAPRF Integration](caprf-integration-plan.md) | Implemented |
 | [Hardware Inventory](proposal-hardware-inventory.md) | Implemented |
