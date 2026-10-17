@@ -164,6 +164,11 @@ func prodtplJSON(ctx context.Context, container string, v any, args ...string) e
 // in place (C16, C18). BOOTy, the shadow node and the native server must
 // be equal.
 func TestProdTplType5IPv6Install(t *testing.T) {
+	prodtplWaitL3VNI(t)
+}
+
+// prodtplL3VNIWant is the L3VNI state of a server in the steady state.
+func prodtplL3VNIWant(node prodtplNode) []string {
 	gw := "::ffff:198.51.100.1"
 	const bgp = " [onlink] proto bgp metric 20"
 	want := []string{
@@ -178,23 +183,31 @@ func TestProdTplType5IPv6Install(t *testing.T) {
 		"route default via " + gw + " dev br.provision" + bgp,
 		"route other-lo via ::ffff:other-vtep dev br.provision" + bgp,
 		"route other-lo via ::ffff:other-vtep dev br.provision" + bgp,
+		"lo " + prodtplV6Of[node.name].lo + "/128",
 	}
+	slices.Sort(want)
+	return want
+}
+
+// prodtplWaitL3VNI waits for the steady L3VNI state on every server and
+// checks that BOOTy and the native server equal the shadow node.
+func prodtplWaitL3VNI(t *testing.T) {
+	t.Helper()
 	states := map[string][]string{}
 	for _, node := range prodtplServers {
 		ctx, cancel := context.WithTimeout(context.Background(), prodtplTimeout)
-		nodeWant := append(slices.Clone(want), "lo "+prodtplV6Of[node.name].lo+"/128")
-		slices.Sort(nodeWant)
+		want := prodtplL3VNIWant(node)
 		var got []string
 		var err error
 		for {
 			got, err = prodtplL3VNIState(ctx, node)
-			if err == nil && reflect.DeepEqual(got, nodeWant) {
+			if err == nil && reflect.DeepEqual(got, want) {
 				break
 			}
 			select {
 			case <-ctx.Done():
 				cancel()
-				t.Fatalf("%s L3VNI state (%v):\n  got  %q\n  want %q", node.name, err, got, nodeWant)
+				t.Fatalf("%s L3VNI state (%v):\n  got  %q\n  want %q", node.name, err, got, want)
 			case <-time.After(2 * time.Second):
 			}
 		}

@@ -1,6 +1,13 @@
 package config
 
-import "github.com/telekom/BOOTy/pkg/network"
+import (
+	"fmt"
+
+	"gopkg.in/yaml.v3"
+
+	"github.com/telekom/BOOTy/pkg/network"
+	"github.com/telekom/BOOTy/pkg/network/netplan"
+)
 
 // MaxNetworkWaitAttempts bounds NETWORK_WAIT_MAX_ATTEMPTS (about 23 days of
 // 20 second rounds), so the wait time cannot overflow.
@@ -68,6 +75,34 @@ type NetworkConfig struct {
 	// rename. false never renames.
 	// Default: nil (true)
 	PredictableNames *bool `yaml:"predictableNames,omitempty" json:"predictableNames,omitempty"`
+
+	// Overlay holds the device settings of the provision VXLAN device and
+	// bridge (GoBGP), like the netplan tunnel and bridge keys. The netplan
+	// values win.
+	Overlay network.OverlayDevices `yaml:"overlay,omitempty" json:"overlay,omitempty"`
+
+	// Devices is the native form of the provisioner netplan: the same keys
+	// as its "network:" section (ethernets with match, set-name, addresses,
+	// mtu, accept-ra, link-local, routes and nameservers; vrfs,
+	// dummy-devices, tunnels, bridges, bonds, vlans). Set, it replaces the
+	// provisioner netplan files as a whole and goes through the same
+	// parser, so both forms give the same network config. It is always
+	// strict, also when the rest of the config is loaded leniently.
+	Devices *NetworkDevices `yaml:"devices,omitempty" json:"devices,omitempty"`
+
+	// NoAcceptRA is a comma-separated list of NICs that ignore IPv6 router
+	// advertisements, like netplan "accept-ra: false".
+	NoAcceptRA string `yaml:"noAcceptRA" json:"noAcceptRA"`
+
+	// EmitLLDP is a comma-separated list of NICs that send LLDP frames like
+	// systemd-networkd with netplan "emit-lldp: true" (GoBGP).
+	EmitLLDP string `yaml:"emitLLDP" json:"emitLLDP"`
+
+	// IPForwarding and IPv6Forwarding set the forwarding sysctls (GoBGP).
+	// Unset (nil) means the frr.conf "[no] ip[v6] forwarding", else IPv4 on
+	// and IPv6 off, like the legacy ramdisk.
+	IPForwarding   *bool `yaml:"ipForwarding,omitempty" json:"ipForwarding,omitempty"`
+	IPv6Forwarding *bool `yaml:"ipv6Forwarding,omitempty" json:"ipv6Forwarding,omitempty"`
 
 	// MTU is the MTU of the fabric NICs and the underlay dummy (GoBGP);
 	// the VXLAN MTU is 50 less. The largest netplan "mtu" wins.
@@ -426,4 +461,39 @@ type IPMIConfig struct {
 	// Example: "172.30.0.0/24"
 	// Default: ""
 	Subnet string `yaml:"subnet" json:"subnet"`
+}
+
+// NetworkDevices is network.devices: the "network:" section of a netplan
+// file. Decoding it runs the strict netplan parser, like NETWORK_DEVICES
+// and the provisioner files, so an unknown key fails even when Load is
+// not strict.
+type NetworkDevices netplan.NetworkSection
+
+// UnmarshalYAML parses the node as a strict netplan "network:" section.
+func (d *NetworkDevices) UnmarshalYAML(node *yaml.Node) error {
+	b, err := yaml.Marshal(map[string]*yaml.Node{"network": node})
+	if err != nil {
+		return fmt.Errorf("network.devices: %w", err)
+	}
+	return d.parse(b)
+}
+
+// UnmarshalJSON parses a JSON object as a strict netplan "network:"
+// section (JSON is YAML).
+func (d *NetworkDevices) UnmarshalJSON(b []byte) error {
+	return d.parse(append([]byte("network: "), b...))
+}
+
+func (d *NetworkDevices) parse(b []byte) error {
+	np, err := netplan.ParseBytesWith("network.devices", b, true)
+	if err != nil {
+		return err //nolint:wrapcheck // the netplan error names network.devices
+	}
+	*d = NetworkDevices(np.Network)
+	return nil
+}
+
+// Section returns the devices as netplan section, nil when unset.
+func (d *NetworkDevices) Section() *netplan.NetworkSection {
+	return (*netplan.NetworkSection)(d)
 }

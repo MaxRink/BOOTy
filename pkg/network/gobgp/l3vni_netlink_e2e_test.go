@@ -6,11 +6,15 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"os/exec"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
+
+	"github.com/telekom/BOOTy/pkg/network"
 )
 
 const l3vniE2ETable = 4243
@@ -115,5 +119,71 @@ func TestL3VNINetlinkState(t *testing.T) {
 	overlay.removeLocalState()
 	if holes, _ = netlink.RouteListFiltered(netlink.FAMILY_V6, &netlink.Route{Table: unix.RT_TABLE_MAIN, Type: unix.RTN_BLACKHOLE}, netlink.RT_FILTER_TABLE|netlink.RT_FILTER_TYPE); len(holes) != 0 {
 		t.Fatalf("blackhole routes after cleanup = %+v", holes)
+	}
+}
+
+// TestL3VNINetlinkOverlayDevices creates the provision VXLAN device and
+// bridge with the netplan device settings against the kernel: MTU, MAC,
+// mac-learning, hairpin and port-mac-learning, link-local: [] (addrgenmode
+// none) and accept-ra: false.
+func TestL3VNINetlinkOverlayDevices(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Fatal("test requires root (run with sudo)")
+	}
+	enterTestNetns(t)
+	cfg := &Config{
+		RouterID: "192.0.2.10", ProvisionVNI: 4244, BridgeName: "br-dev", BridgeMAC: "02:00:00:00:00:aa", MTU: 9100,
+		OverlayDevices: network.OverlayDevices{
+			VXLANMTU: 9000, VXLANMAC: "02:54:c0:00:02:13", VXLANLearning: new(false), VXLANARPProxy: new(false),
+			PortHairpin: new(true), PortLearning: new(false), VXLANLinkLocal: new(false), BridgeLinkLocal: new(false),
+			VXLANAcceptRA: new(false), BridgeAcceptRA: new(false), BridgeMTU: 8900, BridgeSTP: new(true),
+		},
+	}
+	overlay := NewOverlayTier(cfg)
+	overlay.log = slog.Default()
+	if err := overlay.createVXLANAndBridge(); err != nil {
+		t.Fatal(err)
+	}
+	vx, err := netlink.LinkByName("vx4244")
+	if err != nil {
+		t.Fatal(err)
+	}
+	br, err := netlink.LinkByName("br-dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, ok := vx.(*netlink.Vxlan)
+	if !ok || v.Attrs().MTU != 9000 || v.Attrs().HardwareAddr.String() != "02:54:c0:00:02:13" || v.Learning || v.Proxy {
+		t.Errorf("VXLAN device = %+v, want MTU 9000, MAC 02:54:c0:00:02:13, no learning, no proxy", vx)
+	}
+	// 8900, not the 9000 of its VXLAN port: the bridge MTU is set itself.
+	if br.Attrs().MTU != 8900 {
+		t.Errorf("bridge MTU = %d, want 8900", br.Attrs().MTU)
+	}
+	pi, err := netlink.LinkGetProtinfo(vx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pi.Hairpin || pi.Learning {
+		t.Errorf("bridge port = hairpin %v learning %v, want hairpin and no learning", pi.Hairpin, pi.Learning)
+	}
+	// netlink.Bridge has no STP field; ip reads IFLA_BR_STP_STATE.
+	out, err := exec.Command("ip", "-d", "-j", "link", "show", "dev", "br-dev").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `"stp_state":1`) {
+		t.Errorf("bridge STP off, want on: %s", out)
+	}
+	for _, dev := range []string{"vx4244", "br-dev"} {
+		for file, want := range map[string]string{"addr_gen_mode": "1", "accept_ra": "0"} {
+			b, err := os.ReadFile("/proc/sys/net/ipv6/conf/" + dev + "/" + file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.TrimSpace(string(b)); got != want {
+				t.Errorf("%s %s = %s, want %s", dev, file, got, want)
+			}
+		}
 	}
 }

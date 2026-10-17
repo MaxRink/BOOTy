@@ -2959,3 +2959,57 @@ OVERLAY_VRF_TABLE_ID=20
 		t.Errorf("MTU %d overlay VRF %q table %d", cfg.Network.MTU, cfg.Network.VRF.OverlayName, cfg.Network.VRF.OverlayTableID)
 	}
 }
+
+func TestParseVarsOverlayDeviceOptions(t *testing.T) {
+	cfg, err := ParseVars(strings.NewReader(`VXLAN_MTU=9000
+VXLAN_MAC=02:54:c0:00:02:13
+VXLAN_LEARNING=false
+VXLAN_ARP_PROXY=true
+VXLAN_PORT_HAIRPIN=true
+VXLAN_PORT_LEARNING=false
+VXLAN_IPV6_LINK_LOCAL=false
+VXLAN_ACCEPT_RA=false
+BRIDGE_MTU=8950
+BRIDGE_IPV6_LINK_LOCAL=false
+BRIDGE_ACCEPT_RA=true
+BRIDGE_STP=false
+ACCEPT_RA_OFF=ens1f0np0,ens1f1np1
+LLDP_EMIT=ens1f0np0
+IP_FORWARDING=false
+IPV6_FORWARDING=true
+`))
+	if err != nil {
+		t.Fatalf("ParseVars() error = %v", err)
+	}
+	o := cfg.Network.Overlay
+	if o.VXLANMTU != 9000 || o.BridgeMTU != 8950 || o.VXLANMAC != "02:54:c0:00:02:13" {
+		t.Errorf("MTU/MAC = %d %d %q", o.VXLANMTU, o.BridgeMTU, o.VXLANMAC)
+	}
+	for name, got := range map[string]*bool{
+		"VXLAN_LEARNING": o.VXLANLearning, "VXLAN_PORT_LEARNING": o.PortLearning,
+		"VXLAN_IPV6_LINK_LOCAL": o.VXLANLinkLocal, "VXLAN_ACCEPT_RA": o.VXLANAcceptRA,
+		"BRIDGE_IPV6_LINK_LOCAL": o.BridgeLinkLocal, "IP_FORWARDING": cfg.Network.IPForwarding,
+		"BRIDGE_STP": o.BridgeSTP,
+	} {
+		if got == nil || *got {
+			t.Errorf("%s = %v, want explicit false", name, got)
+		}
+	}
+	for name, got := range map[string]*bool{
+		"VXLAN_ARP_PROXY": o.VXLANARPProxy, "VXLAN_PORT_HAIRPIN": o.PortHairpin,
+		"BRIDGE_ACCEPT_RA": o.BridgeAcceptRA, "IPV6_FORWARDING": cfg.Network.IPv6Forwarding,
+	} {
+		if got == nil || !*got {
+			t.Errorf("%s = %v, want true", name, got)
+		}
+	}
+	if cfg.Network.NoAcceptRA != "ens1f0np0,ens1f1np1" {
+		t.Errorf("ACCEPT_RA_OFF = %q", cfg.Network.NoAcceptRA)
+	}
+	if cfg.Network.EmitLLDP != "ens1f0np0" {
+		t.Errorf("LLDP_EMIT = %q", cfg.Network.EmitLLDP)
+	}
+	if _, err := ParseVars(strings.NewReader("BRIDGE_MTU=big\n")); err == nil {
+		t.Error("BRIDGE_MTU=big parsed without error")
+	}
+}

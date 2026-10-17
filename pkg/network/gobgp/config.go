@@ -111,6 +111,13 @@ type Config struct {
 	// empty lists use VPNRT or ASN:VNI.
 	ImportRTs []string
 	ExportRTs []string
+	// OverlayDevices, NoAcceptRA and the forwarding settings come from
+	// netplan, frr.conf or the native options.
+	OverlayDevices network.OverlayDevices
+	NoAcceptRA     []string
+	EmitLLDP       []string
+	IPForwarding   *bool
+	IPv6Forwarding *bool
 	// InstallRoutes runs the FIB writer, like zebra.
 	InstallRoutes bool
 	// FastExternalFailover stops unnumbered sessions on carrier loss.
@@ -189,6 +196,11 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		ConnectRetry:         uint64(netCfg.BGPConnectRetry),
 		InstallRoutes:        netCfg.BGPInstallRoutes,
 		FastExternalFailover: fastExternalFailover(netCfg),
+		OverlayDevices:       netCfg.OverlayDevices,
+		NoAcceptRA:           netCfg.NoAcceptRA,
+		EmitLLDP:             netCfg.EmitLLDP,
+		IPForwarding:         netCfg.IPForwarding,
+		IPv6Forwarding:       netCfg.IPv6Forwarding,
 		RouteMaps:            netCfg.BGPRouteMaps,
 		CommunityLists:       netCfg.BGPCommunityLists,
 		RouteMapIn:           netCfg.BGPRouteMapIn,

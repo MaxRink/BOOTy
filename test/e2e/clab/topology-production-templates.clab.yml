@@ -71,18 +71,30 @@ topology:
       binds:
         - prodtpl-shadow.frr.conf:/etc/frr/frr.conf:ro
         - daemons:/etc/frr/daemons:ro
+        # A machine ID, like systemd creates on the legacy ramdisk.
+        - data/machine-id-shadow:/etc/machine-id:ro
       exec:
         - ip link add Vrf_underlay type vrf table 10
         - ip link set Vrf_underlay up
         - ip link set ens1f0np0 master Vrf_underlay mtu 9100 up
         - ip link set ens1f1np1 master Vrf_underlay mtu 9100 up
+        - ip link set ens1f2np2 master Vrf_underlay mtu 9100 up
+        - ip link set ens1f3np3 mtu 9100 up
         - ip link add dum.underlay type dummy
         - ip link set dum.underlay master Vrf_underlay mtu 9100 up
         - ip addr add 192.0.2.18/32 dev dum.underlay
         - ip -6 addr add 2001:db8:40a:5481::18/128 dev lo
-        - ip link add vx.3000 type vxlan id 3000 local 192.0.2.18 dstport 4789 nolearning dev dum.underlay
-        - ip link add br.provision address 02:54:c0:00:02:12 type bridge
+        # What netplan/networkd makes of the template: link-local: [] is
+        # addrgenmode none, accept-ra: false is accept_ra 0, hairpin and
+        # port-mac-learning are bridge port flags.
+        - sh -c 'for d in ens1f0np0 ens1f1np1 ens1f2np2 ens1f3np3; do sysctl -qw net.ipv6.conf.$d.accept_ra=0; done'
+        - ip link add vx.3000 type vxlan id 3000 local 192.0.2.18 dstport 4789 nolearning noproxy dev dum.underlay
+        - ip link add br.provision address 02:54:c0:00:02:12 type bridge stp_state 0
+        - ip link set vx.3000 addrgenmode none
+        - ip link set br.provision addrgenmode none
+        - sh -c 'for d in vx.3000 br.provision; do echo 0 > /proc/sys/net/ipv6/conf/$d/accept_ra; done'
         - ip link set vx.3000 address 02:54:c0:00:02:12 master br.provision mtu 9000 up
+        - bridge link set dev vx.3000 hairpin on learning off
         - ip link set br.provision mtu 9000 up
 
     booty:
@@ -98,6 +110,19 @@ topology:
         - dd if=/dev/zero of=/tmp/disk.img bs=1M count=0 seek=2048
         - sh -c 'test -b /dev/loop0 || mknod -m 660 /dev/loop0 b 7 0'
         - losetup /dev/loop0 /tmp/disk.img
+
+    # eBGP test peer (AS 65510) of BOOTy and the shadow node. It shows the
+    # route-maps: DENY-TAG-FABRIC-OUT keeps the fabric routes from it, and
+    # TAG-FABRIC-IN (local-pref 90 on the leaf path) makes its longer path
+    # to 198.18.0.0/24 the best one.
+    tester:
+      kind: linux
+      image: quay.io/frrouting/frr:10.3.1
+      binds:
+        - prodtpl-tester.frr.conf:/etc/frr/frr.conf:ro
+        - daemons:/etc/frr/daemons:ro
+      exec:
+        - sh -c 'for i in 1 2 3 4; do ip link set dev eth$i mtu 9100 up; done'
 
     # IPv6 CAPRF mock behind the L3VNI gateway.
     caprf6:
@@ -148,6 +173,11 @@ topology:
     - endpoints: ["leaf01:eth5", "dcgw01:eth1"]
     - endpoints: ["leaf01:eth6", "dcgw02:eth1"]
     - endpoints: ["dcgw01:eth2", "caprf6:eth1"]
+    - endpoints: ["tester:eth1", "booty:ens1f2np2"]
+    - endpoints: ["tester:eth2", "shadow:ens1f2np2"]
+    # Default VRF sessions without "no bgp ebgp-requires-policy".
+    - endpoints: ["tester:eth3", "booty:ens1f3np3"]
+    - endpoints: ["tester:eth4", "shadow:ens1f3np3"]
     - endpoints: ["leaf01:eth7", "native:ens1f0np0"]
     - endpoints: ["leaf01:eth8", "native:ens1f1np1"]
     - endpoints: ["leaf01:eth9", "native-vrf:ens1f0np0"]

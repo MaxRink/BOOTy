@@ -295,6 +295,9 @@ func prodtplRoutes(ctx context.Context, node prodtplNode) (map[string][]string, 
 	got := map[string][]string{}
 	for _, r := range routes {
 		dst := r.Dst
+		if dst == prodtplTesterPrefix {
+			continue // only BOOTy and the shadow node peer with the tester
+		}
 		if slices.Contains(others, dst) {
 			dst = "other-server"
 		}

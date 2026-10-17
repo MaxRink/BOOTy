@@ -422,6 +422,12 @@ func (o *OverlayTier) createVXLANAndBridge() error {
 	if err := netlink.LinkSetMasterByIndex(vxLink, brLink.Attrs().Index); err != nil {
 		return fmt.Errorf("attach VXLAN to bridge: %w", err)
 	}
+	if err := o.applyPortSettings(vxLink); err != nil {
+		return err
+	}
+	if err := o.applyBridgeSettings(brLink); err != nil {
+		return err
+	}
 
 	// Assign bridge to the configured overlay VRF. Production-like netplan
 	// often keeps the L3VNI bridge in the default VRF while only the
@@ -477,8 +483,11 @@ func (o *OverlayTier) createVXLAN(name string) (netlink.Link, error) {
 	if err != nil {
 		return nil, fmt.Errorf("find VXLAN: %w", err)
 	}
-	if err := netlink.LinkSetMTU(link, o.vxlanMTU()); err != nil {
+	if err := netlink.LinkSetMTU(link, o.vxlanDeviceMTU()); err != nil {
 		return nil, fmt.Errorf("set VXLAN MTU: %w", err)
+	}
+	if err := applyLinkSettings(link, o.cfg.OverlayDevices.VXLANLinkLocal, o.cfg.OverlayDevices.VXLANAcceptRA); err != nil {
+		return nil, err
 	}
 	return link, nil
 }
@@ -496,6 +505,9 @@ func (o *OverlayTier) newVXLAN(name string) (*netlink.Vxlan, error) {
 		Port:         vxlanPort,
 		Learning:     false,
 		VtepDevIndex: vtepDevIndex,
+	}
+	if err := o.applyVXLANSettings(vxlan); err != nil {
+		return nil, err
 	}
 	return vxlan, nil
 }
@@ -557,6 +569,9 @@ func (o *OverlayTier) createBridge() (netlink.Link, error) {
 	link, err := netlink.LinkByName(o.cfg.BridgeName)
 	if err != nil {
 		return nil, fmt.Errorf("find bridge: %w", err)
+	}
+	if err := applyLinkSettings(link, o.cfg.OverlayDevices.BridgeLinkLocal, o.cfg.OverlayDevices.BridgeAcceptRA); err != nil {
+		return nil, err
 	}
 	return link, nil
 }

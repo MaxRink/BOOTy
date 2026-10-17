@@ -20,6 +20,8 @@ import (
 	"testing"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/telekom/BOOTy/pkg/caprf"
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
@@ -2068,6 +2070,25 @@ func TestNetworkConfigFromMachineConfigBFD(t *testing.T) {
 	}
 }
 
+// The native device options reach the network config.
+func TestNetworkConfigFromMachineConfigDevices(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Network.Overlay = network.OverlayDevices{VXLANMTU: 9000, BridgeMTU: 8900, BridgeSTP: new(false), VXLANLinkLocal: new(false)}
+	cfg.Network.NoAcceptRA = "ens1f0np0, ens1f1np1"
+	cfg.Network.EmitLLDP = "ens1f0np0"
+	cfg.Network.IPForwarding, cfg.Network.IPv6Forwarding = new(false), new(true)
+	n := networkConfigFromMachineConfig(cfg)
+	if !reflect.DeepEqual(n.OverlayDevices, cfg.Network.Overlay) {
+		t.Errorf("OverlayDevices = %+v, want %+v", n.OverlayDevices, cfg.Network.Overlay)
+	}
+	if !slices.Equal(n.NoAcceptRA, []string{"ens1f0np0", "ens1f1np1"}) || !slices.Equal(n.EmitLLDP, []string{"ens1f0np0"}) {
+		t.Errorf("NoAcceptRA %v EmitLLDP %v", n.NoAcceptRA, n.EmitLLDP)
+	}
+	if n.IPForwarding == nil || *n.IPForwarding || n.IPv6Forwarding == nil || !*n.IPv6Forwarding {
+		t.Errorf("forwarding = %v %v, want false and true", n.IPForwarding, n.IPv6Forwarding)
+	}
+}
+
 func TestNetworkConfigFromMachineConfigOverlayVRF(t *testing.T) {
 	for _, tt := range []struct{ name, wantName string }{{"default", ""}, {"Vrf_cust", "Vrf_cust"}} {
 		cfg := &config.MachineConfig{}
@@ -2088,5 +2109,153 @@ func TestMergeNetplanConfigNativeBridgeMAC(t *testing.T) {
 	mergeNetplanConfig(dst, src)
 	if dst.BridgeMAC != "02:00:00:00:aa:01" {
 		t.Fatalf("BridgeMAC = %q, want the native 02:00:00:00:aa:01", dst.BridgeMAC)
+	}
+}
+
+// A set native device setting wins over netplan; frr.conf forwarding is
+// only a default.
+func TestMergeNetplanConfigOverlayDevices(t *testing.T) {
+	dst := &network.Config{
+		OverlayDevices: network.OverlayDevices{VXLANMTU: 8000, VXLANMAC: "02:00:00:00:00:01", PortHairpin: new(false)},
+		IPForwarding:   new(true),
+	}
+	src := &network.Config{
+		OverlayDevices: network.OverlayDevices{VXLANMTU: 9000, VXLANLinkLocal: new(false)},
+		NoAcceptRA:     []string{"ens1f0np0"},
+		EmitLLDP:       []string{"ens1f0np0"},
+		IPForwarding:   new(false),
+		IPv6Forwarding: new(false),
+	}
+
+	mergeNetplanConfig(dst, src)
+
+	d := dst.OverlayDevices
+	// A set native value wins; netplan fills the unset ones.
+	if d.VXLANMTU != 8000 || d.VXLANMAC != "02:00:00:00:00:01" || d.PortHairpin == nil || *d.PortHairpin ||
+		d.VXLANLinkLocal == nil || *d.VXLANLinkLocal {
+		t.Errorf("overlay devices = %+v", d)
+	}
+	if !*dst.IPForwarding || dst.IPv6Forwarding == nil || *dst.IPv6Forwarding {
+		t.Errorf("forwarding = %v %v, want explicit true and frr.conf false", *dst.IPForwarding, dst.IPv6Forwarding)
+	}
+	if !slices.Equal(dst.NoAcceptRA, []string{"ens1f0np0"}) || !slices.Equal(dst.EmitLLDP, []string{"ens1f0np0"}) {
+		t.Errorf("NoAcceptRA = %v, EmitLLDP = %v", dst.NoAcceptRA, dst.EmitLLDP)
+	}
+}
+
+// Every overlay device setting follows the native rule on its own: a set
+// native value wins, an unset one takes the netplan value. The native
+// NoAcceptRA and EmitLLDP lists replace the netplan lists.
+func TestMergeOverlayDevicesEveryField(t *testing.T) {
+	native, parsed := network.OverlayDevices{}, network.OverlayDevices{}
+	nv, pv := reflect.ValueOf(&native).Elem(), reflect.ValueOf(&parsed).Elem()
+	for i := range nv.NumField() {
+		switch f := nv.Field(i); f.Kind() {
+		case reflect.Int:
+			f.SetInt(1000)
+			pv.Field(i).SetInt(2000)
+		case reflect.String:
+			f.SetString("02:00:00:00:00:01")
+			pv.Field(i).SetString("02:00:00:00:00:02")
+		case reflect.Pointer:
+			f.Set(reflect.ValueOf(new(true)))
+			pv.Field(i).Set(reflect.ValueOf(new(false)))
+		default:
+			t.Fatalf("field %s of kind %s not covered", nv.Type().Field(i).Name, f.Kind())
+		}
+	}
+	got := native
+	mergeOverlayDevices(&got, &parsed)
+	if !reflect.DeepEqual(got, native) {
+		t.Errorf("native set: got %+v, want the native values %+v", got, native)
+	}
+	got = network.OverlayDevices{}
+	mergeOverlayDevices(&got, &parsed)
+	if !reflect.DeepEqual(got, parsed) {
+		t.Errorf("native unset: got %+v, want the netplan values %+v", got, parsed)
+	}
+
+	dst := &network.Config{NoAcceptRA: []string{"eth9"}, EmitLLDP: []string{"eth9"}}
+	mergeNetplanConfig(dst, &network.Config{NoAcceptRA: []string{"ens1f0np0"}, EmitLLDP: []string{"ens1f0np0"}})
+	if !slices.Equal(dst.NoAcceptRA, []string{"eth9"}) || !slices.Equal(dst.EmitLLDP, []string{"eth9"}) {
+		t.Errorf("native lists: NoAcceptRA %v EmitLLDP %v, want [eth9]", dst.NoAcceptRA, dst.EmitLLDP)
+	}
+}
+
+// network.devices (YAML) and NETWORK_DEVICES (vars) are the native form of
+// the provisioner netplan: the bm4x templates give the same network config
+// from the netplan file and from the native YAML. An unknown key and a
+// route key BOOTy does not apply fail in every form.
+// nativeDevicesYAML writes a BOOTy YAML config with the "network:" section
+// of a netplan file as network.devices and returns its path.
+func nativeDevicesYAML(t *testing.T, netplanFile []byte) string {
+	t.Helper()
+	var np map[string]any
+	if err := yaml.Unmarshal(netplanFile, &np); err != nil {
+		t.Fatal(err)
+	}
+	out, err := yaml.Marshal(map[string]any{"network": map[string]any{"devices": np["network"]}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "booty.yaml")
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestNativeDevicesEqualNetplan(t *testing.T) {
+	for _, fixture := range []string{"two-uplinks", "one-uplink", "two-uplinks-layer2"} {
+		t.Run(fixture, func(t *testing.T) {
+			dir := filepath.Join("pkg", "network", "frrconf", "testdata", "bm4x", fixture)
+			data, err := os.ReadFile(filepath.Join(dir, "netplan.yaml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			fromFile, err := detectNetplanConfig(dir, filepath.Join(dir, "frr.conf"), true, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The native YAML: the "network:" section under network.devices,
+			// loaded by the production loader.
+			cfg, err := config.Load(nativeDevicesYAML(t, data))
+			if err != nil {
+				t.Fatal(err)
+			}
+			native, err := detectNetplanConfigWith(t.TempDir(), filepath.Join(dir, "frr.conf"), true, true, cfg.Network.Devices.Section())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(native, fromFile) {
+				t.Fatalf("native devices differ from netplan:\n native  %+v\n netplan %+v", native, fromFile)
+			}
+		})
+	}
+
+	bad := "network:\n  ethernets:\n    eth0:\n      wakeonlan: true\n"
+	if _, err := netplan.ParseBytesWith("file", []byte(bad), true); err == nil {
+		t.Error("netplan file: unknown key parsed")
+	}
+	// config.Load is not strict, but network.devices always is.
+	if _, err := config.Load(nativeDevicesYAML(t, []byte(bad))); err == nil || !strings.Contains(err.Error(), "wakeonlan") {
+		t.Errorf("network.devices via config.Load: unknown key error = %v", err)
+	}
+	jsonPath := filepath.Join(t.TempDir(), "booty.json")
+	if err := os.WriteFile(jsonPath, []byte(`{"network":{"devices":{"ethernets":{"eth0":{"wakeonlan":true}}}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.Load(jsonPath); err == nil {
+		t.Error("network.devices in JSON: unknown key parsed")
+	}
+	if _, err := caprf.ParseVars(strings.NewReader(`NETWORK_DEVICES={"ethernets":{"eth0":{"wakeonlan":true}}}` + "\n")); err == nil {
+		t.Error("NETWORK_DEVICES: unknown key parsed")
+	}
+	route := &netplan.NetworkSection{Ethernets: map[string]netplan.EthernetConfig{"eth0": {Routes: []netplan.RouteConfig{{To: "default", Via: "192.0.2.1", Metric: 50}}}}}
+	if _, err := detectNetplanConfigWith(t.TempDir(), "/nonexistent", true, true, route); err == nil {
+		t.Error("network.devices: route metric accepted")
+	}
+	if _, err := caprf.ParseVars(strings.NewReader(`NETWORK_DEVICES={"ethernets":{"eth0":{"routes":[{"to":"default","via":"192.0.2.1","metric":50}]}}}` + "\n")); err == nil {
+		t.Error("NETWORK_DEVICES: route metric accepted")
 	}
 }

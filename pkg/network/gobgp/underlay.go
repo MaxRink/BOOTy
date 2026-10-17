@@ -27,6 +27,7 @@ import (
 	exec "github.com/telekom/BOOTy/pkg/executil"
 	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/bfd"
+	"github.com/telekom/BOOTy/pkg/network/lldp"
 )
 
 // Underlay network constants.
@@ -85,6 +86,7 @@ type UnderlayTier struct {
 	peerCountFn  func(ctx context.Context) int                 // overridable in tests; nil = use countEstablishedPeers
 	pollInterval time.Duration                                 // overridable in tests; zero = use default (1s)
 	bfd          *bfd.Manager                                  // BFD sessions of the peers
+	stopLLDP     func()                                        // stops the LLDP senders and waits for them
 }
 
 const defaultUnderlayDummyName = "dummy.underlay"
@@ -131,9 +133,11 @@ func (u *UnderlayTier) Setup(ctx context.Context) error {
 		return err
 	}
 
-	if err := enableForwarding(u.log); err != nil {
+	if err := enableForwarding(u.log, u.cfg.IPForwarding, u.cfg.IPv6Forwarding); err != nil {
 		return fmt.Errorf("enable forwarding: %w", err)
 	}
+	u.disableAcceptRA()
+	u.startLLDP()
 	if err := u.acceptVRFConnections(); err != nil {
 		return err
 	}
@@ -236,6 +240,10 @@ func (u *UnderlayTier) Teardown(_ context.Context) error {
 	if u.bfd != nil {
 		u.bfd.Close()
 		u.bfd = nil
+	}
+	if u.stopLLDP != nil {
+		u.stopLLDP()
+		u.stopLLDP = nil
 	}
 
 	if u.bgp != nil {
@@ -1206,4 +1214,27 @@ func isOwnAddress(ifi *net.Interface, ip net.IP) bool {
 		}
 	}
 	return false
+}
+
+// disableAcceptRA applies netplan "accept-ra: false" to the NICs.
+func (u *UnderlayTier) disableAcceptRA() {
+	for _, nic := range u.cfg.NoAcceptRA {
+		if err := setAcceptRA(nic, false); err != nil {
+			u.log.Warn("accept-ra: false not applied", "nic", nic, "error", err)
+		}
+	}
+}
+
+// startLLDP sends LLDP frames on the NICs with netplan "emit-lldp: true",
+// like systemd-networkd.
+func (u *UnderlayTier) startLLDP() {
+	if len(u.cfg.EmitLLDP) == 0 {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	wait := lldp.Emit(ctx, u.cfg.EmitLLDP, lldp.SystemInfo(), u.log.With("component", "lldp"))
+	u.stopLLDP = func() {
+		cancel()
+		wait()
+	}
 }

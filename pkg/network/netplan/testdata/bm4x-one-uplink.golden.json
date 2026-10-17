@@ -189,5 +189,27 @@
     "2001:db8:40a:5481::17/128",
     "2001:db8:40a:5481::/64"
   ],
+  "OverlayDevices": {
+    "vxlanMTU": 9000,
+    "vxlanMAC": "02:54:c0:00:02:11",
+    "vxlanLearning": false,
+    "vxlanARPProxy": false,
+    "portHairpin": true,
+    "portLearning": false,
+    "vxlanLinkLocal": false,
+    "bridgeLinkLocal": false,
+    "vxlanAcceptRA": false,
+    "bridgeAcceptRA": false,
+    "bridgeMTU": 9000,
+    "bridgeSTP": false
+  },
+  "NoAcceptRA": [
+    "ens1f0np0"
+  ],
+  "EmitLLDP": [
+    "ens1f0np0"
+  ],
+  "IPForwarding": false,
+  "IPv6Forwarding": null,
   "VLANs": null
 }

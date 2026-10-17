@@ -14,6 +14,18 @@ network:
       link-local: [ipv6]
       mtu: 9100
       ipv6-address-generation: eui64
+    # Lab only: the uplink to the eBGP test peer.
+    ens1f2np2:
+      accept-ra: false
+      link-local: [ipv6]
+      mtu: 9100
+      ipv6-address-generation: eui64
+    # Lab only: the default VRF uplink to the eBGP test peer.
+    ens1f3np3:
+      accept-ra: false
+      link-local: [ipv6]
+      mtu: 9100
+      ipv6-address-generation: eui64
     lo:
       addresses: [2001:db8:40a:5481::17/128]
   vrfs:
@@ -22,6 +34,7 @@ network:
       interfaces:
       - ens1f0np0
       - ens1f1np1
+      - ens1f2np2
       - dum.underlay
   dummy-devices:
     dum.underlay:

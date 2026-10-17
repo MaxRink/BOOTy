@@ -1676,7 +1676,7 @@ jobs:
           GOMAXPROCS: "2"
         run: |
           set -o pipefail
-          go test -tags e2e_prodtpl -v -race -count=1 -timeout 15m ./test/e2e/integration/... 2>&1 | tee e2e-prodtpl.log
+          go test -tags e2e_prodtpl -v -race -count=1 -timeout 20m ./test/e2e/integration/... 2>&1 | tee e2e-prodtpl.log
           for expected in \
             TestProdTplLeafSessions \
             TestProdTplLocalASReplaceASPath \
@@ -1694,7 +1694,13 @@ jobs:
             TestProdTplType5CAPRFOverIPv6 \
             TestProdTplBFDSessions \
             TestProdTplBFDFailover \
-            TestProdTplLocalASLoopCheck; do
+            TestProdTplLocalASLoopCheck \
+            TestProdTplRouteMapDenyTaggedOut \
+            TestProdTplRouteMapTagIn \
+            TestProdTplEBGPRequiresPolicy \
+            TestProdTplKernelDevices \
+            TestProdTplRRRestart \
+            TestProdTplLLDP; do
             if ! grep -q "^--- PASS: ${expected} " e2e-prodtpl.log; then
               echo "::error::${expected} did not pass"
               exit 1
@@ -1710,7 +1716,7 @@ jobs:
         timeout-minutes: 5
         run: |
           mkdir -p prodtpl-logs
-          for node in leaf01 dcgw01 dcgw02 shadow booty native native-vrf caprf-mock caprf6; do
+          for node in leaf01 dcgw01 dcgw02 shadow booty native native-vrf tester caprf-mock caprf6; do
             name="clab-booty-prodtpl-lab-${node}"
             timeout 30 sudo docker logs "${name}" > "prodtpl-logs/${node}.log" 2>&1 || true
             {
@@ -1728,7 +1734,7 @@ jobs:
               timeout 5 sudo docker exec "${name}" ss -tn 2>&1 || true
             } > "prodtpl-logs/${node}-network.txt" 2>&1
           done
-          for node in leaf01 dcgw01 dcgw02 shadow; do
+          for node in leaf01 dcgw01 dcgw02 shadow tester; do
             for cmd in "show bgp vrf all summary json" "show bgp vrf all neighbors json" "show bgp ipv4 unicast" "show bgp l2vpn evpn" "show bfd peers json"; do
               slug=$(echo "$cmd" | tr ' ' '-')
               timeout 15 sudo docker exec "clab-booty-prodtpl-lab-${node}" vtysh -c "$cmd" > "prodtpl-logs/${node}-${slug}.txt" 2>&1 || true

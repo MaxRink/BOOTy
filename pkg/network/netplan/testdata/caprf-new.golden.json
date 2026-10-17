@@ -113,5 +113,21 @@
     "65000:1000"
   ],
   "Type5Networks": null,
+  "OverlayDevices": {
+    "vxlanMTU": 9000,
+    "vxlanLearning": false,
+    "vxlanLinkLocal": false,
+    "bridgeLinkLocal": false,
+    "vxlanAcceptRA": false,
+    "bridgeAcceptRA": false,
+    "bridgeMTU": 9000,
+    "bridgeSTP": false
+  },
+  "NoAcceptRA": [
+    "hbn"
+  ],
+  "EmitLLDP": null,
+  "IPForwarding": null,
+  "IPv6Forwarding": null,
   "VLANs": null
 }

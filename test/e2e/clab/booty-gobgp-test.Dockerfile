@@ -26,7 +26,7 @@ RUN CGO_ENABLED=1 GOOS=linux go build -a \
 FROM alpine:3.24
 RUN set -eu; \
     n=0; \
-    until apk add --no-cache ca-certificates iproute2 iptables; do \
+    until apk add --no-cache ca-certificates iproute2 iptables tcpdump; do \
       n=$((n+1)); \
       if [ "$n" -ge 5 ]; then echo "apk add failed after $n attempts" >&2; exit 1; fi; \
       sleep 10; \

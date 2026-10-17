@@ -164,6 +164,19 @@ type Config struct {
 	// VRF that "advertise ipv4|ipv6 unicast" originates as EVPN Type-5.
 	Type5Networks []string
 
+	// OverlayDevices are the device settings of the provision VXLAN device
+	// and bridge, from netplan or the native options.
+	OverlayDevices OverlayDevices
+	// NoAcceptRA lists the NICs with netplan "accept-ra: false".
+	NoAcceptRA []string
+	// EmitLLDP lists the NICs with netplan "emit-lldp: true".
+	EmitLLDP []string
+	// IPForwarding and IPv6Forwarding set the forwarding sysctls; nil keeps
+	// the GoBGP default: IPv4 on, IPv6 off (the kernel default the legacy
+	// ramdisk keeps). frr.conf "[no] ip[v6] forwarding" sets them.
+	IPForwarding   *bool
+	IPv6Forwarding *bool
+
 	// VLAN configuration.
 	VLANs []VLANConfig // 802.1Q VLAN interfaces to create before network mode setup
 }
@@ -205,6 +218,34 @@ type BGPSession struct {
 	// family and direction without a route-map, like FRR "bgp
 	// ebgp-requires-policy".
 	EBGPRequiresPolicy bool
+}
+
+// OverlayDevices are netplan settings of the provision VXLAN device and
+// bridge, with systemd-networkd semantics. Zero and nil values keep the
+// GoBGP defaults: VXLAN MTU = MTU - 50, a derived MAC, no MAC learning,
+// kernel defaults for the bridge port and an IPv6 link-local address.
+type OverlayDevices struct {
+	VXLANMTU int    `json:"vxlanMTU,omitempty" yaml:"vxlanMTU,omitempty"`
+	VXLANMAC string `json:"vxlanMAC,omitempty" yaml:"vxlanMAC,omitempty"`
+	// VXLANLearning is netplan mac-learning, VXLANARPProxy arp-proxy.
+	VXLANLearning *bool `json:"vxlanLearning,omitempty" yaml:"vxlanLearning,omitempty"`
+	VXLANARPProxy *bool `json:"vxlanARPProxy,omitempty" yaml:"vxlanARPProxy,omitempty"`
+	// PortHairpin and PortLearning are netplan hairpin and
+	// port-mac-learning: the VXLAN device as bridge port.
+	PortHairpin  *bool `json:"portHairpin,omitempty" yaml:"portHairpin,omitempty"`
+	PortLearning *bool `json:"portLearning,omitempty" yaml:"portLearning,omitempty"`
+	// VXLANLinkLocal and BridgeLinkLocal false is netplan "link-local: []":
+	// no IPv6 link-local address.
+	VXLANLinkLocal  *bool `json:"vxlanLinkLocal,omitempty" yaml:"vxlanLinkLocal,omitempty"`
+	BridgeLinkLocal *bool `json:"bridgeLinkLocal,omitempty" yaml:"bridgeLinkLocal,omitempty"`
+	// VXLANAcceptRA and BridgeAcceptRA are netplan accept-ra.
+	VXLANAcceptRA  *bool `json:"vxlanAcceptRA,omitempty" yaml:"vxlanAcceptRA,omitempty"`
+	BridgeAcceptRA *bool `json:"bridgeAcceptRA,omitempty" yaml:"bridgeAcceptRA,omitempty"`
+	BridgeMTU      int   `json:"bridgeMTU,omitempty" yaml:"bridgeMTU,omitempty"`
+	// BridgeSTP is the spanning tree of the provision bridge, like netplan
+	// bridge parameters stp: a parameters block without stp means on.
+	// nil keeps the kernel default (off).
+	BridgeSTP *bool `json:"bridgeSTP,omitempty" yaml:"bridgeSTP,omitempty"`
 }
 
 // SessionRouteMaps are the import (In) and export (Out) route-maps of a

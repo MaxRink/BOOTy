@@ -30,6 +30,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/crash"
 	"github.com/telekom/BOOTy/pkg/health"
+	"github.com/telekom/BOOTy/pkg/network/netplan"
 )
 
 // Client communicates with the CAPRF provisioning server.
@@ -1651,6 +1652,16 @@ func applyIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 		cfg.Provision.Disk.SettleTimeoutSec = &n
 		return true, nil
 	}
+	if key == "NETWORK_DEVICES" {
+		// The netplan "network:" section as JSON, checked like a netplan
+		// file; unknown keys always fail.
+		np, err := netplan.ParseBytesWith(key, []byte("network: "+value), true)
+		if err != nil {
+			return true, fmt.Errorf("invalid %s: %w", key, err)
+		}
+		cfg.Network.Devices = (*config.NetworkDevices)(&np.Network)
+		return true, nil
+	}
 	if key == "NETWORK_WAIT_MAX_ATTEMPTS" {
 		// Keep an explicit 0 apart from an unset value; an empty value is
 		// unset, like ${NETWORK_WAIT_MAX_ATTEMPTS:-15}.
@@ -1730,6 +1741,25 @@ func applyFeatureToggle(cfg *config.MachineConfig, key, value string) (bool, err
 	return true, nil
 }
 
+// networkBoolOption returns the optional boolean network option of a
+// vars key.
+func networkBoolOption(cfg *config.MachineConfig, key string) **bool {
+	o := &cfg.Network.Overlay
+	return map[string]**bool{
+		"VXLAN_LEARNING":         &o.VXLANLearning,
+		"VXLAN_ARP_PROXY":        &o.VXLANARPProxy,
+		"VXLAN_PORT_HAIRPIN":     &o.PortHairpin,
+		"VXLAN_PORT_LEARNING":    &o.PortLearning,
+		"VXLAN_IPV6_LINK_LOCAL":  &o.VXLANLinkLocal,
+		"VXLAN_ACCEPT_RA":        &o.VXLANAcceptRA,
+		"BRIDGE_IPV6_LINK_LOCAL": &o.BridgeLinkLocal,
+		"BRIDGE_ACCEPT_RA":       &o.BridgeAcceptRA,
+		"BRIDGE_STP":             &o.BridgeSTP,
+		"IP_FORWARDING":          &cfg.Network.IPForwarding,
+		"IPV6_FORWARDING":        &cfg.Network.IPv6Forwarding,
+	}[key]
+}
+
 // applyNetworkOptionVar handles the native options of values that the
 // provisioner frr.conf can also set. Unset options stay nil.
 func applyNetworkOptionVar(cfg *config.MachineConfig, key, value string) (bool, error) {
@@ -1746,6 +1776,34 @@ func applyNetworkOptionVar(cfg *config.MachineConfig, key, value string) (bool, 
 		if err := setIntField(&cfg.Network.MTU, value); err != nil {
 			return true, fmt.Errorf("invalid %s: %w", key, err)
 		}
+	default:
+		return applyDeviceOptionVar(cfg, key, value)
+	}
+	return true, nil
+}
+
+// applyDeviceOptionVar handles the native options of the netplan device
+// settings.
+func applyDeviceOptionVar(cfg *config.MachineConfig, key, value string) (bool, error) {
+	if b := networkBoolOption(cfg, key); b != nil {
+		*b = new(parseBoolVar(value))
+		return true, nil
+	}
+	switch key {
+	case "VXLAN_MTU", "BRIDGE_MTU":
+		mtu := &cfg.Network.Overlay.VXLANMTU
+		if key == "BRIDGE_MTU" {
+			mtu = &cfg.Network.Overlay.BridgeMTU
+		}
+		if err := setIntField(mtu, value); err != nil {
+			return true, fmt.Errorf("invalid %s: %w", key, err)
+		}
+	case "VXLAN_MAC":
+		cfg.Network.Overlay.VXLANMAC = value
+	case "ACCEPT_RA_OFF":
+		cfg.Network.NoAcceptRA = value
+	case "LLDP_EMIT":
+		cfg.Network.EmitLLDP = value
 	default:
 		return false, nil
 	}
