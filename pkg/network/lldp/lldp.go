@@ -180,8 +180,16 @@ func DiscoverAll(ctx context.Context, ifaces []string, timeout time.Duration) []
 	return neighbors
 }
 
-// parseLLDP extracts LLDP neighbor information from raw LLDP payload.
+// parseLLDP extracts LLDP neighbor information from raw LLDP payload. It
+// drops an LLDPDU whose first three TLVs are not Chassis ID, Port ID and
+// TTL in this order (IEEE 802.1AB). The End of LLDPDU TLV is optional
+// since 802.1AB-2016; the decoder needs one, so a payload without it gets
+// one appended (a present End TLV ends the decoding before it).
 func parseLLDP(data []byte, iface string) *Neighbor {
+	if !mandatoryTLVsFirst(data) {
+		return nil
+	}
+	data = append(data[:len(data):len(data)], 0, 0)
 	pkt := gopacket.NewPacket(data, layers.LayerTypeLinkLayerDiscovery, gopacket.NoCopy)
 
 	lldpLayer := pkt.Layer(layers.LayerTypeLinkLayerDiscovery)
@@ -218,6 +226,23 @@ func parseLLDP(data []byte, iface string) *Neighbor {
 	}
 
 	return n
+}
+
+// mandatoryTLVsFirst reports whether the LLDPDU starts with the Chassis ID,
+// Port ID and TTL TLVs, in this order and each within the data.
+func mandatoryTLVsFirst(data []byte) bool {
+	for _, want := range []layers.LLDPTLVType{layers.LLDPTLVChassisID, layers.LLDPTLVPortID, layers.LLDPTLVTTL} {
+		if len(data) < 2 {
+			return false
+		}
+		typ := layers.LLDPTLVType(data[0] >> 1)
+		n := int(data[0]&1)<<8 | int(data[1])
+		if typ != want || len(data) < 2+n || (typ == layers.LLDPTLVTTL && n < 2) {
+			return false
+		}
+		data = data[2+n:]
+	}
+	return true
 }
 
 const maxLLDPFieldLen = 255

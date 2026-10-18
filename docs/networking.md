@@ -645,14 +645,18 @@ per boot, kept in `/run/booty/machine-id`; it never uses or writes
 `/etc/machine-id`, so no ID is shared by hosts or written into the
 provisioned OS), port ID the interface name, TTL 120 s, system name the
 hostname, and the capabilities station, bridge and router (station
-enabled). With `LLDP_RECEIVE` (on by default) BOOTy also listens on every
+enabled). When the sending stops, BOOTy sends a shutdown LLDPDU (TTL 0,
+IEEE 802.1AB), so the switch drops BOOTy at once instead of after 120 s;
+networkd does not send one. With `LLDP_RECEIVE` (on by default) BOOTy also listens on every
 physical NIC, logs each new or changed neighbor and adds the current
 neighbors to the hardware inventory report; the legacy ramdisk only
 sends. The receive joins the LLDP multicast groups (01:80:c2:00:00:0e,
 :03 and :00) like networkd and lldpd, which a NIC that is not
 promiscuous needs; the lab veths pass LLDP without them, so the lab does
 not show it (a root test checks the membership). It drops BOOTy's own
-frames that come back (our source MAC or chassis ID). It keeps one
+frames that come back (our source MAC or chassis ID), and LLDPDUs whose
+first three TLVs are not Chassis ID, Port ID and TTL (IEEE 802.1AB); the
+End of LLDPDU TLV is optional. It keeps one
 neighbor per NIC: a second chassis on the same link replaces the first.
 The inventory runs seconds after the receive starts, so while no
 neighbor is known it waits until the receive has run for 30 s, one

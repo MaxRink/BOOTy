@@ -93,3 +93,49 @@ func TestSanitizeLLDP(t *testing.T) {
 		})
 	}
 }
+
+// rawTLV encodes one LLDP TLV: 7 bits type, 9 bits length, value.
+func rawTLV(typ layers.LLDPTLVType, value ...byte) []byte {
+	h := uint16(typ)<<9 | uint16(len(value))
+	return append([]byte{byte(h >> 8), byte(h)}, value...)
+}
+
+// IEEE 802.1AB: the first three TLVs are Chassis ID, Port ID and TTL in
+// this order, else the LLDPDU is dropped; the End of LLDPDU TLV is
+// optional (802.1AB-2016).
+func TestParseLLDPMandatoryTLVs(t *testing.T) {
+	chassis := rawTLV(layers.LLDPTLVChassisID, 4, 0, 0x11, 0x22, 0x33, 0x44, 0x55)
+	port := rawTLV(layers.LLDPTLVPortID, 5, 'E', 't', 'h', '1')
+	ttl := rawTLV(layers.LLDPTLVTTL, 0, 120)
+	end := rawTLV(layers.LLDPTLVEnd)
+	join := func(parts ...[]byte) []byte {
+		var b []byte
+		for _, p := range parts {
+			b = append(b, p...)
+		}
+		return b
+	}
+	tests := []struct {
+		name string
+		data []byte
+		ok   bool
+	}{
+		{"in order with End", join(chassis, port, ttl, end), true},
+		{"in order without End", join(chassis, port, ttl), true},
+		{"port before chassis", join(port, chassis, ttl, end), false},
+		{"no TTL", join(chassis, port, end), false},
+		{"TTL after an optional TLV", join(chassis, port, rawTLV(layers.LLDPTLVSysName, 'x'), ttl, end), false},
+		{"short TTL", join(chassis, port, rawTLV(layers.LLDPTLVTTL, 0), end), false},
+		{"truncated chassis", chassis[:4], false},
+	}
+	for _, tt := range tests {
+		n := parseLLDP(tt.data, "eth0")
+		if (n != nil) != tt.ok {
+			t.Errorf("%s: neighbor %+v, want accepted=%v", tt.name, n, tt.ok)
+			continue
+		}
+		if n != nil && (n.PortID != "Eth1" || n.TTL != 120) {
+			t.Errorf("%s: neighbor %+v", tt.name, n)
+		}
+	}
+}

@@ -117,18 +117,12 @@ func machineID() string {
 // lldpd, and the system name "bare-minimal"; the rest stays as networkd
 // sends it.
 func Frame(ifname string, mac net.HardwareAddr, info *Info) ([]byte, error) {
-	chassis := layers.LLDPChassisID{Subtype: layers.LLDPChassisIDSubTypeLocal, ID: []byte(info.MachineID)}
-	if info.MachineID == "" {
-		chassis = layers.LLDPChassisID{Subtype: layers.LLDPChassisIDSubTypeMACAddr, ID: mac}
-	}
-	port := layers.LLDPPortID{Subtype: layers.LLDPPortIDSubtypeIfaceName, ID: []byte(ifname)}
 	caps := make([]byte, 4)
 	binary.BigEndian.PutUint16(caps[0:], capSupported)
 	binary.BigEndian.PutUint16(caps[2:], capEnabled)
 	var values []layers.LinkLayerDiscoveryValue
 	sysName := info.SystemName
 	if info.Profile == ProfileBM4XCableCheck {
-		port = bm4xPortID(info.PortIDFormat, ifname, mac)
 		values = append(values, tlv(layers.LLDPTLVPortDescription, ifname))
 		sysName = BM4XSystemName
 	}
@@ -137,13 +131,33 @@ func Frame(ifname string, mac net.HardwareAddr, info *Info) ([]byte, error) {
 		values = append(values, tlv(layers.LLDPTLVSysDescription, info.PrettyHostname))
 	}
 	values = append(values, layers.LinkLayerDiscoveryValue{Type: layers.LLDPTLVSysCapabilities, Length: 4, Value: caps})
+	return frame(ifname, mac, info, txTTL, values)
+}
+
+// ShutdownFrame returns the shutdown LLDPDU of IEEE 802.1AB (TTL 0 and only
+// the mandatory TLVs, with the chassis and port ID of the normal frames): the
+// neighbor removes this system at once instead of after the TTL of the last
+// frame.
+func ShutdownFrame(ifname string, mac net.HardwareAddr, info *Info) ([]byte, error) {
+	return frame(ifname, mac, info, 0, nil)
+}
+
+func frame(ifname string, mac net.HardwareAddr, info *Info, ttl uint16, values []layers.LinkLayerDiscoveryValue) ([]byte, error) {
+	chassis := layers.LLDPChassisID{Subtype: layers.LLDPChassisIDSubTypeLocal, ID: []byte(info.MachineID)}
+	if info.MachineID == "" {
+		chassis = layers.LLDPChassisID{Subtype: layers.LLDPChassisIDSubTypeMACAddr, ID: mac}
+	}
+	port := layers.LLDPPortID{Subtype: layers.LLDPPortIDSubtypeIfaceName, ID: []byte(ifname)}
+	if info.Profile == ProfileBM4XCableCheck {
+		port = bm4xPortID(info.PortIDFormat, ifname, mac)
+	}
 	buf := gopacket.NewSerializeBuffer()
 	err := gopacket.SerializeLayers(buf, gopacket.SerializeOptions{},
 		&layers.Ethernet{SrcMAC: mac, DstMAC: nearestBridge, EthernetType: layers.EthernetTypeLinkLayerDiscovery},
 		&layers.LinkLayerDiscovery{
 			ChassisID: chassis,
 			PortID:    port,
-			TTL:       txTTL,
+			TTL:       ttl,
 			Values:    values,
 		})
 	if err != nil {
@@ -209,7 +223,7 @@ func emitOn(ctx context.Context, iface string, info *Info, log *slog.Logger) {
 	}
 	failed := false
 	for n := 0; ; n++ {
-		if err := send(iface, info); err != nil && !failed {
+		if err := sendFrame(iface, info, Frame); err != nil && !failed {
 			// Log once; the NIC may come back (carrier, rename).
 			log.Warn("LLDP frame not sent", "error", err)
 			failed = true
@@ -222,13 +236,19 @@ func emitOn(ctx context.Context, iface string, info *Info, log *slog.Logger) {
 		}
 		select {
 		case <-ctx.Done():
+			// IEEE 802.1AB: a port that stops sending sends a shutdown
+			// LLDPDU, so the switch does not keep BOOTy for the TTL.
+			if err := sendFrame(iface, info, ShutdownFrame); err != nil {
+				log.Debug("LLDP shutdown frame not sent", "error", err)
+			}
 			return
 		case <-time.After(wait):
 		}
 	}
 }
 
-func send(iface string, info *Info) error {
+// sendFrame sends the frame that build makes for the NIC; tests replace it.
+var sendFrame = func(iface string, info *Info, build func(string, net.HardwareAddr, *Info) ([]byte, error)) error {
 	ifi, err := net.InterfaceByName(iface)
 	if err != nil {
 		return fmt.Errorf("interface %s: %w", iface, err)
@@ -236,7 +256,7 @@ func send(iface string, info *Info) error {
 	if info.carrierOnly() && ifi.Flags&net.FlagRunning == 0 {
 		return nil // no carrier: send once the link is up
 	}
-	frame, err := Frame(iface, ifi.HardwareAddr, info)
+	frame, err := build(iface, ifi.HardwareAddr, info)
 	if err != nil {
 		return err
 	}

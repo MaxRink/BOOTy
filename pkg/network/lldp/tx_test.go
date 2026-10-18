@@ -4,8 +4,10 @@ package lldp
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -231,5 +233,66 @@ func TestDottedMAC(t *testing.T) {
 	mac, _ := net.ParseMAC("00:1B:54:C2:00:0A")
 	if got := dottedMAC(mac); got != "001b.54c2.000a" {
 		t.Fatalf("dottedMAC = %q", got)
+	}
+}
+
+// IEEE 802.1AB shutdown LLDPDU: TTL 0 and only the mandatory TLVs.
+func TestShutdownFrame(t *testing.T) {
+	mac, _ := net.ParseMAC("02:00:00:00:00:01")
+	b, err := ShutdownFrame("eth0", mac, &Info{MachineID: "0123456789abcdef0123456789abcdef", SystemName: "host1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkt := gopacket.NewPacket(b, layers.LayerTypeEthernet, gopacket.Default)
+	l, _ := pkt.Layer(layers.LayerTypeLinkLayerDiscovery).(*layers.LinkLayerDiscovery)
+	if l == nil {
+		t.Fatalf("frame does not decode: %v", pkt.ErrorLayer())
+	}
+	if l.TTL != 0 || len(l.Values) != 0 || string(l.PortID.ID) != "eth0" {
+		t.Errorf("shutdown frame TTL %d, %d optional TLVs, port %q; want TTL 0, none, eth0", l.TTL, len(l.Values), l.PortID.ID)
+	}
+	// The shutdown LLDPDU names the same port as the frames before it: the
+	// neighbor keys its entry by chassis and port ID.
+	bm4x := &Info{MachineID: "m", Profile: ProfileBM4XCableCheck}
+	b, err = ShutdownFrame("eth0", mac, bm4x)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, _ = gopacket.NewPacket(b, layers.LayerTypeEthernet, gopacket.Default).Layer(layers.LayerTypeLinkLayerDiscovery).(*layers.LinkLayerDiscovery)
+	if l == nil || l.PortID.Subtype != layers.LLDPPortIDSubtypeMACAddr || !bytes.Equal(l.PortID.ID, mac) {
+		t.Errorf("bm4x shutdown frame port ID %+v, want the NIC MAC like its normal frames", l)
+	}
+}
+
+// The sender ends with the shutdown LLDPDU when it stops.
+func TestEmitEndsWithShutdownFrame(t *testing.T) {
+	orig := sendFrame
+	t.Cleanup(func() { sendFrame = orig })
+	ttls := make(chan uint16, 16)
+	sendFrame = func(iface string, info *Info, build func(string, net.HardwareAddr, *Info) ([]byte, error)) error {
+		b, err := build(iface, net.HardwareAddr{2, 0, 0, 0, 0, 1}, info)
+		if err != nil {
+			return err
+		}
+		l, _ := gopacket.NewPacket(b, layers.LayerTypeEthernet, gopacket.Default).Layer(layers.LayerTypeLinkLayerDiscovery).(*layers.LinkLayerDiscovery)
+		if l != nil {
+			ttls <- l.TTL
+		}
+		return nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	wait := Emit(ctx, []string{"eth0"}, &Info{MachineID: "m", SystemName: "host1"}, slog.Default())
+	if got := <-ttls; got != txTTL {
+		t.Fatalf("first frame TTL %d, want %d", got, txTTL)
+	}
+	cancel()
+	wait()
+	close(ttls)
+	var last uint16 = txTTL
+	for v := range ttls {
+		last = v
+	}
+	if last != 0 {
+		t.Fatalf("last frame TTL %d, want 0 (shutdown LLDPDU)", last)
 	}
 }
