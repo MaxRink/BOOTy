@@ -268,6 +268,26 @@ func TestHasFirmwareSettings(t *testing.T) {
 	}
 }
 
+func TestOwnsMellanoxVFs(t *testing.T) {
+	cases := []struct {
+		p    Profile
+		want bool
+	}{
+		{Profile{Match: Match{VendorID: "15b3"}, Firmware: FirmwareSettings{MaxVFs: ptr(8)}}, true},
+		{Profile{Match: Match{Driver: "mlx5_core"}, Firmware: FirmwareSettings{SRIOVEnabled: ptr(true)}}, true},
+		{Profile{Match: Match{Driver: "mlx4_core"}, Firmware: FirmwareSettings{MaxVFs: ptr(8)}}, true},
+		{Profile{Match: Match{Interface: "ens1*"}, Firmware: FirmwareSettings{MaxVFs: ptr(8)}}, true},
+		{Profile{Match: Match{VendorID: "8086"}, Firmware: FirmwareSettings{MaxVFs: ptr(8)}}, false},
+		{Profile{Match: Match{Driver: "bnxt_en"}, Firmware: FirmwareSettings{SRIOVEnabled: ptr(true)}}, false},
+		{Profile{Match: Match{VendorID: "15b3"}, Firmware: FirmwareSettings{NVConfig: []Setting{{"CQE_COMPRESSION", "1"}}}}, false},
+	}
+	for i, c := range cases {
+		if got := (&Config{Profiles: []Profile{c.p}}).OwnsMellanoxVFs(); got != c.want {
+			t.Errorf("case %d: %v", i, got)
+		}
+	}
+}
+
 func TestConfigDecodesStrictly(t *testing.T) {
 	var c Config
 	if err := yaml.Unmarshal([]byte("onDrift: fail\nprofiles:\n  - name: a\n    match: {driver: ice}\n"), &c); err != nil ||

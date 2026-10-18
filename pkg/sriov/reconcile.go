@@ -121,96 +121,89 @@ func appendOnce(list []string, s string) []string {
 }
 
 // firmware reads, checks and, with onDrift apply, stores the firmware
-// settings of one PF port. The settings of an adapter are shared by its
-// ports: after the first port stores them, the next port reads the stored
-// value and the journal marks it as applied, so BOOTy writes once per
-// adapter.
+// settings of one PF port. Each drifted setting goes to the backend that
+// read it. The settings of an adapter are shared by its ports: after the
+// first port stores them, the next port reads the stored value and the
+// journal marks it as applied, so BOOTy writes once per adapter.
 func (r *Reconciler) firmware(ctx context.Context, a Assignment, conflicts map[string]string) (findings []Finding, reboot bool) {
 	want := &a.Profile.Firmware
 	if !hasFirmwareSettings(want) {
 		return nil, false
 	}
-	backend, note := backendFor(r.Backends, a.PF, r.Config.Tools())
-	var read *FirmwareRead
-	if backend != nil {
-		var err error
-		read, err = backend.Read(ctx, a.PF, want)
-		if err != nil {
-			read, note = nil, fmt.Sprintf("%s read: %v", backend.Name(), err)
-		}
-	}
-	findings = checkFirmware(a, read, note, conflicts, r.Journal)
+	view := readFirmware(ctx, r.Backends, a.PF, want, r.Config.Tools())
+	findings = checkFirmware(a, view, conflicts, r.Journal)
 	for i := range findings {
 		reboot = reboot || findings[i].Status == StatusApplied
 	}
 	if r.Config.DriftAction(a.Profile) != OnDriftApply {
 		return findings, reboot
 	}
-	if backend == nil || read == nil {
-		backend = nil
+	byOwner := map[FirmwareBackend][]string{}
+	var owners []FirmwareBackend
+	for i := range findings {
+		f := &findings[i]
+		if f.Status != StatusDrift {
+			continue
+		}
+		b, ok := view.owner[f.Setting]
+		if !ok {
+			f.Status, f.Detail = StatusFailed, "cannot apply: "+view.notes[f.Setting]
+			continue
+		}
+		if _, seen := byOwner[b]; !seen {
+			owners = append(owners, b)
+		}
+		byOwner[b] = append(byOwner[b], f.Setting)
 	}
-	return findings, r.applyDrift(ctx, backend, note, a, findings) || reboot
+	for _, b := range owners {
+		results, needReboot := r.store(ctx, b, a, byOwner[b])
+		reboot = reboot || needReboot
+		for i := range findings {
+			if res, ok := results[findings[i].Setting]; ok {
+				findings[i].Status, findings[i].Detail = res[0], res[1]
+			}
+		}
+	}
+	return findings, reboot
 }
 
-// applyDrift stores the drifted settings and updates their findings. It
-// reports whether a stored setting needs the reboot.
-func (r *Reconciler) applyDrift(ctx context.Context, b FirmwareBackend, note string, a Assignment, findings []Finding) bool {
-	var drifted []string
-	for i := range findings {
-		if findings[i].Status == StatusDrift {
-			drifted = append(drifted, findings[i].Setting)
-		}
-	}
-	if len(drifted) == 0 {
-		return false
-	}
-	results := map[string][2]string{}
-	if b == nil {
-		for _, name := range drifted {
-			results[name] = [2]string{StatusFailed, "cannot apply: " + note}
-		}
-	} else {
-		results = r.store(ctx, b, a, drifted)
-	}
-	reboot := false
-	for i := range findings {
-		if res, ok := results[findings[i].Setting]; ok {
-			findings[i].Status, findings[i].Detail = res[0], res[1]
-			reboot = reboot || res[0] == StatusApplied
-		}
-	}
-	return reboot
-}
-
-// store applies the drifted settings, reads them back and records the
-// ones that the NIC kept. A set that does not persist fails instead of
-// rebooting into the same drift again.
-func (r *Reconciler) store(ctx context.Context, b FirmwareBackend, a Assignment, drifted []string) map[string][2]string {
+// store applies the drifted settings of one backend, reads them back and
+// records the ones that the NIC kept. A set that does not persist fails
+// instead of rebooting into the same drift again.
+func (r *Reconciler) store(ctx context.Context, b FirmwareBackend, a Assignment, drifted []string) (results map[string][2]string, reboot bool) {
 	want := &a.Profile.Firmware
-	out := map[string][2]string{}
-	if err := b.Apply(ctx, a.PF, changeFor(want, drifted)); err != nil {
+	results = map[string][2]string{}
+	needReboot, err := b.Apply(ctx, a.PF, changeFor(want, drifted))
+	if err != nil {
 		for _, name := range drifted {
-			out[name] = [2]string{StatusFailed, fmt.Sprintf("%s apply: %v", b.Name(), err)}
+			results[name] = [2]string{StatusFailed, fmt.Sprintf("%s apply: %v", b.Name(), err)}
 		}
-		return out
+		return results, false
 	}
 	after, err := b.Read(ctx, a.PF, want)
+	detail := "active now"
+	if needReboot {
+		detail = "takes effect after the reboot"
+	}
 	for _, name := range drifted {
 		wantValue := getSetting(want, name)
 		switch {
 		case err != nil:
-			out[name] = [2]string{StatusFailed, fmt.Sprintf("%s read back: %v", b.Name(), err)}
+			results[name] = [2]string{StatusFailed, fmt.Sprintf("%s read back: %v", b.Name(), err)}
 		case getSetting(&after.Values, name) != wantValue:
-			out[name] = [2]string{StatusFailed, fmt.Sprintf("%s set did not persist: stored %q after the set",
+			results[name] = [2]string{StatusFailed, fmt.Sprintf("%s set did not persist: stored %q after the set",
 				b.Name(), getSetting(&after.Values, name))}
 		default:
-			if err := r.Journal.Record(scopeKey(a.PF, name), name, wantValue); err != nil {
-				r.logger().Warn("SR-IOV journal", "error", err)
+			if needReboot {
+				if jerr := r.Journal.Record(scopeKey(a.PF, name), name, wantValue); jerr != nil {
+					r.logger().Warn("SR-IOV journal", "error", jerr)
+				}
+				reboot = true
 			}
-			out[name] = [2]string{StatusApplied, "takes effect after the reboot"}
+			results[name] = [2]string{StatusApplied, detail}
 		}
 	}
-	return out
+	return results, reboot
 }
 
 func (r *Reconciler) logger() *slog.Logger {

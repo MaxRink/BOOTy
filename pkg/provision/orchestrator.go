@@ -770,6 +770,10 @@ func (o *Orchestrator) createEFIBootEntry(ctx context.Context) error {
 }
 
 func (o *Orchestrator) setupMellanox(ctx context.Context) error {
+	if o.cfg.Provision.SRIOV.OwnsMellanoxVFs() {
+		o.log.Info("SR-IOV profiles set the ConnectX VFs, skipping setup-mellanox (NUM_VFS)")
+		return nil
+	}
 	setup := o.config.SetupMellanox
 	if o.cfg.Provision.Firmware.NumVFsMode == config.NumVFsModeRaise {
 		setup = o.config.setupMellanoxLegacy

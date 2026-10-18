@@ -1,0 +1,13 @@
+
+Device #1:
+----------
+
+Device type:        ConnectX4LX         
+Name:               MCX4121A-ACA_Ax     
+Description:        ConnectX-4 Lx EN network interface card; 25GbE dual-port SFP28; PCIe3.0 x8; ROHS R6
+Device:             0000:5e:00.0        
+
+Configurations:                                          Default             Current             Next Boot
+        SRIOV_EN                                    False(0)            False(0)            False(0)            
+        NUM_OF_VFS                                  8                   8                   8                   
+        CQE_COMPRESSION                             BALANCED(0)         BALANCED(0)         BALANCED(0)         

@@ -180,6 +180,98 @@ report (`ERROR_URL`) names the `pending-reset` settings.
 
 BOOTy logs a summary line `SR-IOV compliance` with the finding counts.
 
+### Firmware backends
+
+A backend reads and stores the firmware settings of a NIC family. A PF port
+can have several; each setting belongs to the first backend that reads a
+value for it, and its apply goes there. `NIC_TOOLS` decides which backends
+BOOTy may use.
+
+| Backend | `NIC_TOOLS` | NICs | Settings | Takes effect |
+|---------|-------------|------|----------|--------------|
+| `mstconfig` (mstflint) | `opensource` | NVIDIA ConnectX-4 Lx to 8 and BlueField (`mlx5_core`), ConnectX-3 (`mlx4_core`) | `sriovEnabled` (`SRIOV_EN`), `maxVFs` (`NUM_OF_VFS`), `linkType` (`LINK_TYPE_P<port>`), any `nvConfig` parameter, for example `CQE_COMPRESSION`, `FLEX_PARSER_PROFILE_ENABLE`, `NUM_VF_MSIX`, or the BlueField `INTERNAL_CPU_OFFLOAD_ENGINE` (DPU or NIC mode) | after the reboot |
+| `mlxconfig` (MFT) | `vendor` | same, when a site flavor ships MFT and mstconfig is missing | same | after the reboot |
+| `devlink` | `kernel` | every driver with devlink parameters in the permanent mode, for example `bnxt_en` | `sriovEnabled` (generic `enable_sriov`), `devlinkParams` | after the reboot |
+| `ethtool` | `opensource` | Intel `ice`, `i40e` | `fwLLDPAgent` (`fw-lldp-agent` on ice, `disable-fw-lldp` inverted on i40e) | at once, no reboot |
+
+`mstconfig -e -d <pci> query` gives the default, the current (active) and
+the next-boot (stored) value of every NV parameter, so BOOTy also sees a
+pending reset of a parameter that the kernel does not show. All changes for
+one port go in one `mstconfig -y -d <pci> set` call. mstflint 4.31 is in
+the default ramdisk (Debian trixie package `mstflint`, licence BSD-2-clause
+or GPL-2). The port of `LINK_TYPE_P<n>` comes from `phys_port_name`
+(`p0` is port 1), else from the PCI function.
+
+When no backend reads a setting, the finding names the vendor tool:
+
+| Family | Driver | Firmware tool without a BOOTy backend |
+|--------|--------|---------------------------------------|
+| Intel E810, X710, X540/X550 | `ice`, `i40e`, `ixgbe` | VF limit and SR-IOV enable are in the NVM: `nvmupdate64e` (vendor flavor) or the Redfish NIC attributes of the BMC. The active value (`sriovTotalVFs`) is still checked. |
+| Broadcom NetXtreme-E | `bnxt_en` | VF limit: `niccli` or `bnxtnvm` (vendor flavor) or Redfish; SR-IOV enable works through devlink. |
+| Marvell/QLogic FastLinQ | `qede` | vendor NVM tool or Redfish |
+| Chelsio T5/T6 | `cxgb4` | firmware configuration file and `cxgbtool` |
+| AMD Solarflare | `sfc`, `sfc_ef100` | `sfboot` (vendor flavor) |
+| AMD Pensando | `ionic` | vendor tooling |
+
+With `onDrift: apply`, BOOTy stores the drifted settings and, when a
+backend says so, reboots instead of kexec (`FirmwareChanged`). A NIC that
+needs a cold power cycle for a setting shows `pending-reset` in the next
+run; CAPRF should power-cycle the host then.
+
+#### Secure Boot and kernel lockdown
+
+Under Secure Boot the kernel runs in lockdown (`/sys/kernel/security/lockdown`
+shows `[integrity]` or `[confidentiality]`). Lockdown forbids PCI config
+writes and BAR mappings from user space, so `mstconfig` and `mlxconfig`
+cannot read or change the ConnectX and BlueField NV configuration.
+
+| Path | Under lockdown |
+|------|----------------|
+| Report (sysfs, devlink, rtnetlink, ethtool ioctl) | works |
+| Runtime settings (`sriov_numvfs`, devlink eSwitch, VF attributes) | works |
+| devlink parameters (Broadcom `enable_sriov`, `devlinkParams`) | works |
+| Intel `fwLLDPAgent` (ethtool private flag) | works |
+| ConnectX/BlueField NV config (`sriovEnabled`, `maxVFs`, `linkType`, `nvConfig` through mstconfig or mlxconfig) | blocked |
+
+BOOTy asks the devlink backend first, so a setting that the driver also
+offers as a permanent devlink parameter does not need mstconfig. mlx5 has
+no permanent devlink parameter for the SR-IOV enable, the VF limit or the
+link type (check with `devlink dev param show` on the target kernel), so
+these ConnectX settings need mstconfig. Under lockdown BOOTy does not run
+`mstconfig set`; the findings carry the coded reason
+`nic-firmware-lockdown: NIC firmware change needs Secure Boot off or an
+out-of-band path` instead of a raw `EPERM`. The kernel still shows the
+active values (`sriovTotalVFs`, `linkType`), so a compliant adapter stays
+`ok`, and no verify reboot happens because nothing was stored.
+
+Caveats under lockdown:
+
+- `ok` then means the active value equals the profile. The stored
+  (next-boot) value is not readable, so a different value waiting for the
+  next reset stays invisible until that reset.
+- BOOTy treats `EPERM` ("Operation not permitted") from mstconfig as
+  lockdown. `EACCES` ("Permission denied") is a plain permission problem,
+  for example not running as root, and stays a normal error.
+- If a future mlx5 offers `enable_sriov` as a permanent devlink parameter,
+  the ConnectX writes split: the SR-IOV enable goes through devlink (works
+  under lockdown), the VF limit and the other NV parameters still through
+  mstconfig (blocked). A profile then gets `applied` for one and the
+  lockdown reason for the other.
+
+For such an adapter, either turn Secure Boot off for the provisioning boot,
+or set the values out of band before BOOTy runs: the Redfish
+`NetworkAdapters/<id>/NetworkDeviceFunctions` settings or the OEM NIC
+attributes of the BMC (Dell, HPE, Lenovo; names differ per vendor and
+firmware). CAPRF applies them, and BOOTy checks the active values in band.
+
+#### setup-mellanox and the profiles
+
+When a profile sets `sriovEnabled` or `maxVFs` and can match a ConnectX
+port (`vendorId` `15b3`, a `mlx*_core` driver, or neither in the match),
+the profiles own `NUM_OF_VFS` and `setup-mellanox` (`NUM_VFS`,
+`NUM_VFS_MODE`) does nothing. Otherwise the two would write different
+values on every provision.
+
 ### Runtime settings
 
 Runtime settings do not survive the kexec or the reboot into the installed
@@ -368,19 +460,27 @@ BOOTy does not guarantee:
 | DRA SR-IOV driver (`k8snetworkplumbingwg/dra-driver-sriov`) | eSwitch mode (the driver reads it through devlink and assumes legacy without it; eSwitch detection by `phys_switch_id` was proposed in upstream PR #120, closed without merge), PF name, vendor and device ID, NUMA node, link type | `eswitch.mode`, `physSwitchId`, `interface`, `vendorId`, `deviceId`, `numaNode`, `linkType` |
 | DRA representor and tc-flower work (upstream issues #121, #122) | Whether the hardware can run switchdev | `eswitch.capability` |
 | DRA VF attributes (upstream #123) and sriov-cni | VF limits | `sriovTotalVFs` |
-| t-co `SRIOVIntegration` gate | The `SRIOVEnabled` bootstrap input that taints SR-IOV worker groups. The input should come from this report (`sriovCapable` and `sriovTotalVFs` of the profile PFs), not from a manual flag. | `sriovCapable`, `sriovTotalVFs` |
+| t-co `SRIOVIntegration` gate and the ComputeProfile | The node label and the optional taint below, for SR-IOV worker groups. Their input should come from this report (`sriovCapable` and `sriovTotalVFs` of the profile PFs), not from a manual flag. | `sriovCapable`, `sriovTotalVFs` |
 | CAPRF and bm4x | Host status and the host class | the whole `sriov` object |
 
-The t-co draft MRs name the taint `sriov.t-caas.telekom.com/enabled`
-(`api/v1alpha1/taints.go` on `feat/sriov-taint-const`); the proposal and
-older notes name it `t-caas.telekom.com/sriov`. BOOTy sets no taint, so only
-the t-co side has to settle the key.
+The node keys follow the T-CaaS ADR "SR-IOV node scheduling" (repository
+`cit/t-caas/docs`, `decisions/cluster-lifecycle/2026-08-sriov-node-scheduling`,
+status proposed):
+
+- the node label `t-caas.telekom.com/sr-iov: "true"` is the interop
+  contract for SR-IOV nodes;
+- the taint `sriov.t-caas.telekom.com/enabled` with effect `NoSchedule` is
+  optional, to keep other workloads off an SR-IOV worker pool.
+
+The ComputeProfile and t-co set both. BOOTy sets neither the label nor the
+taint; it only reports the facts they should be based on.
 
 ### Ownership of firmware settings
 
 | Setting | Owner |
 |---------|-------|
-| ConnectX `NUM_OF_VFS`, `SRIOV_EN` | BOOTy (`setup-mellanox`, `NUM_VFS`). |
+| ConnectX `NUM_OF_VFS`, `SRIOV_EN` | BOOTy: the SR-IOV profiles when they set them, else `setup-mellanox` (`NUM_VFS`). |
+| Other NV parameters, permanent devlink parameters, Intel firmware LLDP | BOOTy when a profile sets them. |
 | ConnectX `FLEX_PARSER_PROFILE_ENABLE`, `CQE_COMPRESSION`, `NUM_OF_VFS` from the OS | The T-CaaS compute profile (`mellanox_cfg.service`, inputs `FlexParserProfileEnable`, `CqeCompression`, `NumOfVFs`) writes them with `mstconfig` on every OS boot. They take effect only after the next reboot. |
 | Runtime state | SR-IOV network operator or DRA driver. |
 

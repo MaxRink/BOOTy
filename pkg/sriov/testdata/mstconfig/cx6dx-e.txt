@@ -1,0 +1,28 @@
+
+Device #1:
+----------
+
+Device type:        ConnectX6DX         
+Name:               MCX623106AN-CDA_Ax  
+Description:        ConnectX-6 Dx EN adapter card; 100GbE; Dual-port QSFP56; PCIe 4.0/3.0 x16;
+Device:             0000:3b:00.0        
+
+Configurations:                                          Default             Current             Next Boot
+        MEMIC_BAR_SIZE                              0                   0                   0                   
+        MEMIC_SIZE_LIMIT                            _256KB(1)           _256KB(1)           _256KB(1)           
+        HOST_CHAINING_MODE                          DISABLED(0)         DISABLED(0)         DISABLED(0)         
+        INTERNAL_CPU_MODEL                          EMBEDDED_CPU(1)     EMBEDDED_CPU(1)     EMBEDDED_CPU(1)     
+        FLEX_PARSER_PROFILE_ENABLE                  0                   0                   0                   
+*       NUM_OF_VFS                                  8                   32                  64                  
+*       SRIOV_EN                                    False(0)            True(1)             True(1)             
+        PF_LOG_BAR_SIZE                             5                   5                   5                   
+        VF_LOG_BAR_SIZE                             1                   1                   1                   
+        NUM_PF_MSIX                                 63                  63                  63                  
+        NUM_VF_MSIX                                 11                  11                  11                  
+        LINK_TYPE_P1                                ETH(2)              ETH(2)              ETH(2)              
+        LINK_TYPE_P2                                ETH(2)              ETH(2)              ETH(2)              
+*       CQE_COMPRESSION                             BALANCED(0)         BALANCED(0)         AGGRESSIVE(1)       
+        ROCE_CONTROL                                ROCE_ENABLE(2)      ROCE_ENABLE(2)      ROCE_ENABLE(2)      
+        LLDP_NB_DCBX_P1                             False(0)            False(0)            False(0)            
+        ESWITCH_HAIRPIN_DESCRIPTORS[0]              128                 128                 128                 
+The '*' shows parameters with next value different from default/current value.

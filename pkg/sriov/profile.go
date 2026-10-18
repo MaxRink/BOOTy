@@ -460,6 +460,25 @@ func normalizeMAC(s string) string {
 	return s
 }
 
+// OwnsMellanoxVFs reports whether a profile sets the SR-IOV enable or the
+// VF limit and can match a ConnectX port: then the profiles own
+// NUM_OF_VFS and setup-mellanox (NUM_VFS) must not write it too, or the two
+// would change it back and forth on every provision.
+func (c *Config) OwnsMellanoxVFs() bool {
+	for i := range c.Profiles {
+		p := &c.Profiles[i]
+		if p.Firmware.SRIOVEnabled == nil && p.Firmware.MaxVFs == nil {
+			continue
+		}
+		vendorOK := p.Match.VendorID == "" || p.Match.VendorID == "15b3"
+		driverOK := p.Match.Driver == "" || p.Match.Driver == "mlx5_core" || p.Match.Driver == "mlx4_core"
+		if vendorOK && driverOK {
+			return true
+		}
+	}
+	return false
+}
+
 // configFields is Config without its methods, for the strict decoders.
 type configFields Config
 

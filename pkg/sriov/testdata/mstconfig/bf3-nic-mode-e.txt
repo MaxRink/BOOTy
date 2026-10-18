@@ -1,0 +1,16 @@
+
+Device #1:
+----------
+
+Device type:        BlueField3          
+Name:               900-9D3B6-00CV-AA0_Ax
+Description:        NVIDIA BlueField-3 B3220 P-Series FHHL DPU; 200GbE (default mode) / NDR200 IB; Dual-port QSFP112
+Device:             0000:03:00.0        
+
+Configurations:                                          Default             Current             Next Boot
+        INTERNAL_CPU_MODEL                          EMBEDDED_CPU(1)     EMBEDDED_CPU(1)     EMBEDDED_CPU(1)     
+        INTERNAL_CPU_OFFLOAD_ENGINE                 ENABLED(0)          DISABLED(1)         DISABLED(1)         
+        NUM_OF_VFS                                  16                  16                  16                  
+        SRIOV_EN                                    True(1)             True(1)             True(1)             
+        LINK_TYPE_P1                                ETH(2)              ETH(2)              ETH(2)              
+        LINK_TYPE_P2                                ETH(2)              ETH(2)              ETH(2)              

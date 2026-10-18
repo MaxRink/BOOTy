@@ -83,8 +83,22 @@ func TestProvisionStepsConfigureSRIOVAfterMellanox(t *testing.T) {
 
 func TestNewSRIOVRunnerIsReconciler(t *testing.T) {
 	r, ok := newSRIOVRunner(&sriov.Config{}, slog.Default()).(*sriov.Reconciler)
-	if !ok || r.Discover == nil || r.Config == nil || r.Runtime == nil || r.Journal == nil || r.Journal.Path != sriov.DefaultJournalPath {
+	if !ok || r.Discover == nil || r.Config == nil || r.Runtime == nil || len(r.Backends) != 4 ||
+		r.Journal == nil || r.Journal.Path != sriov.DefaultJournalPath {
 		t.Fatalf("runner %+v", r)
+	}
+}
+
+func TestSetupMellanoxSkippedWhenProfilesOwnVFs(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.NumVFs = 32
+	cfg.Provision.SRIOV.Profiles = []sriov.Profile{{Name: "cx6", Match: sriov.Match{VendorID: "15b3"},
+		Firmware: sriov.FirmwareSettings{MaxVFs: func() *int { n := 64; return &n }()}}}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	// Without the skip, NUM_VFS=32 would look for Mellanox NICs and fail
+	// on the test host.
+	if err := o.setupMellanox(context.Background()); err != nil || o.FirmwareChanged() {
+		t.Fatalf("setup-mellanox ran: %v", err)
 	}
 }
 

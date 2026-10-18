@@ -17,6 +17,7 @@ type fakeBackend struct {
 	unsupported []Unsupported
 	readErr     error
 	applyErr    error
+	noReboot    bool
 	noPersist   bool // the set returns no error but the NIC keeps the old value
 	applied     []*FirmwareSettings
 }
@@ -32,15 +33,15 @@ func (b *fakeBackend) Read(_ context.Context, _ *PF, _ *FirmwareSettings) (*Firm
 	return &FirmwareRead{Values: b.stored, Unsupported: b.unsupported}, nil
 }
 
-func (b *fakeBackend) Apply(_ context.Context, _ *PF, change *FirmwareSettings) error {
+func (b *fakeBackend) Apply(_ context.Context, _ *PF, change *FirmwareSettings) (bool, error) {
 	if b.applyErr != nil {
-		return b.applyErr
+		return false, b.applyErr
 	}
 	b.applied = append(b.applied, change)
 	if !b.noPersist {
 		storeChange(&b.stored, change)
 	}
-	return nil
+	return !b.noReboot, nil
 }
 
 // storeChange writes a change into stored values, like NV config does.
@@ -255,7 +256,7 @@ func TestReconcileApplyFailures(t *testing.T) {
 
 	// No backend: drift of a kernel-visible value cannot be applied.
 	res, _, err := runReconcile(t, c, []PF{pf})
-	if err == nil || !strings.Contains(err.Error(), `no firmware backend for driver "mlx5_core"`) || res.Reboot {
+	if err == nil || !strings.Contains(err.Error(), "no BOOTy backend for maxVFs on mlx5_core (NVIDIA ConnectX/BlueField): use mstconfig") || res.Reboot {
 		t.Fatalf("no backend: %v", err)
 	}
 
@@ -296,7 +297,7 @@ func TestReconcileUnsupportedSettingIsUnverified(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, f := range res.Findings {
-		if f.Setting == SettingFWLLDPAgent && (f.Status != StatusUnverified || f.Detail != "ice firmware without the fw-lldp-agent flag") {
+		if f.Setting == SettingFWLLDPAgent && (f.Status != StatusUnverified || f.Detail != "intel: ice firmware without the fw-lldp-agent flag") {
 			t.Fatalf("finding %s", f.String())
 		}
 	}
@@ -375,17 +376,102 @@ func TestFindingString(t *testing.T) {
 	}
 }
 
-func TestBackendForOrder(t *testing.T) {
+func TestBackendsForToolClass(t *testing.T) {
 	pf := &PF{Driver: "mlx5_core"}
 	vendor := &fakeBackend{name: "mlxconfig", tool: ToolsVendor, driver: "mlx5_core"}
 	open := &fakeBackend{name: "mstconfig", tool: ToolsOpenSource, driver: "mlx5_core"}
-	if b, _ := backendFor([]FirmwareBackend{vendor, open}, pf, ToolsOpenSource); b != open {
-		t.Fatalf("got %v, want mstconfig", b)
+	other := &fakeBackend{name: "intel", tool: ToolsKernel, driver: "ice"}
+	use, excluded := backendsFor([]FirmwareBackend{vendor, open, other}, pf, ToolsOpenSource)
+	if len(use) != 1 || use[0] != open || len(excluded) != 1 || !strings.Contains(excluded[0], "mlxconfig needs NIC_TOOLS=vendor") {
+		t.Fatalf("use %v excluded %v", use, excluded)
 	}
-	if b, _ := backendFor([]FirmwareBackend{vendor, open}, pf, ToolsVendor); b != vendor {
-		t.Fatalf("got %v, want mlxconfig", b)
+	if use, _ = backendsFor([]FirmwareBackend{vendor, open}, pf, ToolsVendor); len(use) != 2 {
+		t.Fatalf("vendor allows both: %v", use)
 	}
 	if toolRank("bogus") <= toolRank(ToolsVendor) {
 		t.Fatal("unknown tool class must rank above vendor")
+	}
+}
+
+// TestFirmwareSeveralBackends gives one PF port two backends: each setting
+// belongs to the backend that reads it, and the apply goes there. A
+// runtime-effective change does not reboot.
+func TestFirmwareSeveralBackends(t *testing.T) {
+	p := Profile{Name: "e810", Match: Match{Driver: "ice"}, OnDrift: OnDriftApply,
+		Firmware: FirmwareSettings{FWLLDPAgent: ptr(false), DevlinkParams: []Setting{{"tx_scheduling_layers", "5"}}}}
+	flags := &fakeBackend{name: "ethtool", tool: ToolsOpenSource, driver: "ice", noReboot: true,
+		stored:      FirmwareSettings{FWLLDPAgent: ptr(true)},
+		unsupported: []Unsupported{{"devlinkParams.tx_scheduling_layers", "not a private flag"}}}
+	params := &fakeBackend{name: "devlink", tool: ToolsKernel, driver: "ice",
+		stored: FirmwareSettings{DevlinkParams: []Setting{{"tx_scheduling_layers", "9"}}}}
+	res, _, err := runReconcile(t, &Config{Profiles: []Profile{p}}, []PF{{Interface: "ens2f0", Driver: "ice"}}, flags, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(flags.applied) != 1 || flags.applied[0].FWLLDPAgent == nil || len(flags.applied[0].DevlinkParams) != 0 {
+		t.Fatalf("ethtool apply %+v", flags.applied)
+	}
+	if len(params.applied) != 1 || params.applied[0].DevlinkParams[0].Value != "5" || params.applied[0].FWLLDPAgent != nil {
+		t.Fatalf("devlink apply %+v", params.applied)
+	}
+	if !res.Reboot {
+		t.Fatal("the permanent devlink parameter needs a reboot")
+	}
+	for _, f := range res.Findings {
+		if f.Setting == SettingFWLLDPAgent && (f.Status != StatusApplied || f.Detail != "active now") {
+			t.Fatalf("fwLLDPAgent %s", f.String())
+		}
+	}
+
+	// The flag alone does not reboot.
+	q := p
+	q.Firmware.DevlinkParams = nil
+	flags.applied = nil
+	flags.stored.FWLLDPAgent = ptr(true)
+	res, _, err = runReconcile(t, &Config{Profiles: []Profile{q}}, []PF{{Interface: "ens2f0", Driver: "ice"}}, flags)
+	if err != nil || res.Reboot || len(flags.applied) != 1 {
+		t.Fatalf("flag only: %v reboot %v", err, res.Reboot)
+	}
+}
+
+func TestFirmwareActiveFromBackend(t *testing.T) {
+	// mstconfig -e: stored right, current old: pending reset for an NV
+	// parameter the kernel does not show.
+	b := compliantBackend()
+	b.stored.NVConfig = []Setting{{"CQE_COMPRESSION", "1"}}
+	active := FirmwareSettings{NVConfig: []Setting{{"CQE_COMPRESSION", "0"}}}
+	r := &activeBackend{fakeBackend: b, active: active}
+	res, _, _ := runReconcile(t, &Config{Profiles: []Profile{cx6Profile()}}, []PF{cx6()}, r)
+	if statuses(res)["firmware.nvConfig.CQE_COMPRESSION"] != StatusPendingReset {
+		t.Fatalf("statuses %v", statuses(res))
+	}
+}
+
+type activeBackend struct {
+	*fakeBackend
+	active FirmwareSettings
+}
+
+func (a *activeBackend) Read(ctx context.Context, pf *PF, want *FirmwareSettings) (*FirmwareRead, error) {
+	r, err := a.fakeBackend.Read(ctx, pf, want)
+	if r != nil {
+		r.Active = a.active
+	}
+	return r, err
+}
+
+func TestNoBackendReason(t *testing.T) {
+	for driver, want := range map[string]string{
+		"bnxt_en": "niccli or bnxtnvm",
+		"i40e":    "nvmupdate64e",
+		"qede":    "QConvergeConsole",
+		"cxgb4":   "cxgbtool",
+		"sfc":     "sfboot",
+		"ionic":   "Pensando",
+		"e1000e":  `no firmware backend for driver "e1000e"`,
+	} {
+		if got := noBackendReason(driver, SettingMaxVFs); !strings.Contains(got, want) {
+			t.Errorf("%s: %q", driver, got)
+		}
 	}
 }

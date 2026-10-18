@@ -1,0 +1,15 @@
+
+Device #1:
+----------
+
+Device type:    ConnectX5       
+Name:           MCX556A-ECA_Ax  
+Description:    ConnectX-5 VPI adapter card; EDR IB (100Gb/s) and 100GbE; dual-port QSFP28; PCIe3.0 x16
+Device:         0000:af:00.1    
+
+Configurations:                              Next Boot
+         SRIOV_EN                            True(1)         
+         NUM_OF_VFS                          16              
+         LINK_TYPE_P1                        IB(1)           
+         LINK_TYPE_P2                        ETH(2)          
+         CQE_COMPRESSION                     BALANCED(0)     

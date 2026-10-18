@@ -8,7 +8,8 @@ import (
 )
 
 // FirmwareBackend reads and writes the persistent settings of one NIC
-// family. A stored setting takes effect after a firmware reset or a reboot.
+// family. A PF port can have several backends; each setting belongs to the
+// first one that reads a value for it.
 type FirmwareBackend interface {
 	// Name names the backend in reports, for example mstconfig.
 	Name() string
@@ -19,15 +20,19 @@ type FirmwareBackend interface {
 	Supports(pf *PF) bool
 	// Read returns the stored values of the settings that want sets.
 	Read(ctx context.Context, pf *PF, want *FirmwareSettings) (*FirmwareRead, error)
-	// Apply stores the settings that change sets.
-	Apply(ctx context.Context, pf *PF, change *FirmwareSettings) error
+	// Apply stores the settings that change sets. reboot is true when they
+	// take effect only after a firmware reset or a reboot.
+	Apply(ctx context.Context, pf *PF, change *FirmwareSettings) (reboot bool, err error)
 }
 
 // FirmwareRead is what a backend read from a NIC.
 type FirmwareRead struct {
-	// Values holds the stored values; a setting the backend cannot read
-	// stays unset.
+	// Values holds the stored values (next boot); a setting the backend
+	// cannot read stays unset.
 	Values FirmwareSettings
+	// Active holds the values the firmware runs with now, when the backend
+	// can tell them apart from the stored ones (mstconfig -e).
+	Active FirmwareSettings
 	// Unsupported lists the settings the backend cannot read or write on
 	// this NIC.
 	Unsupported []Unsupported
@@ -40,9 +45,6 @@ type Unsupported struct {
 }
 
 func (r *FirmwareRead) unsupported(setting string) (string, bool) {
-	if r == nil {
-		return "", false
-	}
 	for _, u := range r.Unsupported {
 		if u.Setting == setting {
 			return u.Reason, true
@@ -64,22 +66,73 @@ func toolRank(tool string) int {
 	return 3
 }
 
-// backendFor returns the first backend that supports the PF port and that
-// the allowed tool class permits. The reason names the backends that the
-// tool class excluded.
-func backendFor(backends []FirmwareBackend, pf *PF, tools string) (backend FirmwareBackend, reason string) {
-	reason = fmt.Sprintf("no firmware backend for driver %q", pf.Driver)
+// backendsFor returns the backends that support the PF port and that the
+// tool class allows, and why the others were left out.
+func backendsFor(backends []FirmwareBackend, pf *PF, tools string) (use []FirmwareBackend, excluded []string) {
 	for _, b := range backends {
 		if !b.Supports(pf) {
 			continue
 		}
 		if toolRank(b.Tool()) > toolRank(tools) {
-			reason = fmt.Sprintf("backend %s needs NIC_TOOLS=%s (now %s)", b.Name(), b.Tool(), tools)
+			excluded = append(excluded, fmt.Sprintf("backend %s needs NIC_TOOLS=%s (now %s)", b.Name(), b.Tool(), tools))
 			continue
 		}
-		return b, ""
+		use = append(use, b)
 	}
-	return nil, reason
+	return use, excluded
+}
+
+// firmwareView merges the reads of the backends of one PF port.
+type firmwareView struct {
+	stored map[string]string
+	active map[string]string
+	owner  map[string]FirmwareBackend
+	notes  map[string]string // why no backend has a value
+}
+
+// readFirmware reads every setting of want from the backends of the PF
+// port. The first backend with a value owns the setting.
+func readFirmware(ctx context.Context, backends []FirmwareBackend, pf *PF, want *FirmwareSettings, tools string) *firmwareView {
+	v := &firmwareView{stored: map[string]string{}, active: map[string]string{},
+		owner: map[string]FirmwareBackend{}, notes: map[string]string{}}
+	use, excluded := backendsFor(backends, pf, tools)
+	type result struct {
+		b    FirmwareBackend
+		read *FirmwareRead
+		err  error
+	}
+	results := make([]result, 0, len(use))
+	for _, b := range use {
+		read, err := b.Read(ctx, pf, want)
+		results = append(results, result{b, read, err})
+	}
+	for _, name := range settingNames(want) {
+		var why []string
+		for _, res := range results {
+			if res.err != nil {
+				why = append(why, fmt.Sprintf("%s read: %v", res.b.Name(), res.err))
+				continue
+			}
+			if reason, ok := res.read.unsupported(name); ok {
+				why = append(why, res.b.Name()+": "+reason)
+				continue
+			}
+			if val := getSetting(&res.read.Values, name); val != "" {
+				v.stored[name], v.owner[name] = val, res.b
+				v.active[name] = getSetting(&res.read.Active, name)
+				break
+			}
+			why = append(why, res.b.Name()+": no value")
+		}
+		if _, ok := v.owner[name]; !ok {
+			why = append(why, excluded...)
+			if len(why) == 0 {
+				why = append(why, noBackendReason(pf.Driver, name))
+			}
+			v.notes[name] = strings.Join(why, "; ")
+		}
+	}
+	return v
 }
 
 // Setting names in findings and Unsupported.
@@ -93,12 +146,13 @@ const (
 )
 
 // firmwareItem is one firmware setting of a profile: the wanted value,
-// the stored value from the backend and the active value from the kernel.
+// the stored value from the backend and the active value from the kernel
+// or the backend.
 type firmwareItem struct {
 	setting string
 	want    string
 	stored  string // "" when unknown
-	active  string // "" when the kernel does not show it
+	active  string // "" when unknown
 }
 
 // settingNames lists the firmware settings that want sets, in a fixed
@@ -161,16 +215,15 @@ func kernelActive(pf *PF, name string) string {
 
 // firmwareItems lists the firmware settings that want sets with their
 // stored and active values.
-func firmwareItems(want *FirmwareSettings, pf *PF, read *FirmwareRead) []firmwareItem {
-	var got FirmwareSettings
-	if read != nil {
-		got = read.Values
-	}
+func firmwareItems(want *FirmwareSettings, pf *PF, v *firmwareView) []firmwareItem {
 	names := settingNames(want)
 	items := make([]firmwareItem, 0, len(names))
 	for _, name := range names {
-		items = append(items, firmwareItem{setting: name, want: getSetting(want, name),
-			stored: getSetting(&got, name), active: kernelActive(pf, name)})
+		it := firmwareItem{setting: name, want: getSetting(want, name), stored: v.stored[name], active: kernelActive(pf, name)}
+		if it.active == "" {
+			it.active = v.active[name]
+		}
+		items = append(items, it)
 	}
 	return items
 }

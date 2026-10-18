@@ -412,6 +412,18 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   It waits up to 30 s for the 2xx of that status. Without `REBOOT_URL` the
   run fails (`sriov-verify-reboot-unsupported`); `SRIOV_VERIFY_REBOOT=off`
   hands off without the check
+- SR-IOV firmware backends for `configure-sriov`: `mstconfig` (mstflint, NV
+  config of ConnectX and BlueField with stored and active values),
+  `mlxconfig` (MFT, `NIC_TOOLS=vendor`), devlink parameters in the permanent
+  mode (Broadcom `enable_sriov` and others) and the Intel firmware LLDP
+  private flags. Families without a backend report the vendor tool. With
+  `SRIOV_ON_DRIFT=apply` BOOTy stores the drifted settings and reboots
+  instead of kexec when they need it. A profile that sets the ConnectX VFs
+  replaces `setup-mellanox`
+- SR-IOV under Secure Boot: with the kernel in lockdown BOOTy does not run
+  `mstconfig set` and reports `nic-firmware-lockdown` (Secure Boot off or an
+  out-of-band path) instead of a raw `EPERM`; devlink parameters are asked
+  first because they work under lockdown
 - Time sync before TLS: `TIME_SYNC` (`off`|`auto`|`require`), `NTP_SERVERS`,
   `TIME_MAX_SKEW_SEC` and `TIME_WRITE_RTC`, YAML `time.*`. See
   [time sync](docs/configuration.md#time-sync) (#713)

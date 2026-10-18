@@ -131,11 +131,11 @@ const detailActiveNow = "active now"
 const detailStoredThisBoot = "stored in this boot; takes effect after the reboot"
 
 // checkFirmware compares the firmware settings of a profile with the
-// stored values (read, from a backend) and the active values (the kernel).
-// note explains a missing read. A setting in conflicts fails; a setting
-// that the journal shows as stored in this boot is applied, not pending.
-func checkFirmware(a Assignment, read *FirmwareRead, note string, conflicts map[string]string, journal *Journal) []Finding {
-	items := firmwareItems(&a.Profile.Firmware, a.PF, read)
+// stored values (from the backends) and the active values (the kernel, or
+// the backend). A setting in conflicts fails; a setting that the journal
+// shows as stored in this boot is applied, not pending.
+func checkFirmware(a Assignment, v *firmwareView, conflicts map[string]string, journal *Journal) []Finding {
+	items := firmwareItems(&a.Profile.Firmware, a.PF, v)
 	findings := make([]Finding, 0, len(items))
 	for _, it := range items {
 		f := Finding{Profile: a.Profile.Name, Interface: a.PF.Interface, Level: LevelFirmware,
@@ -144,12 +144,7 @@ func checkFirmware(a Assignment, read *FirmwareRead, note string, conflicts map[
 		if c := conflicts[scope+"|"+it.setting]; c != "" {
 			f.Status, f.Detail = StatusFailed, c
 		} else {
-			f.Status, f.Detail = itemStatus(it, journal.Has(scope, it.setting, it.want), note)
-			if f.Status == StatusUnverified {
-				if reason, ok := read.unsupported(it.setting); ok {
-					f.Detail = reason
-				}
-			}
+			f.Status, f.Detail = itemStatus(it, journal.Has(scope, it.setting, it.want), v.notes[it.setting])
 		}
 		findings = append(findings, f)
 	}
