@@ -24,6 +24,10 @@ T(B) = S / B + D + M + N
   10 MB/s, lower on BMCs with a 100 Mbit/s port (iDRAC up to 13G) or
   with encrypted virtual media. No BMC in this repository's tests was
   measured; verify per BMC model before using the absolute numbers below.
+- `D`: in-kernel decompression of the initramfs, single-threaded.
+- `M`: module phase, `Run /init` to `starting BOOTy`.
+- `N`: network phase, `starting BOOTy` to `network connectivity
+  established`.
 
 **Assumption, not measured:** the model above holds for BMCs that map the
 image from a network share (HTTP, NFS or CIFS) and fetch only the blocks
@@ -45,10 +49,6 @@ T_upload(B_up) = I / B_up + S / B_local + D + M + N
 With an upload the ISO size, not only `S`, sets the boot time: the
 initramfs savings below count in both models, a smaller boot loader only
 in the first.
-- `D`: in-kernel decompression of the initramfs, single-threaded.
-- `M`: module phase, `Run /init` to `starting BOOTy`.
-- `N`: network phase, `starting BOOTy` to `network connectivity
-  established`.
 
 Firmware POST and the kernel's own init do not depend on BOOTy and are
 left out. The Debian kernel is signed for Secure Boot, so its image
