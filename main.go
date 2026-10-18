@@ -410,20 +410,29 @@ func flushObservability() {
 
 func reboot() {
 	watchdogHandoff(false)
+	stopLLDPEmit()
 	flushObservability()
 	realm.Reboot()
 }
 
+// The realm handoff requests; tests replace them.
+var (
+	realmRequestReboot   = realm.RequestReboot
+	realmRequestPowerOff = realm.RequestPowerOff
+)
+
 func requestReboot() error {
 	watchdogHandoff(false)
+	stopLLDPEmit()
 	flushObservability()
-	return realm.RequestReboot()
+	return realmRequestReboot()
 }
 
 func requestPowerOff() error {
 	watchdogHandoff(true)
+	stopLLDPEmit()
 	flushObservability()
-	return realm.RequestPowerOff()
+	return realmRequestPowerOff()
 }
 
 func shell() {
@@ -445,6 +454,7 @@ var (
 // goes quiet.
 func doKexecExecute(stopNetwork func()) error {
 	watchdogHandoff(false)
+	stopLLDPEmit()
 	flushLogs()
 	stopNetwork()
 	return kexecExecute()
@@ -653,6 +663,9 @@ var teardownDone atomic.Pointer[chan struct{}]
 // failure (RFC 5882 3.2).
 func stopNetworkOnce(ctx context.Context, netMode network.Mode) func() {
 	return sync.OnceFunc(func() {
+		// The every-NIC LLDP sender first, so its shutdown LLDPDUs go out
+		// while the NICs still have their links.
+		stopLLDPEmit()
 		if netMode == nil {
 			return
 		}
@@ -719,6 +732,7 @@ func withNetworkStopBeforeHandoff(ops provisionHandoffOps, stopNetwork func(), r
 				mu.Lock()
 				current = restored
 				mu.Unlock()
+				resumeLLDPEmit() // after the network is back: the host stays up
 			}
 			return err
 		}
@@ -1228,7 +1242,105 @@ func startLLDPEmitAll(ctx context.Context, l *config.LLDPConfig) {
 	info := lldp.SystemInfo()
 	info.Profile, info.PortIDFormat, info.Announce = l.Profile, l.PortIDFormat, l.Announce
 	info.CarrierOnly = true
-	lldp.Emit(ctx, nics, &info, slog.With("component", "lldp"))
+	// Its own context: the run context is not canceled before kexec,
+	// reboot or power off, so the handoff stops it to send the shutdown
+	// LLDPDU (IEEE 802.1AB), like the GoBGP sender at its teardown.
+	start := func() func() {
+		emitCtx, cancel := context.WithCancel(ctx)
+		wait := lldp.Emit(emitCtx, nics, &info, slog.With("component", "lldp"))
+		return func() {
+			cancel()
+			waitLLDPEmit(wait)
+		}
+	}
+	lldpEmitMu.Lock()
+	lldpEmitStart = start
+	lldpEmitMu.Unlock()
+	setLLDPEmitStop(start())
+}
+
+// lldpEmitStop stops the every-NIC LLDP sender; nil when none runs.
+// lldpEmitStart starts it again and returns its stop function.
+// lldpEmitPending is closed when the senders of a stop that timed out have
+// ended; nil when none is pending.
+var (
+	lldpEmitMu      sync.Mutex
+	lldpEmitStop    func()
+	lldpEmitStart   func() func()
+	lldpEmitPending <-chan struct{}
+)
+
+// lldpStopTimeout bounds the wait for the shutdown LLDPDUs: BOOTy is PID 1
+// right before kexec or power off and must not hang there.
+// lldpResumeWait bounds the wait of a restart for senders still alive.
+var (
+	lldpStopTimeout = 2 * time.Second
+	lldpResumeWait  = 500 * time.Millisecond
+)
+
+func setLLDPEmitStop(stop func()) {
+	lldpEmitMu.Lock()
+	defer lldpEmitMu.Unlock()
+	lldpEmitStop = stop
+}
+
+// waitLLDPEmit waits for the senders, at most lldpStopTimeout. Their done
+// channel is pending from the start of the stop, so a restart, also one
+// during the wait, does not run next to them.
+func waitLLDPEmit(wait func()) {
+	done := make(chan struct{})
+	lldpEmitMu.Lock()
+	lldpEmitPending = done
+	lldpEmitMu.Unlock()
+	go func() {
+		wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(lldpStopTimeout):
+		slog.Warn("LLDP senders did not stop in time, handing off without waiting", "timeout", lldpStopTimeout)
+	}
+}
+
+// stopLLDPEmit stops the every-NIC LLDP sender, which then sends the
+// shutdown LLDPDU on each NIC, and waits for it (bounded). The network
+// teardown before a reboot and every handoff call it; a second call does
+// nothing.
+func stopLLDPEmit() {
+	lldpEmitMu.Lock()
+	stop := lldpEmitStop
+	lldpEmitStop = nil
+	lldpEmitMu.Unlock()
+	if stop != nil {
+		stop()
+	}
+}
+
+// resumeLLDPEmit starts the every-NIC LLDP sender again after a handoff
+// request failed and the host stays up; nothing when it runs or was never
+// started. The check, the start and the store happen under lldpEmitMu, so
+// a concurrent stop or resume cannot leave a sender nobody can stop. When
+// the senders of a timed-out stop are still alive after lldpResumeWait, it
+// does not restart: their late shutdown LLDPDU (TTL 0) would follow the
+// new frames and remove the host from the neighbor tables.
+func resumeLLDPEmit() {
+	lldpEmitMu.Lock()
+	defer lldpEmitMu.Unlock()
+	if lldpEmitStart == nil || lldpEmitStop != nil {
+		return
+	}
+	if pending := lldpEmitPending; pending != nil {
+		select {
+		case <-pending:
+			lldpEmitPending = nil
+		case <-time.After(lldpResumeWait):
+			slog.Warn("LLDP not restarted: the senders of the last stop are still running")
+			return
+		}
+	}
+	slog.Info("handoff failed, sending LLDP frames again")
+	lldpEmitStop = lldpEmitStart()
 }
 
 // setupNetworkMode detects and configures the appropriate network mode.

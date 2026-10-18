@@ -7,6 +7,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +18,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -2430,5 +2434,263 @@ func TestLLDPReceiveStartGated(t *testing.T) {
 	if strings.Count(string(src), "startLLDPReceive(ctx)") != 1 ||
 		!strings.Contains(string(src), "if lldpReceiveEnabled(cfg) {\n\t\tstartLLDPReceive(ctx)\n\t}") {
 		t.Fatal("startLLDPReceive is not called once, behind lldpReceiveEnabled")
+	}
+}
+
+// The every-NIC LLDP sender is stopped (and waited for) once, so it sends
+// the shutdown LLDPDU before the handoff.
+func TestStopLLDPEmit(t *testing.T) {
+	t.Cleanup(resetLLDPEmit)
+	stopLLDPEmit() // none running
+	calls := 0
+	setLLDPEmitStop(func() { calls++ })
+	stopLLDPEmit()
+	stopLLDPEmit()
+	if calls != 1 {
+		t.Fatalf("stop ran %d times, want once", calls)
+	}
+}
+
+// Every handoff (kexec, reboot, power off) stops the LLDP sender first.
+func TestHandoffsStopLLDPEmit(t *testing.T) {
+	f, err := parser.ParseFile(token.NewFileSet(), "main.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"reboot": false, "requestReboot": false, "requestPowerOff": false, "doKexecExecute": false}
+	for _, d := range f.Decls {
+		fn, ok := d.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		if _, tracked := want[fn.Name.Name]; !tracked {
+			continue
+		}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			if c, ok := n.(*ast.CallExpr); ok {
+				if id, ok := c.Fun.(*ast.Ident); ok && id.Name == "stopLLDPEmit" {
+					want[fn.Name.Name] = true
+				}
+			}
+			return true
+		})
+	}
+	for name, ok := range want {
+		if !ok {
+			t.Errorf("%s does not call stopLLDPEmit", name)
+		}
+	}
+}
+
+func resetLLDPEmit() {
+	lldpEmitMu.Lock()
+	lldpEmitStop, lldpEmitStart, lldpEmitPending = nil, nil, nil
+	lldpEmitMu.Unlock()
+}
+
+// The stop waits for the shutdown frames at most lldpStopTimeout: BOOTy is
+// PID 1 right before kexec or power off.
+func TestWaitLLDPEmitIsBounded(t *testing.T) {
+	t.Cleanup(resetLLDPEmit)
+	orig := lldpStopTimeout
+	t.Cleanup(func() { lldpStopTimeout = orig })
+	lldpStopTimeout = 20 * time.Millisecond
+	block := make(chan struct{})
+	defer close(block)
+	start := time.Now()
+	waitLLDPEmit(func() { <-block })
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("waited %v for a sender that never stops", d)
+	}
+}
+
+// A failed reboot or power off request leaves the host up: the LLDP sender
+// starts again. A request that succeeds does not restart it.
+func TestFailedHandoffResumesLLDPEmit(t *testing.T) {
+	t.Cleanup(resetLLDPEmit)
+	origReboot, origPowerOff := realmRequestReboot, realmRequestPowerOff
+	t.Cleanup(func() { realmRequestReboot, realmRequestPowerOff = origReboot, origPowerOff })
+	var order []string
+	start := func() func() {
+		order = append(order, "lldp-start")
+		return func() { order = append(order, "lldp-stop") }
+	}
+	lldpEmitMu.Lock()
+	lldpEmitStart = start
+	lldpEmitMu.Unlock()
+	setLLDPEmitStop(start())
+	resumeLLDPEmit() // running: no second sender
+	if strings.Join(order, ",") != "lldp-start" {
+		t.Fatalf("resume while running: %v", order)
+	}
+
+	// The handoff ops as finishProvision wraps them (#723): the network
+	// comes back first, then the sender, so its frames go out on links
+	// that are up again.
+	ops := withNetworkStopBeforeHandoff(provisionHandoffOps{reboot: requestReboot, powerOff: requestPowerOff},
+		func() { order = append(order, "network-stop") },
+		func() func() {
+			order = append(order, "network-restore")
+			return func() { order = append(order, "network-stop") } // the restored network's stop
+		})
+	realmRequestReboot = func() error { return errors.New("refused") }
+	realmRequestPowerOff = func() error { return errors.New("refused") }
+	order = nil
+	if err := ops.reboot(); err == nil {
+		t.Fatal("reboot succeeded")
+	}
+	if err := ops.powerOff(); err == nil {
+		t.Fatal("power off succeeded")
+	}
+	// The second network stop is the one of the restored network (#810).
+	want := "network-stop,lldp-stop,network-restore,lldp-start,network-stop,lldp-stop,network-restore,lldp-start"
+	if got := strings.Join(order, ","); got != want {
+		t.Fatalf("order %s\nwant  %s", got, want)
+	}
+	realmRequestReboot = func() error { return nil }
+	order = nil
+	if err := ops.reboot(); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(order, ","); got != "network-stop,lldp-stop" {
+		t.Fatalf("successful reboot: order %s, want no restart", got)
+	}
+}
+
+// A restart during the stop window (before the senders end or the stop
+// times out) waits for the old senders and skips while they still run.
+func TestResumeLLDPEmitDuringTheStop(t *testing.T) {
+	t.Cleanup(resetLLDPEmit)
+	origStop, origResume := lldpStopTimeout, lldpResumeWait
+	t.Cleanup(func() { lldpStopTimeout, lldpResumeWait = origStop, origResume })
+	lldpStopTimeout, lldpResumeWait = time.Minute, 20*time.Millisecond
+	block := make(chan struct{})
+	var mu sync.Mutex
+	starts := 0
+	start := func() func() {
+		mu.Lock()
+		starts++
+		mu.Unlock()
+		return func() { waitLLDPEmit(func() { <-block }) }
+	}
+	lldpEmitMu.Lock()
+	lldpEmitStart = start
+	lldpEmitMu.Unlock()
+	setLLDPEmitStop(start())
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		stopLLDPEmit()
+	}()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		lldpEmitMu.Lock()
+		pending := lldpEmitPending != nil
+		lldpEmitMu.Unlock()
+		if pending {
+			break
+		}
+		if time.Now().After(deadline) {
+			close(block)
+			t.Fatal("the stop did not record its senders as pending")
+		}
+	}
+	resumeLLDPEmit()
+	mu.Lock()
+	n := starts
+	mu.Unlock()
+	if n != 1 {
+		t.Fatalf("restarted next to the old senders during the stop: %d starts", n)
+	}
+	close(block)
+	<-stopped
+	resumeLLDPEmit()
+	if starts != 2 {
+		t.Fatalf("not restarted after the old senders ended: %d starts", starts)
+	}
+}
+
+type orderNetMode struct {
+	network.Mode
+	order *[]string
+}
+
+func (m orderNetMode) Teardown(context.Context) error {
+	*m.order = append(*m.order, "teardown")
+	return nil
+}
+
+// The shutdown LLDPDUs go out before the network stop of a handoff, while
+// the NICs still have their links; stopNetworkOnce is the one path every
+// kexec, reboot and power off takes (#723).
+func TestStopNetworkOnceStopsLLDPFirst(t *testing.T) {
+	t.Cleanup(resetLLDPEmit)
+	var order []string
+	setLLDPEmitStop(func() { order = append(order, "lldp") })
+	stopNetworkOnce(context.Background(), orderNetMode{order: &order})()
+	if strings.Join(order, ",") != "lldp,teardown" {
+		t.Fatalf("order %v, want lldp before teardown", order)
+	}
+	setLLDPEmitStop(func() { order = append(order, "lldp") })
+	stopNetworkOnce(context.Background(), nil)() // no network mode: LLDP still stops
+	if strings.Join(order, ",") != "lldp,teardown,lldp" {
+		t.Fatalf("order %v, want the LLDP stop without a network mode", order)
+	}
+}
+
+// Concurrent restarts start one sender, never one that nobody can stop.
+func TestResumeLLDPEmitConcurrent(t *testing.T) {
+	t.Cleanup(resetLLDPEmit)
+	var mu sync.Mutex
+	starts := 0
+	lldpEmitMu.Lock()
+	lldpEmitStart = func() func() {
+		time.Sleep(5 * time.Millisecond) // widen the window between check and store
+		mu.Lock()
+		starts++
+		mu.Unlock()
+		return func() {}
+	}
+	lldpEmitMu.Unlock()
+	var wg sync.WaitGroup
+	for range 20 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resumeLLDPEmit()
+		}()
+	}
+	wg.Wait()
+	if starts != 1 {
+		t.Fatalf("%d senders started, want 1", starts)
+	}
+}
+
+// After a stop that timed out, a restart waits for the old senders, so
+// their late shutdown LLDPDU cannot follow the new frames; it skips the
+// restart while they are still alive.
+func TestResumeLLDPEmitWaitsForPendingSenders(t *testing.T) {
+	t.Cleanup(resetLLDPEmit)
+	origStop, origResume := lldpStopTimeout, lldpResumeWait
+	t.Cleanup(func() { lldpStopTimeout, lldpResumeWait = origStop, origResume })
+	lldpStopTimeout, lldpResumeWait = 10*time.Millisecond, 20*time.Millisecond
+	block := make(chan struct{})
+	starts := 0
+	start := func() func() {
+		starts++
+		return func() { waitLLDPEmit(func() { <-block }) }
+	}
+	lldpEmitMu.Lock()
+	lldpEmitStart = start
+	lldpEmitMu.Unlock()
+	setLLDPEmitStop(start())
+	stopLLDPEmit() // times out: the senders stay pending
+	resumeLLDPEmit()
+	if starts != 1 {
+		t.Fatalf("restarted while the old senders run: %d starts", starts)
+	}
+	close(block)
+	resumeLLDPEmit()
+	if starts != 2 {
+		t.Fatalf("not restarted after the old senders ended: %d starts", starts)
 	}
 }
