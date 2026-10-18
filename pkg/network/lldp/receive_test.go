@@ -89,22 +89,31 @@ func TestNeighborsWithin(t *testing.T) {
 	poll := neighborPoll
 	neighborPoll = time.Millisecond
 	t.Cleanup(func() { neighborPoll = poll })
-	r := &receiver{started: time.Now(), neighbors: map[string]Neighbor{}, expires: map[string]time.Time{}, log: slog.Default()}
+	// The wait counts from started, so the check does too: a start time
+	// taken after started (late under -race) made the test flaky.
+	started := time.Now()
+	r := &receiver{started: started, neighbors: map[string]Neighbor{}, expires: map[string]time.Time{}, log: slog.Default()}
 	current.Lock()
 	current.r = r
 	current.Unlock()
-	start := time.Now()
-	if got := NeighborsWithin(context.Background(), 100*time.Millisecond); len(got) != 0 || time.Since(start) < 100*time.Millisecond {
-		t.Fatalf("no neighbor: %+v after %s, want an empty list after the wait", got, time.Since(start))
+	if got := NeighborsWithin(context.Background(), 100*time.Millisecond); len(got) != 0 || time.Since(started) < 100*time.Millisecond {
+		t.Fatalf("no neighbor: %+v after %s, want an empty list after the wait", got, time.Since(started))
 	}
-	time.AfterFunc(20*time.Millisecond, func() {
-		r.record(&Neighbor{ChassisID: "leaf01", PortID: "eth1", Interface: "ens1f0np0", TTL: 120}, time.Now())
-	})
+	// A neighbor that arrives during an hour-long wait ends it.
+	r.mu.Lock()
 	r.started = time.Now()
-	start = time.Now()
-	if got := NeighborsWithin(context.Background(), time.Hour); len(got) != 1 || time.Since(start) > 10*time.Second {
-		t.Fatalf("neighbor after 20 ms: %+v after %s", got, time.Since(start))
+	r.mu.Unlock()
+	recorded := make(chan struct{})
+	go func() {
+		defer close(recorded)
+		r.record(&Neighbor{ChassisID: "leaf01", PortID: "eth1", Interface: "ens1f0np0", TTL: 120}, time.Now())
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if got := NeighborsWithin(ctx, time.Hour); len(got) != 1 {
+		t.Fatalf("neighbor recorded during the wait: got %+v, ctx %v", got, ctx.Err())
 	}
+	<-recorded
 }
 
 // A frame from one of our NICs or with our chassis ID is ours.
