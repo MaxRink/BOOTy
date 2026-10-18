@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -212,5 +213,51 @@ func TestLegacyLoadOrderIgnoresSelfDependency(t *testing.T) {
 	}
 	if got, want := legacyLoadOrder([]string{"y", "z_self"}, mods), []string{"z_self", "y"}; !slices.Equal(got, want) {
 		t.Errorf("order = %v, want %v", got, want)
+	}
+}
+
+// Device drivers load one after the other. Each fake device load holds
+// for 50 ms; without the wait for the previous device driver, the
+// semaphore (at least 2) lets a second one start in that time, every run.
+func TestLoadModuleDirLoadsDeviceDriversOneAtATime(t *testing.T) {
+	type mi = modinfo
+	dir := fakeModules(t, map[string]mi{
+		"a_nic.ko":  {device: true},
+		"b_nic.ko":  {device: true},
+		"c_nic.ko":  {device: true},
+		"helper.ko": {},
+	})
+	origLoad := loadModuleFn
+	t.Cleanup(func() { loadModuleFn = origLoad })
+	var mu sync.Mutex
+	inFlight, overlaps, deviceLoads := 0, 0, 0
+	loadModuleFn = func(path string) error {
+		if !strings.HasSuffix(filepath.Base(path), "_nic.ko") {
+			return nil
+		}
+		mu.Lock()
+		deviceLoads++
+		inFlight++
+		if inFlight > 1 {
+			overlaps++
+		}
+		mu.Unlock()
+		time.Sleep(50 * time.Millisecond)
+		mu.Lock()
+		inFlight--
+		mu.Unlock()
+		return nil
+	}
+
+	loaded, failed := loadModuleDir(dir, func(string) bool { return false })
+	if len(failed) != 0 || len(loaded) != 4 {
+		t.Fatalf("loaded = %v, failed = %v, want all 4 modules loaded", loaded, failed)
+	}
+	// The overlap check below is only meaningful if the device loads ran.
+	if deviceLoads != 3 {
+		t.Fatalf("device driver loads = %d, want 3", deviceLoads)
+	}
+	if overlaps != 0 {
+		t.Fatalf("%d device driver loads overlapped, want one at a time", overlaps)
 	}
 }
