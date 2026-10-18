@@ -4,6 +4,7 @@ package gobgp
 
 import (
 	"context"
+	"encoding/binary"
 	"io"
 	"log/slog"
 	"net"
@@ -97,11 +98,27 @@ func fakeSpeaker(t *testing.T, u *UnderlayTier, gr bool) net.Conn {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
-	go func() { _, _ = io.Copy(io.Discard, conn) }()
-	for _, m := range []*bgp.BGPMessage{
-		bgp.NewBGPOpenMessage(65500, 90, "198.51.100.1", []bgp.OptionParameterInterface{bgp.NewOptionParameterCapability(caps)}),
-		bgp.NewBGPKeepAliveMessage(),
-	} {
+	// GoBGP v3.37 writes the graceful restart state of the peer config in
+	// OpenSent (Advertised in capabilitiesFromConfig, Received and Enabled
+	// when it takes our OPEN) under the FSM lock, but ListPeer copies the
+	// AfiSafis elements after it released the lock (toConfig): a data race
+	// inside GoBGP v3, fixed in v4 (pConfAccess.ReadCopy). So the test
+	// calls ListPeer only after those writes, which it sees through the
+	// messages GoBGP sends after them (its OPEN, then its KEEPALIVE), and
+	// allows no second connection.
+	_ = ln.Close()
+	readMsg := func() {
+		t.Helper()
+		hdr := make([]byte, bgp.BGP_HEADER_LENGTH)
+		if _, err := io.ReadFull(conn, hdr); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := io.CopyN(io.Discard, conn, int64(binary.BigEndian.Uint16(hdr[16:18]))-bgp.BGP_HEADER_LENGTH); err != nil {
+			t.Fatal(err)
+		}
+	}
+	send := func(m *bgp.BGPMessage) {
+		t.Helper()
 		b, err := m.Serialize()
 		if err != nil {
 			t.Fatal(err)
@@ -110,6 +127,11 @@ func fakeSpeaker(t *testing.T, u *UnderlayTier, gr bool) net.Conn {
 			t.Fatal(err)
 		}
 	}
+	readMsg() // GoBGP's OPEN
+	send(bgp.NewBGPOpenMessage(65500, 90, "198.51.100.1", []bgp.OptionParameterInterface{bgp.NewOptionParameterCapability(caps)}))
+	readMsg() // GoBGP's KEEPALIVE, sent after it took our OPEN
+	send(bgp.NewBGPKeepAliveMessage())
+	go func() { _, _ = io.Copy(io.Discard, conn) }()
 	waitPeer(t, u, func(p *apipb.Peer) bool { return p.GetState().GetSessionState() == apipb.PeerState_ESTABLISHED })
 	return conn
 }
