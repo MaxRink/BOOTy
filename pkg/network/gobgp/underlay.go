@@ -73,14 +73,16 @@ type UnderlayTier struct {
 	cfg          *Config
 	nics         []string
 	log          *slog.Logger
-	stopRA       chan struct{}                                 // signals the periodic RA goroutine to stop
-	stopFIB      context.CancelFunc                            // stops the FIB writer
-	fibDone      chan struct{}                                 // closed when the FIB writer has removed its routes
-	peerDevs     map[string]string                             // unnumbered peer address -> interface
-	discoverPeer func(context.Context, string) (string, error) // overridable in tests; nil = discoverLinkLocalPeer
-	connected    func(netip.Addr, string) bool                 // overridable in tests; nil = connectedInVRF
-	resetBGP     func(context.Context, string, string)         // overridable in tests; nil = resetPeer
-	ifacePeers   map[string]string                             // interface -> unnumbered peer address as added
+	stopRA       chan struct{}                                   // signals the periodic RA goroutine to stop
+	stopFIB      context.CancelFunc                              // stops the FIB writer
+	fibDone      chan struct{}                                   // closed when the FIB writer has removed its routes
+	peerDevs     map[string]string                               // unnumbered peer address -> interface
+	discoverPeer func(context.Context, string) (string, error)   // overridable in tests; nil = discoverLinkLocalPeer
+	connected    func(netip.Addr, string) bool                   // overridable in tests; nil = connectedInVRF
+	resetBGP     func(context.Context, string, string)           // overridable in tests; nil = resetPeer
+	bgpUptime    func(context.Context, string) (time.Time, bool) // overridable in tests; nil = establishedAt
+	now          func() time.Time                                // overridable in tests; nil = time.Now
+	ifacePeers   map[string]string                               // interface -> unnumbered peer address as added
 	// ifacePeerConfs are the GoBGP peers as added, by interface, to move
 	// to a new link-local address of the switch.
 	ifacePeerConfs map[string]*apipb.Peer

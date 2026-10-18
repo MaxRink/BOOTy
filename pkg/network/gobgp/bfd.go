@@ -154,18 +154,57 @@ func bfdTimers(txMS, rxMS, mult uint32) bfd.Timers {
 // connects again after idleHoldAfterReset. FRR also starts a connect at
 // BFD Up; GoBGP has no API for that, its Active state connects within
 // 1 to 2 s by itself.
+//
+// Like bgpd, a BFD Down does not reset a BGP session that came up in the
+// same second (bss->last_event > peer->uptime, both in seconds): a
+// route reflector with "update-source" re-keys its BFD session for us
+// when the BGP session comes up (bgp_peer_bfd_update_source), so the BFD
+// session we just brought Up goes Down in that second. The FRR shadow
+// node sees the same Down and keeps the session; kindmetal and the lab
+// saw BOOTy reset the RR session once at every start.
 func (u *UnderlayTier) bfdChanged(p *bfd.Peer, from, to bfd.State, diag bfd.Diag) {
 	if from != bfd.StateUp || to != bfd.StateDown {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	uptime := u.bgpUptime
+	if uptime == nil {
+		uptime = u.establishedAt
+	}
+	now := time.Now
+	if u.now != nil {
+		now = u.now
+	}
+	// Only the same second: GoBGP's uptime is wall-clock time, and a time
+	// sync that steps the clock back puts it in the future (FRR compares
+	// monotonic times). Then the BFD Down resets the session as usual.
+	if at, ok := uptime(ctx, p.Name); ok && now().Unix() == at.Unix() {
+		u.log.Info("BFD down in the second the BGP session came up, not resetting it, like FRR", "peer", p.Name, "diag", diag)
+		return
+	}
 	u.log.Warn("BFD down, resetting the BGP session", "peer", p.Name, "diag", diag)
 	reset := u.resetBGP
 	if reset == nil {
 		reset = u.resetPeer
 	}
 	reset(ctx, p.Name, "BFD down")
+}
+
+// establishedAt returns when the BGP session of addr came up, and false
+// when it is not up.
+func (u *UnderlayTier) establishedAt(ctx context.Context, addr string) (time.Time, bool) {
+	var at time.Time
+	up := false
+	if u.bgp == nil {
+		return at, false
+	}
+	_ = u.bgp.ListPeer(ctx, &apipb.ListPeerRequest{Address: addr}, func(p *apipb.Peer) {
+		if p.GetState().GetSessionState() == apipb.PeerState_ESTABLISHED && p.GetTimers().GetState().GetUptime() != nil {
+			at, up = p.GetTimers().GetState().GetUptime().AsTime(), true
+		}
+	})
+	return at, up
 }
 
 func (u *UnderlayTier) resetPeer(ctx context.Context, addr, reason string) {

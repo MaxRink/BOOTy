@@ -112,6 +112,79 @@ func TestBFDChanged(t *testing.T) {
 	}
 }
 
+// Like FRR bgpd (last_event > peer->uptime, in seconds), a BFD Down in
+// the second the BGP session came up does not reset it; an earlier uptime,
+// an uptime in the future (the clock stepped back) and a session that is
+// not up reset it.
+func TestBFDChangedAtBGPStart(t *testing.T) {
+	now := time.Unix(1_000_000, 500_000_000)
+	for _, tt := range []struct {
+		name  string
+		at    time.Time
+		up    bool
+		reset bool
+	}{
+		{"same second", now.Add(-400 * time.Millisecond), true, false},
+		{"up for 2 s", now.Add(-2 * time.Second), true, true},
+		{"uptime in the future (clock stepped back)", now.Add(time.Hour), true, true},
+		{"not up", now, false, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			resets := 0
+			u := &UnderlayTier{log: slog.Default(), now: func() time.Time { return now },
+				resetBGP:  func(context.Context, string, string) { resets++ },
+				bgpUptime: func(context.Context, string) (time.Time, bool) { return tt.at, tt.up },
+			}
+			u.bfdChanged(&bfd.Peer{Name: "198.51.100.2"}, bfd.StateUp, bfd.StateDown, bfd.DiagNeighborSaysDown)
+			if (resets == 1) != tt.reset {
+				t.Fatalf("resets = %d, want a reset %v", resets, tt.reset)
+			}
+		})
+	}
+}
+
+// establishedAt reads the uptime of an established GoBGP peer.
+func TestEstablishedAt(t *testing.T) {
+	u := &UnderlayTier{}
+	if _, ok := u.establishedAt(context.Background(), "192.0.2.1"); ok {
+		t.Fatal("established without a BGP server")
+	}
+	u.bgp = startServer(t, 65000, "192.0.2.17", -1)
+	if err := u.bgp.AddPeer(context.Background(), &apipb.AddPeerRequest{Peer: buildNumberedPeer(&Config{ASN: 65000}, "192.0.2.1", ipv4Families())}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := u.establishedAt(context.Background(), "192.0.2.1"); ok {
+		t.Fatal("a peer that is not up is established")
+	}
+
+	ctx := context.Background()
+	port := freePort(t)
+	fabric := startServerAt(t, 65500, "198.51.100.1", "127.0.0.1", port)
+	if err := fabric.AddPeer(ctx, &apipb.AddPeerRequest{Peer: &apipb.Peer{
+		Conf: &apipb.PeerConf{NeighborAddress: "127.0.0.1", PeerAsn: 65000}, Transport: &apipb.Transport{PassiveMode: true},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := u.bgp.AddPeer(ctx, &apipb.AddPeerRequest{Peer: &apipb.Peer{
+		Conf:      &apipb.PeerConf{NeighborAddress: "127.0.0.1", PeerAsn: 65500},
+		Transport: &apipb.Transport{RemotePort: uint32(port)}, //nolint:gosec // test port
+		Timers:    &apipb.Timers{Config: &apipb.TimersConfig{ConnectRetry: 1}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if at, ok := u.establishedAt(ctx, "127.0.0.1"); ok {
+			if d := time.Since(at); d < -time.Second || d > 30*time.Second {
+				t.Fatalf("uptime %v is not the establishment", at)
+			}
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Fatal("session not established")
+}
+
 // Every peer waits idleHoldAfterReset (1 s, FRR BGP_INIT_START_TIMER)
 // after a reset, not the GoBGP default of 30 s.
 func TestPeersIdleHoldAfterReset(t *testing.T) {

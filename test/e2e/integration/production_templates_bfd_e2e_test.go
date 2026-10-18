@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
@@ -59,6 +60,47 @@ func prodtplBFDPeers(ctx context.Context, container string) (map[string]bfdView,
 		views[key] = v
 	}
 	return views, nil
+}
+
+// At the start, the route reflectors re-key their BFD session to a server
+// when the BGP session comes up ("update-source lo",
+// bgp_peer_bfd_update_source), so the server's new BFD session goes Down
+// in that second. FRR (the shadow node) keeps the BGP session, like bgpd's
+// last_event > peer->uptime; BOOTy must too: it must not have reset an RR
+// session for BFD by now (this is the first test of the lab). The RR drop
+// counters are only logged: an RR also resets a session itself when the
+// lab setup activates its address families after the session came up
+// ("No AFI/SAFI activated for peer"), which is not BOOTy's doing.
+func TestProdTplRRSessionsNotResetAtStart(t *testing.T) {
+	want := sessionView{State: "Established", RemoteAS: prodtplASN, LocalAS: prodtplASN,
+		HoldMsecs: 90000, KeepMsecs: 30000, Families: []string{"l2VpnEvpn"}}
+	for _, rr := range []string{prodtplDCGW1, prodtplDCGW2} {
+		for _, node := range prodtplServers {
+			waitView(t, rr, node.underlay, want)
+		}
+	}
+	time.Sleep(5 * time.Second) // a reset follows within a second
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	for _, node := range prodtplServers {
+		for _, rr := range []string{prodtplDCGW1, prodtplDCGW2} {
+			if n, err := prodtplNeighbor(ctx, rr, node.underlay); err == nil {
+				t.Logf("%s: %s session dropped %v times (%v)", rr, node.name, n["connectionsDropped"], n["lastResetDueTo"])
+			}
+		}
+		if node.name == "shadow" {
+			continue
+		}
+		out, err := exec.CommandContext(ctx, "docker", "logs", prodtplContainer(node)).CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s logs: %v", node.name, err)
+		}
+		for _, line := range strings.Split(string(out), "\n") {
+			if strings.Contains(line, "BFD down, resetting the BGP session") && strings.Contains(line, "peer=198.51.100.") {
+				t.Errorf("%s reset an RR session at the start: %s", node.name, line)
+			}
+		}
+	}
 }
 
 // Mirrors FRR bfd_profiles_topo1 test_bfd_profile_values: the fabric sees
