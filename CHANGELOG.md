@@ -31,6 +31,13 @@ behaviour.
 
 ### Behaviour changes in all modes
 
+- When a provision uses one named disk (`DISK_DEVICE` or
+  `DISK_SERIAL_NUMBER`, without `WIPE_ALL_DISKS` or explicit RAID), the
+  block device settle wait counts from boot: BOOTy watches `/sys/block`
+  from the module load on, so disks that settled while the network came
+  up no longer cost another 2 s. Every other provision and every
+  deprovision still observes the full 2 s window, because an HBA with an
+  asynchronous SCSI scan can present disks late (#762).
 - The `ERROR_URL` body of a failed provision or deprovision step now carries a
   stable failure code: `step <name> failed [BOOTY-<AREA>-<NNN>]: <error>`.
   [docs/failure-codes.md](docs/failure-codes.md) lists the codes (#706).

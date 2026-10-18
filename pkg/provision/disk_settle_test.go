@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/telekom/BOOTy/pkg/config"
+	"github.com/telekom/BOOTy/pkg/disk"
 )
 
 func shortDiskSettle(t *testing.T) {
@@ -185,5 +186,60 @@ func TestDiskSelectionSerialErrorEndsWait(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 2*time.Second {
 		t.Fatalf("detect-disk waited %v for an error that waiting can not fix", elapsed)
+	}
+}
+
+// The settle wait counts from boot only for a provision that uses one
+// named disk and no other: wipe-all, explicit RAID and every deprovision
+// observe the full window.
+func TestWaitForDisksCreditsBootOnlyForANamedDisk(t *testing.T) {
+	shortDiskSettle(t)
+	orig := waitForStableDisks
+	t.Cleanup(func() { waitForStableDisks = orig })
+	for _, tt := range []struct {
+		name   string
+		set    func(*config.MachineConfig)
+		deprov bool
+		want   bool
+	}{
+		{name: "no device or serial", set: func(*config.MachineConfig) {}},
+		{name: "device", set: func(c *config.MachineConfig) { c.Provision.Disk.Device = "/dev/sda" }, want: true},
+		{name: "serial", set: func(c *config.MachineConfig) { c.Provision.Disk.SerialNumber = "SN-1" }, want: true},
+		{name: "device with wipe-all", set: func(c *config.MachineConfig) {
+			c.Provision.Disk.Device = "/dev/sda"
+			c.Provision.Disk.WipeAllDisks = new(true)
+		}},
+		{name: "serial with wipe-all", set: func(c *config.MachineConfig) {
+			c.Provision.Disk.SerialNumber = "SN-1"
+			c.Provision.Disk.WipeAllDisks = new(true)
+		}},
+		{name: "device with explicit RAID", set: func(c *config.MachineConfig) {
+			c.Provision.Disk.Device = "/dev/sda"
+			c.Provision.Disk.RAID = []config.RAIDConfig{{}}
+		}},
+		{name: "hard deprovision with device", set: func(c *config.MachineConfig) {
+			c.Mode = "hard"
+			c.Deprovision.Device = "/dev/sda"
+		}, deprov: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.MachineConfig{}
+			cfg.Provision.Disk.SettleTimeoutSec = new(0)
+			tt.set(cfg)
+			var got []bool
+			waitForStableDisks = func(_ *disk.Manager, _ context.Context, _, _, _ time.Duration, creditBoot bool) {
+				got = append(got, creditBoot)
+			}
+			o := newTestOrchestrator(t, cfg, &mockProvider{})
+			o.disk.SetSysfsRoot(t.TempDir())
+			if tt.deprov {
+				_ = o.selectDeprovisionDisk(context.Background())
+			} else {
+				_ = o.detectDisk(context.Background())
+			}
+			if len(got) != 1 || got[0] != tt.want {
+				t.Fatalf("creditBoot = %v, want [%v]", got, tt.want)
+			}
+		})
 	}
 }

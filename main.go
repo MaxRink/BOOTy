@@ -119,6 +119,9 @@ func main() {
 	}
 	startPID1ChildReaper(ctx, os.Getpid())
 	loadModules()
+	// The disk selection waits for the block devices to settle; count
+	// their settle time from here, while the network comes up.
+	disk.StartBlockWatch(ctx, "/sys", 250*time.Millisecond)
 
 	slog.Info("starting BOOTy", "version", Version, "build", Build)
 	ux.Captain()
