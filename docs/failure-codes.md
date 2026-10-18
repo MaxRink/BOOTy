@@ -11,6 +11,11 @@ code stays reserved.
 A known error (for example a checksum mismatch) gets its own code in every
 step (step `*`). Any other error gets the code of its step.
 
+A failure before the network is up (for example `check-payloads`, or a
+missing FRR payload in `network-setup`) can not reach `ERROR_URL`: its code
+is only in the console log, in the `BOOTY1` status line (`OOB_STATUS`)
+and, with `OOB_EFI_VAR`, in the `BootyLastResult` UEFI variable.
+
 | Code | Class | Step | Meaning |
 |------|-------|------|---------|
 | `BOOTY-RUN-001` | permanent | `*` | Step failed with an error that has no specific code. |
@@ -85,4 +90,4 @@ step (step `*`). Any other error gets the code of its step.
 | `BOOTY-OS-015` | config | `soft-deprovision` | Soft deprovision failed. |
 | `BOOTY-WDT-001` | environment | `*` | A step made no progress within its watchdog budget; the hardware watchdog resets the host. |
 | `BOOTY-PAY-001` | config | `*` | The vars need a ramdisk payload (FRR, qemu-img or ipmitool) that the ramdisk does not have: the boot loader did not load its archive, or the flavor has no such tool. |
-| `BOOTY-PAY-002` | permanent | `check-payloads` | A ramdisk payload archive is from another BOOTy build than the base ramdisk. |
+| `BOOTY-PAY-002` | permanent | `check-payloads` | A ramdisk payload archive is from another BOOTy build or architecture than the base ramdisk. |

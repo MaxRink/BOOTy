@@ -9,7 +9,8 @@
 #                      payloads in etc/booty/payloads/split
 #   <name>.cpio.zst    the executables of one payload, the libraries that
 #                      the base lacks for them, and the manifest
-#                      etc/booty/payloads/<name> with build=<build>
+#                      etc/booty/payloads/<name> with build=<build> and
+#                      arch=<debian arch>
 #
 # prune-initramfs-libs.sh proves for the base alone and for the base plus
 # each payload that every dynamic executable resolves its libraries.
@@ -33,6 +34,8 @@ payload_files() {
 }
 payloads="frr qemu-img ipmitool"
 
+# The Debian architecture name is the GOARCH of BOOTy (amd64, arm64).
+arch=$(dpkg --print-architecture)
 work=$(mktemp -d)
 mkdir -p "$out"
 
@@ -59,7 +62,7 @@ for p in $payloads; do
 		for f in $(payload_files "$o"); do rm -f "$work/with/$f"; done
 	done
 	mkdir -p "$work/with/etc/booty/payloads"
-	printf 'name=%s\nbuild=%s\n' "$p" "$build" > "$work/with/etc/booty/payloads/$p"
+	printf 'name=%s\nbuild=%s\narch=%s\n' "$p" "$build" "$arch" > "$work/with/etc/booty/payloads/$p"
 	prune-initramfs-libs.sh "$work/with"
 	(cd "$work/with" && find . ! -type d | sort) | comm -23 - "$work/base.list" > "$work/$p.list"
 	mkdir -p "$work/p"

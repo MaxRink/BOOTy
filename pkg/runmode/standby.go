@@ -276,6 +276,14 @@ func (m *StandbyMode) handleRunCommand(ctx context.Context, cmd config.Command) 
 	}
 	runCfg.Mode = cmd.Type
 	runCfg.StandbyCommand = true
+	// A command that needs a payload the ramdisk lacks would fail later,
+	// for a qcow2 image only after the disk wipe: reject it up front.
+	if err := provision.RequirePayloads(runCfg); err != nil {
+		code := provision.CodeOf(provision.WithCode("check-payloads", err))
+		slog.Error("command not run", "id", cmd.ID, "type", cmd.Type, "code", code, "error", err)
+		m.ack(ctx, cmd.ID, "failed", fmt.Sprintf("%s command not run [%s]: %v", cmd.Type, code, err))
+		return nil
+	}
 	if len(keys) > 0 {
 		slog.Info("running command with payload", "id", cmd.ID, "type", cmd.Type,
 			"keys", strings.Join(keys, ","), "hostname", runCfg.Hostname)

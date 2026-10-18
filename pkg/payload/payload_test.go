@@ -54,14 +54,16 @@ func TestCheck(t *testing.T) {
 		mismatch bool
 	}{
 		{name: "no manifests", build: "b1"},
-		{name: "same build", files: map[string]string{"split": "frr", "frr": "name=frr\nbuild=b1\n"}, build: "b1"},
+		{name: "same build and arch", files: map[string]string{"split": "frr", "frr": "name=frr\nbuild=b1\narch=amd64\n"}, build: "b1"},
+		{name: "same build, no arch line", files: map[string]string{"frr": "build=b1\n"}, build: "b1"},
 		{name: "other build", files: map[string]string{"frr": "build=b0\n"}, build: "b1", mismatch: true},
+		{name: "same build, other arch", files: map[string]string{"frr": "build=b1\narch=arm64\n"}, build: "b1", mismatch: true},
 		{name: "no build line", files: map[string]string{"frr": "name=frr\n"}, build: "b1", mismatch: true},
 		{name: "development binary", files: map[string]string{"frr": "build=b0\n"}, build: ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			useDir(t, tt.files)
-			err := Check(tt.build)
+			err := Check(tt.build, "amd64")
 			if got := errors.Is(err, ErrBuildMismatch); got != tt.mismatch {
 				t.Fatalf("Check = %v, want mismatch %v", err, tt.mismatch)
 			}

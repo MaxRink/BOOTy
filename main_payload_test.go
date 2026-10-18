@@ -51,6 +51,21 @@ func TestCheckPayloads(t *testing.T) {
 		{name: "IPMI fallback without ipmitool", set: ipmi, code: provision.CodePayloadMissing},
 		{name: "IPMI fallback with ipmitool", loaded: []string{"ipmitool"}, set: ipmi},
 		{name: "payload of another build", loaded: []string{"ipmitool"}, build: "b2", set: ipmi, code: "BOOTY-PAY-002"},
+		{name: "IPMI fallback alone", set: func(c *config.MachineConfig) { c.Watchdog.IPMIFallback = true }},
+		{name: "watchdog alone", set: func(c *config.MachineConfig) { c.Watchdog.Enable = true }},
+		{name: "dry run with the IPMI fallback and a qcow2 image", set: func(c *config.MachineConfig) {
+			ipmi(c)
+			qcow2(c)
+			c.Mode = "dry-run"
+		}},
+		{name: "DRY_RUN=true with the IPMI fallback", set: func(c *config.MachineConfig) {
+			ipmi(c)
+			c.DryRun = true
+		}},
+		{name: "qcow2 image in a deprovision", set: func(c *config.MachineConfig) {
+			qcow2(c)
+			c.Mode = "deprovision"
+		}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			splitRamdisk(t, "frr qemu-img ipmitool", tt.loaded...)
@@ -77,6 +92,20 @@ func TestSetupNetworkModeFRRWithoutPayload(t *testing.T) {
 	cfg.Network.PredictableNames = new(false)
 	_, err := setupNetworkMode(context.Background(), cfg)
 	if got := provision.CodeOf(provision.WithCode("network-setup", err)); got != provision.CodePayloadMissing {
+		t.Fatalf("code = %q (%v), want %s", got, err, provision.CodePayloadMissing)
+	}
+}
+
+// The network setup error keeps the payload code instead of the generic
+// network setup code (provision.WithCode in setupNetworkAndTokenFlow).
+func TestSetupNetworkAndTokenFlowKeepsThePayloadCode(t *testing.T) {
+	splitRamdisk(t, "frr qemu-img ipmitool")
+	cfg := &config.MachineConfig{}
+	cfg.Network.BGP.ASN = 65000
+	cfg.Network.EVPN.UnderlayIP = "10.0.0.1"
+	cfg.Network.PredictableNames = new(false)
+	_, _, err := setupNetworkAndTokenFlow(context.Background(), cfg, nil, func() {})
+	if got := provision.CodeOf(err); got != provision.CodePayloadMissing {
 		t.Fatalf("code = %q (%v), want %s", got, err, provision.CodePayloadMissing)
 	}
 }

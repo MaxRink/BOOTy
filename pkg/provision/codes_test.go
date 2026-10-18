@@ -305,6 +305,11 @@ code stays reserved.
 A known error (for example a checksum mismatch) gets its own code in every
 step (step ` + "`*`" + `). Any other error gets the code of its step.
 
+A failure before the network is up (for example ` + "`check-payloads`" + `, or a
+missing FRR payload in ` + "`network-setup`" + `) can not reach ` + "`ERROR_URL`" + `: its code
+is only in the console log, in the ` + "`BOOTY1`" + ` status line (` + "`OOB_STATUS`" + `)
+and, with ` + "`OOB_EFI_VAR`" + `, in the ` + "`BootyLastResult`" + ` UEFI variable.
+
 | Code | Class | Step | Meaning |
 |------|-------|------|---------|
 `)

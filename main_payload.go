@@ -7,29 +7,18 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"runtime"
 
 	"github.com/telekom/BOOTy/pkg/config"
-	"github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/payload"
+	"github.com/telekom/BOOTy/pkg/provision"
 )
 
 // checkPayloads runs before the network setup. It checks that every
-// payload archive is from the build of this BOOTy, and that the payloads
-// the vars need and that a split build left out were loaded: ipmitool for
-// the IPMI watchdog fallback, qemu-img for a qcow2 image URL. FRR mode is
-// checked where the network stack is chosen, after the netplan merge.
+// payload archive is from the build of this BOOTy and that the ramdisk has
+// the payloads that the config needs (provision.RequirePayloads).
 func checkPayloads(cfg *config.MachineConfig) error {
-	errs := []error{payload.Check(Build)}
-	if cfg.Watchdog.Enable && cfg.Watchdog.IPMIFallback && cfg.Mode != "dry-run" {
-		errs = append(errs, payload.Require(payload.IPMITool))
-	}
-	for _, u := range cfg.Provision.Image.URLs {
-		if image.LooksQCOW2(u) {
-			errs = append(errs, payload.Require(payload.QemuImg))
-			break
-		}
-	}
-	return errors.Join(errs...)
+	return errors.Join(payload.Check(Build, runtime.GOARCH), provision.RequirePayloads(cfg))
 }
 
 // requireFRRPayload fails FRR network mode on a split ramdisk without the
