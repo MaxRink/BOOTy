@@ -1,4 +1,9 @@
-> **Note**: The `pkg/bootloader` package described here was removed in #453 as it was unused scaffolding. Provisioning continues to hard-code GRUB paths directly.
+> **Note:** the `pkg/bootloader` package that this proposal describes,
+> including `SystemdBoot.Configure`, was removed from `main` in #463
+> ("cleanup dead bootloader") as unused scaffolding. Provisioning hard-codes
+> GRUB paths. No systemd-boot code exists on `main`.
+> The current design for systemd-boot is
+> [proposal-systemd-boot.md](proposal-systemd-boot.md).
 
 # Proposal: Bootloader Management — GRUB Enhancement + systemd-boot
 
