@@ -221,6 +221,17 @@ same resolution:
     FRR connects at once. After a BFD reset BOOTy restored ECMP in 4.0 to
     4.4 s against 2.3 to 2.9 s for FRR; without the delay 2.7 s.
   BOOTy uses the released GoBGP without a fork.
+  GoBGP v4 (native BFD, Extended Message) has two regressions against
+  3.37 that matter for BOOTy, filed upstream before a move to v4:
+  - `ResetPeer` on a peer without a session (for example a BFD reset of
+    a peer that carrier loss stopped) does not apply
+    `IdleHoldTimeAfterReset`, so the peer
+    waits 5 s in Idle instead of 1 s
+    ([osrg/gobgp#3740](https://github.com/osrg/gobgp/issues/3740));
+  - after a connection collision (BOOTy and the leaf connect at the same
+    time), the FSM goes to Idle for 5 s when the peer closes the incoming
+    connection, instead of using its own completed connection
+    ([osrg/gobgp#3741](https://github.com/osrg/gobgp/issues/3741)).
 - `bgp bestpath as-path multipath-relax` (native `network.bgp.multipathRelax`,
   `BGP_MULTIPATH_RELAX`) installs equal-cost paths with different AS paths
   of the same length as one multipath route.
@@ -712,7 +723,7 @@ routes whose next hop is its own router ID.
 
 | Route | Action |
 |---|---|
-| Type-5 | Installs an on-link kernel route for the prefix through the route gateway on the provision bridge, in the overlay VRF table when one is set. A gateway of `0.0.0.0` or `::` means the VTEP (next hop). With a router MAC, BOOTy also installs a neighbor entry for the gateway and an FDB entry `router MAC -> VTEP`. A withdraw removes them. An IPv6 prefix over an IPv4 VTEP is installed like zebra: gateway `::ffff:<VTEP>`, protocol `bgp`, metric 20, and the neighbor entry `extern_learn NOARP`. BOOTy does not install a route for the prefix of a blackhole route; the static route wins, as in zebra. |
+| Type-5 | Installs an on-link kernel route for the prefix through the route gateway on the provision bridge, in the overlay VRF table when one is set. A gateway of `0.0.0.0` or `::` means the VTEP (next hop). With a router MAC, BOOTy also installs a neighbor entry for the gateway and an FDB entry `router MAC -> VTEP`. A withdraw removes them. Like zebra, every Type-5 route has protocol `bgp` and metric 20. A connected route of the same prefix (metric 0) stays next to it, and the kernel prefers the connected route; the Type-5 route takes over when the address goes away. An IPv6 prefix over an IPv4 VTEP is installed like zebra: gateway `::ffff:<VTEP>` and the neighbor entry `extern_learn NOARP`. BOOTy does not install a route for the prefix of a blackhole route; the static route wins, as in zebra. A withdraw always removes the route BOOTy installed. |
 | Type-2 (L2 only) | Installs the FDB entry `MAC -> VTEP`. A withdraw removes it. |
 | Type-3 (L2 only) | Installs the BUM FDB entry `00:00:00:00:00:00 -> VTEP`. A withdraw removes it. |
 
@@ -723,6 +734,11 @@ routes whose next hop is its own router ID.
 | BUM FDB entry `00:00:00:00:00:00 -> provision_gateway` on `vx<VNI>` | Yes | No | No |
 | `/32` route to `provision_gateway` | Yes | No | Yes |
 | `/32` route to each remote VTEP from a Type-5 next hop | No | Yes, except with `frr.conf` sessions: then the routes learned from the fabric reach the VTEP | No |
+
+Without an overlay VRF, the underlay routes and the Type-5 routes share
+the main table with protocol `bgp` and metric 20. When the underlay and a
+Type-5 route carry the same prefix, the last route written replaces the
+other one. zebra instead selects one route by administrative distance.
 
 The underlay `/32` routes use a fabric NIC with link scope. With
 `VRF_NAME`, BOOTy uses the first NIC in the VRF and the VRF table. Without
@@ -884,5 +900,4 @@ See [configuration.md](configuration.md) for defaults and accepted values.
 
 - Planned (#602): keep a GoBGP Type-5 kernel route while another path still
   carries the prefix.
-- Planned (#504): skip local EVPN Type-5 provision routes.
 - Planned (#608): DHCP leases without a mask and on retry.

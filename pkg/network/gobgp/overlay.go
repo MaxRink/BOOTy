@@ -909,12 +909,13 @@ func (o *OverlayTier) handleType5RouteWithRouterMACState(
 		return
 	}
 	prefix, key := dst.String(), type5PathKey(route)
-	if o.isBlackhole(prefix) {
-		o.log.Debug("type-5 route for a static blackhole prefix, static route wins", "prefix", prefix)
+	if withdraw {
+		// Always processed, so no route of ours stays behind.
+		o.withdrawType5Path(prefix, key, route, vtep, routerMAC)
 		return
 	}
-	if withdraw {
-		o.withdrawType5Path(prefix, key, route, vtep, routerMAC)
+	if o.isBlackhole(prefix) {
+		o.log.Debug("type-5 route for a static blackhole prefix, static route wins", "prefix", prefix)
 		return
 	}
 	// Remember the path before any kernel change, so a later withdraw of
@@ -1414,12 +1415,12 @@ func buildType5KernelRoute(link netlink.Link, dst *net.IPNet, gw net.IP, tableID
 	if tableID != 0 {
 		route.Table = tableID
 	}
-	if isMappedGateway(gw) {
-		// IPv6 over an IPv4 VTEP is new in BOOTy, so it copies zebra
-		// completely: protocol bgp, metric 20.
-		route.Protocol = unix.RTPROT_BGP
-		route.Priority = zebraRouteMetric
-	}
+	// Like zebra: protocol bgp, metric 20. A connected route of the same
+	// prefix (metric 0) stays preferred, and the Type-5 route takes over
+	// when the address goes away. With metric 0 an IPv4 Type-5 route
+	// replaced the kernel's connected route.
+	route.Protocol = unix.RTPROT_BGP
+	route.Priority = zebraRouteMetric
 	return route
 }
 

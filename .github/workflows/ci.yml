@@ -1758,7 +1758,8 @@ jobs:
             TestProdTplEBGPWithoutPolicy \
             TestProdTplLongOutageNewLinkLocal \
             TestProdTplOneDropPerFault \
-            TestProdTplRRSessionsNotResetAtStart; do
+            TestProdTplRRSessionsNotResetAtStart \
+            TestProdTplType5ConnectedPrefixKept; do
             if ! grep -q "^--- PASS: ${expected} " e2e-prodtpl.log; then
               echo "::error::${expected} did not pass"
               exit 1
@@ -1892,7 +1893,8 @@ jobs:
             TestProdTplEBGPWithoutPolicy \
             TestProdTplLongOutageNewLinkLocal \
             TestProdTplOneDropPerFault \
-            TestProdTplRRSessionsNotResetAtStart; do
+            TestProdTplRRSessionsNotResetAtStart \
+            TestProdTplType5ConnectedPrefixKept; do
             if ! grep -q "^--- PASS: ${expected} " e2e-prodtpl-one-uplink.log; then
               echo "::error::${expected} did not pass"
               exit 1
@@ -2027,7 +2029,8 @@ jobs:
             TestProdTplEBGPWithoutPolicy \
             TestProdTplLongOutageNewLinkLocal \
             TestProdTplOneDropPerFault \
-            TestProdTplRRSessionsNotResetAtStart; do
+            TestProdTplRRSessionsNotResetAtStart \
+            TestProdTplType5ConnectedPrefixKept; do
             if ! grep -q "^--- PASS: ${expected} " e2e-prodtpl-native-model.log; then
               echo "::error::${expected} did not pass"
               exit 1
