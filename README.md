@@ -217,14 +217,30 @@ same files cannot take over the boot. The volume label is `BOOTY`
 (`--build-arg ISO_VOLID=...`) and only names the volume.
 
 `hack/make-efiboot.sh` builds the EFI system partition image and
-`hack/make-iso.sh` packs the ISO (the layout of the Debian installer images);
-other ISOs, for example a cable-check ISO, can reuse both, or the `efi-boot`
-and `iso-tools` stages. The `shim-signed`, `shim-helpers-amd64-signed` and
-`grub-efi-amd64-signed` versions are pinned with build arguments; the ISO
-carries `/boot/efi-manifest.txt` with the versions and SHA-256 sums, and
-`SOURCE_DATE_EPOCH` (default 0) fixes the timestamps. The kernel command line
-of an ISO boot is `console=tty0 console=ttyS0,115200n8`. The ISOs are amd64
-only.
+`hack/make-iso.sh` packs the ISO (xorriso's hybrid GPT layout with an appended
+EFI partition, as Ubuntu's ISOs use it); other ISOs, for example a
+cable-check ISO, can reuse both, or the `efi-boot` and `iso-tools` stages. The
+kernel command line of an ISO boot is `console=tty0 console=ttyS0,115200n8`.
+The ISOs are amd64 only.
+
+`SOURCE_DATE_EPOCH` fixes the timestamps, the ISO volume UUID, the GPT GUIDs
+and the FAT serial. The default is 315532800 (1980-01-01, the earliest FAT
+time); CI and the release workflows set it to the commit time, so rebuilds of
+one commit are bit-identical and every release gets its own IDs.
+
+The `shim-signed`, `shim-helpers-amd64-signed` and `grub-efi-amd64-signed`
+versions are pinned with build arguments (`SHIM_SIGNED_VERSION`,
+`SHIM_HELPERS_VERSION`, `GRUB_SIGNED_VERSION`), and the ISO carries
+`/boot/efi-manifest.txt` with the versions and SHA-256 sums. The trixie
+mirror keeps only the current version of a package, so a trixie point release
+or security update of shim or GRUB breaks the ISO build until the three pins
+are bumped, and old tags can no longer be rebuilt with their pins. To rebuild
+an old tag, point the `efi-boot` stage at
+[snapshot.debian.org](https://snapshot.debian.org/) for the date of the tag.
+Dependabot (the updater of this repository) does not track Debian package
+versions. The ISO builds of every pull request (`KVM iso-firmware`, PR ISO
+artifacts) fail at the `efi-boot` stage when a pin is gone, which is the
+signal to bump all three together.
 
 CAPRF renders its own ISO per machine, so it cannot take the BOOTy ISO as is.
 To boot with Secure Boot it must ship:

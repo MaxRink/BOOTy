@@ -679,9 +679,13 @@ jobs:
           if [ "${BUILD_FLAVOR}" = "default" ]; then
             BUILD_FLAVOR="full"
           fi
+          # The commit time makes the ISO reproducible per commit and gives
+          # every release its own volume UUID, GPT GUIDs and FAT serial.
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
           docker buildx build \
             --target ${{ matrix.target }} \
             --platform linux/amd64 \
+            --build-arg "SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}" \
             --build-arg "BOOTY_VERSION=${VERSION}" \
             --build-arg "BOOTY_BUILD=${{ github.sha }}" \
             --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" \

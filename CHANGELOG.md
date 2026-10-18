@@ -479,6 +479,9 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 
 ### CI, build and tests
 
+- Release and PR ISOs are reproducible per commit and get distinct volume,
+  GPT and FAT IDs per commit (`SOURCE_DATE_EPOCH` = commit time); the MBR has
+  an active entry for older BIOSes (#742).
 - The initramfs build downloads LVM2 from four mirrors in turn and keeps the
   first download that matches the pinned checksum, instead of failing when
   `mirrors.kernel.org` times out (#739).

@@ -476,7 +476,7 @@ FROM debian:trixie-slim AS efi-boot
 ARG SHIM_SIGNED_VERSION=1.51~1+deb13u1+16.1-2~deb13u1
 ARG SHIM_HELPERS_VERSION=1+16.1+2~deb13u1
 ARG GRUB_SIGNED_VERSION=1+2.12+9+deb13u2
-ARG SOURCE_DATE_EPOCH=0
+ARG SOURCE_DATE_EPOCH=315532800
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     "shim-signed=${SHIM_SIGNED_VERSION}" "shim-helpers-amd64-signed=${SHIM_HELPERS_VERSION}" \
     "grub-efi-amd64-signed=${GRUB_SIGNED_VERSION}" dosfstools mtools \
@@ -496,7 +496,7 @@ COPY --from=efi-boot /efi-manifest.txt /efi-manifest.txt
 
 FROM iso-tools AS iso-builder
 ARG ISO_VOLID=BOOTY
-ARG SOURCE_DATE_EPOCH=0
+ARG SOURCE_DATE_EPOCH=315532800
 COPY --from=efi-boot /efi-manifest.txt /iso/boot/efi-manifest.txt
 COPY --from=busybox /initramfs.cpio.zst /iso/boot/initrd.img
 # Use the standard Debian kernel (has all common NIC drivers as modules)
@@ -704,7 +704,7 @@ COPY --from=gobgp-builder /initramfs.cpio.zst .
 # ── GoBGP ISO target ──────────────────────────────────────────────────────
 FROM iso-tools AS gobgp-iso-builder
 ARG ISO_VOLID=BOOTY
-ARG SOURCE_DATE_EPOCH=0
+ARG SOURCE_DATE_EPOCH=315532800
 COPY --from=efi-boot /efi-manifest.txt /iso/boot/efi-manifest.txt
 COPY --from=gobgp-builder /initramfs.cpio.zst /iso/boot/initrd.img
 COPY --from=kernel /vmlinuz /iso/boot/vmlinuz

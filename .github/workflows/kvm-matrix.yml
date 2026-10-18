@@ -248,7 +248,7 @@ jobs:
             test_regex: "^TestISOFirmware"
             privileged: true
             setup: |
-              docker buildx build --platform linux/amd64 --target iso --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" --output type=local,dest=out-iso -f initrd.Dockerfile .
+              docker buildx build --platform linux/amd64 --target iso --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" --build-arg "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" --output type=local,dest=out-iso -f initrd.Dockerfile .
           # Boots the runner kernel (efivarfs built in). The BOOTy kernel with
           # efivarfs.ko is covered by flavor-storage-controllers under OVMF.
           - scenario: uefi-efi-entries

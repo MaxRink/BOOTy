@@ -47,6 +47,8 @@ jobs:
           MERGE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+          # Commit time: reproducible ISOs per commit, distinct IDs per commit.
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
           build_iso() {
             flavor="$1"
             target="$2"
@@ -59,6 +61,7 @@ jobs:
               --build-arg "BOOTY_BUILD=${HEAD_SHA}" \
               --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" \
               --build-arg "BOOTY_FLAVOR=${flavor}" \
+              --build-arg "SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}" \
               --output "type=local,dest=${out_dir}" -f initrd.Dockerfile .
 
             test -f "${out_dir}/${output}"

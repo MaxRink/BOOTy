@@ -2,21 +2,24 @@
 # Pack a BOOTy ISO that boots on BIOS (ISOLINUX) and UEFI (shim + GRUB),
 # from a CD or virtual media and from a USB stick or disk.
 #
-# Layout (as Debian installer images): El Torito BIOS entry with ISOLINUX,
-# El Torito EFI entry that points at an appended EFI system partition, an
-# isohybrid MBR for BIOS USB boot, and a GPT with the ESP as partition 2.
+# Layout: xorriso's hybrid GPT with an appended EFI partition, as Ubuntu's
+# ISOs use it. El Torito BIOS entry with ISOLINUX, El Torito EFI entry that
+# points at the appended EFI system partition, an isohybrid MBR (marked
+# bootable for older BIOSes) for BIOS USB boot, and a GPT with the ESP as
+# partition 2.
 #
 # usage: make-iso.sh <iso-root> <efiboot.img> <out.iso> [volid]
 #   iso-root must contain boot/vmlinuz and boot/initrd.img.
 #   efiboot.img comes from make-efiboot.sh.
-# Needs: xorriso, isolinux, syslinux-common. SOURCE_DATE_EPOCH (default 0)
-# fixes the ISO timestamps.
+# Needs: xorriso, isolinux, syslinux-common. SOURCE_DATE_EPOCH (default
+# 315532800, 1980-01-01) fixes the timestamps, the volume UUID and the GPT
+# GUIDs. CI and releases set it to the commit time.
 set -eu
 root=${1:?usage: make-iso.sh <iso-root> <efiboot.img> <out.iso> [volid]}
 efiboot=${2:?usage: make-iso.sh <iso-root> <efiboot.img> <out.iso> [volid]}
 out=${3:?usage: make-iso.sh <iso-root> <efiboot.img> <out.iso> [volid]}
 volid=${4:-BOOTY}
-: "${SOURCE_DATE_EPOCH:=0}"
+: "${SOURCE_DATE_EPOCH:=315532800}"
 export SOURCE_DATE_EPOCH
 cmdline="console=tty0 console=ttyS0,115200n8"
 
@@ -61,6 +64,7 @@ xorriso -as mkisofs \
 	-r -J \
 	-partition_offset 16 \
 	-isohybrid-mbr /usr/lib/ISOLINUX/isohdpfx.bin \
+	--mbr-force-bootable \
 	-b isolinux/isolinux.bin \
 	-c isolinux/boot.cat \
 	-no-emul-boot -boot-load-size 4 -boot-info-table \

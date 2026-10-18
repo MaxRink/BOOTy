@@ -17,11 +17,13 @@
 #   manifest: text file that receives the package versions and the SHA-256
 #             of the EFI binaries.
 # Needs: shim-signed, shim-helpers-amd64-signed, grub-efi-amd64-signed,
-# dosfstools, mtools. SOURCE_DATE_EPOCH (default 0) fixes the timestamps.
+# dosfstools, mtools. SOURCE_DATE_EPOCH fixes the timestamps and the FAT
+# serial; the default 315532800 (1980-01-01, the FAT epoch) is the earliest
+# time FAT can store. CI and releases set it to the commit time.
 set -eu
 out=${1:?usage: make-efiboot.sh <out.img> <manifest>}
 manifest=${2:?usage: make-efiboot.sh <out.img> <manifest>}
-: "${SOURCE_DATE_EPOCH:=0}"
+: "${SOURCE_DATE_EPOCH:=315532800}"
 export SOURCE_DATE_EPOCH
 
 shim=/usr/lib/shim/shimx64.efi.signed
@@ -56,8 +58,10 @@ touch -d "@$SOURCE_DATE_EPOCH" "$work/BOOTX64.EFI" "$work/mmx64.efi" "$work/grub
 # Size the FAT image to its content plus 1 MiB for FAT metadata and slack.
 kib=$(du -kc "$shim" "$mm" "$grub" | tail -n 1 | cut -f 1)
 rm -f "$out"
-# A fixed volume serial and SOURCE_DATE_EPOCH make the image reproducible.
-mkfs.vfat -C -i 80075eed -n BOOTY_ESP "$out" $((kib + 1024)) >/dev/null
+# The volume serial comes from SOURCE_DATE_EPOCH: rebuilds of one commit
+# are bit-identical, and every release gets its own serial.
+serial=$(printf '%08x' $((SOURCE_DATE_EPOCH & 0xffffffff)))
+mkfs.vfat -C -i "$serial" -n BOOTY_ESP "$out" $((kib + 1024)) >/dev/null
 mmd -i "$out" ::/EFI ::/EFI/BOOT ::/EFI/debian
 mcopy -m -i "$out" "$work/BOOTX64.EFI" "$work/mmx64.efi" "$work/grubx64.efi" ::/EFI/BOOT/
 mcopy -m -i "$out" "$work/grub.cfg" ::/EFI/debian/grub.cfg
