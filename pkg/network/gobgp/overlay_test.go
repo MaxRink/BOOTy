@@ -4353,12 +4353,13 @@ func TestHandleType2RouteBestPathPerMAC(t *testing.T) {
 		o.handleType2Route(route(1, ""), "10.0.0.1", 0, false)
 		o.handleType2Route(route(1, "10.100.0.5"), "10.0.0.1", 0, false)
 		o.handleType2Route(route(1, "10.100.0.5"), "10.0.0.1", 0, true)
-		if len(mock.dels) != 0 {
-			t.Fatalf("MAC/IP withdraw deleted the FDB entry: %v", mock.dels)
+		// Section 10: the ARP entry goes, the MAC entry stays.
+		if len(mock.dels) != 1 || mock.dels[0].Family == syscall.AF_BRIDGE || mock.dels[0].IP.String() != "10.100.0.5" {
+			t.Fatalf("MAC/IP withdraw: deletes %v, want only the neighbor 10.100.0.5", mock.dels)
 		}
 		o.handleType2Route(route(1, ""), "", 0, true)
-		if len(mock.dels) != 1 || mock.dels[0].IP.String() != "10.0.0.1" {
-			t.Fatalf("MAC-only withdraw: deletes %v, want 10.0.0.1", mock.dels)
+		if len(mock.dels) != 2 || mock.dels[1].Family != syscall.AF_BRIDGE || mock.dels[1].IP.String() != "10.0.0.1" {
+			t.Fatalf("MAC-only withdraw: deletes %v, want the FDB entry to 10.0.0.1", mock.dels)
 		}
 	})
 	t.Run("higher sequence number wins in any order", func(t *testing.T) {
@@ -4530,5 +4531,71 @@ func TestType2RetryAfterFailedSet(t *testing.T) {
 	}
 	if o.type2FDB["aa:bb:cc:dd:ee:ff"] != "10.0.0.1" {
 		t.Fatal("the retried entry is not tracked")
+	}
+}
+
+// TestHandleType2RouteInstallsNeighbor checks RFC 9135 sections 5.2 and 6.2
+// (an asymmetric IRB receiver installs the (IP, MAC) association) the way
+// zebra does it for an L2VNI with an SVI: a NOARP extern_learn neighbor on
+// the bridge for each IP of a live MAC/IP route, following the best route,
+// removed with the last route of the IP and at teardown.
+func TestHandleType2RouteInstallsNeighbor(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{}
+	o := &OverlayTier{
+		cfg:        &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
+		log:        slog.Default(),
+		netlinkOps: mock,
+	}
+	route := func(rd uint32, mac, ip string) *apipb.EVPNMACIPAdvertisementRoute {
+		a, err := buildRouteDistinguisher(65000, rd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &apipb.EVPNMACIPAdvertisementRoute{Rd: a, MacAddress: mac, IpAddress: ip}
+	}
+	neighbors := func(list []*netlink.Neigh) []*netlink.Neigh {
+		var out []*netlink.Neigh
+		for _, n := range list {
+			if n.Family != syscall.AF_BRIDGE {
+				out = append(out, n)
+			}
+		}
+		return out
+	}
+
+	o.handleType2Route(route(1, "aa:bb:cc:dd:ee:01", ""), "10.0.0.1", 0, false)
+	if n := neighbors(mock.sets); len(n) != 0 {
+		t.Fatalf("MAC-only route installed neighbors %v", n)
+	}
+	o.handleType2Route(route(1, "aa:bb:cc:dd:ee:01", "10.100.0.5"), "10.0.0.1", 0, false)
+	n := neighbors(mock.sets)
+	if len(n) != 1 || n[0].LinkIndex != 42 || n[0].Family != syscall.AF_INET || !n[0].IP.Equal(net.ParseIP("10.100.0.5")) ||
+		n[0].HardwareAddr.String() != "aa:bb:cc:dd:ee:01" || n[0].State != netlink.NUD_NOARP || n[0].Flags != netlink.NTF_EXT_LEARNED {
+		t.Fatalf("neighbor = %+v, want 10.100.0.5 -> aa:bb:cc:dd:ee:01 NOARP extern_learn on the bridge", n)
+	}
+
+	// The IP moves to another MAC with a higher sequence number.
+	o.handleType2Route(route(2, "aa:bb:cc:dd:ee:02", "10.100.0.5"), "10.0.0.2", 1, false)
+	if n := neighbors(mock.sets); len(n) != 2 || n[1].HardwareAddr.String() != "aa:bb:cc:dd:ee:02" {
+		t.Fatalf("after the move: neighbors %v, want the new MAC", n)
+	}
+	o.handleType2Route(route(2, "aa:bb:cc:dd:ee:02", "10.100.0.5"), "", 0, true)
+	if n := neighbors(mock.sets); len(n) != 3 || n[2].HardwareAddr.String() != "aa:bb:cc:dd:ee:01" {
+		t.Fatalf("after the withdraw of the new MAC: neighbors %v, want the old MAC again", n)
+	}
+	o.handleType2Route(route(1, "aa:bb:cc:dd:ee:01", "10.100.0.5"), "", 0, true)
+	if d := neighbors(mock.dels); len(d) != 1 || !d[0].IP.Equal(net.ParseIP("10.100.0.5")) {
+		t.Fatalf("after the last withdraw: neighbor deletes %v, want 10.100.0.5", d)
+	}
+
+	o.handleType2Route(route(3, "aa:bb:cc:dd:ee:03", "fd00::5"), "10.0.0.3", 0, false)
+	if n := neighbors(mock.sets); n[len(n)-1].Family != syscall.AF_INET6 {
+		t.Fatalf("IPv6 neighbor family = %d", n[len(n)-1].Family)
+	}
+	if err := o.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if d := neighbors(mock.dels); len(d) != 2 || !d[1].IP.Equal(net.ParseIP("fd00::5")) {
+		t.Fatalf("teardown neighbor deletes %v, want fd00::5", d)
 	}
 }

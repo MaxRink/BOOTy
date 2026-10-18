@@ -141,6 +141,10 @@ type OverlayTier struct {
 	// type2Stopped is set by Teardown, so a Type-2 callback that is still
 	// in flight does not install anything afterwards.
 	type2Stopped bool
+	// type2Neigh is the MAC of the neighbor entry installed on the bridge
+	// for each IP of a Type-2 MAC/IP route, like zebra installs remote
+	// neighbors on the SVI of an L2VNI.
+	type2Neigh map[string]string
 	// type5GatewayMAC tracks Type-5 gateway IP → router MAC mappings so
 	// withdrawals without extended communities can still delete the neighbor.
 	// type5GatewayMu serializes gateway MAC/reference updates and the refcount
@@ -317,7 +321,8 @@ func (o *OverlayTier) Teardown(_ context.Context) error {
 	o.type2Mu.Lock()
 	o.type2Stopped = true
 	o.removeType2FDB()
-	o.type2Paths, o.type2FDB = nil, nil
+	o.removeType2Neighbors()
+	o.type2Paths, o.type2FDB, o.type2Neigh = nil, nil, nil
 	o.type2Mu.Unlock()
 
 	if o.gatewayFDB != nil {
@@ -1512,7 +1517,8 @@ func buildType5GatewayFDB(vxLink netlink.Link, vtep net.IP, routerMAC net.Hardwa
 type type2Path struct {
 	vtep   net.IP
 	seq    uint32
-	sticky bool // the static (sticky) flag of the MAC Mobility community
+	sticky bool   // the static (sticky) flag of the MAC Mobility community
+	ip     net.IP // the IP of a MAC/IP route, nil for a MAC-only route
 }
 
 // type2Key is the route key of a Type-2 route (RFC 7432 section 7.2): RD,
@@ -1598,6 +1604,11 @@ func (o *OverlayTier) handleType2Update(route *apipb.EVPNMACIPAdvertisementRoute
 		return
 	}
 
+	ip := net.ParseIP(route.GetIpAddress())
+	if ip != nil && ip.IsUnspecified() {
+		ip = nil
+	}
+
 	o.type2Mu.Lock()
 	defer o.type2Mu.Unlock()
 	if o.type2Stopped {
@@ -1606,9 +1617,93 @@ func (o *OverlayTier) handleType2Update(route *apipb.EVPNMACIPAdvertisementRoute
 	if withdraw {
 		delete(o.type2Paths[macStr], key)
 	} else {
-		o.rememberType2Path(macStr, key, type2Path{vtep: remoteIP, seq: mm.seq, sticky: mm.sticky})
+		o.rememberType2Path(macStr, key, type2Path{vtep: remoteIP, seq: mm.seq, sticky: mm.sticky, ip: ip})
 	}
 	o.syncType2FDB(mac)
+	if ip != nil {
+		o.syncType2Neighbor(ip)
+	}
+}
+
+// syncType2Neighbor points the neighbor entry of ip on the bridge at the MAC
+// of the best live MAC/IP route with that IP, or removes it when none is
+// left. zebra does the same for the remote MAC/IP routes of an L2VNI with an
+// SVI (state NOARP, extern_learn), and RFC 9135 sections 5.2 and 6.2 ask an
+// asymmetric IRB receiver to install the (IP, MAC) association. The caller
+// holds type2Mu.
+func (o *OverlayTier) syncType2Neighbor(ip net.IP) {
+	ipStr := ip.String()
+	var best *type2Path
+	var bestMAC string
+	for mac, paths := range o.type2Paths {
+		for _, p := range paths {
+			if p.ip.Equal(ip) && (best == nil || p.better(*best)) {
+				best, bestMAC = &p, mac
+			}
+		}
+	}
+	installed := o.type2Neigh[ipStr]
+	if bestMAC == installed {
+		return
+	}
+	link, err := o.netlinkOps.LinkByName(o.cfg.BridgeName)
+	if err != nil {
+		o.log.Warn("cannot find bridge for neighbor update", "bridge", o.cfg.BridgeName, "error", err)
+		return
+	}
+	if bestMAC == "" {
+		mac, _ := net.ParseMAC(installed)
+		if err := o.netlinkOps.NeighDel(type2Neighbor(link, ip, mac)); err != nil {
+			o.log.Debug("failed to delete type-2 neighbor", "ip", ip, "mac", installed, "error", err)
+		}
+		delete(o.type2Neigh, ipStr)
+		return
+	}
+	mac, _ := net.ParseMAC(bestMAC)
+	if err := o.netlinkOps.NeighSet(type2Neighbor(link, ip, mac)); err != nil {
+		o.log.Debug("failed to install type-2 neighbor", "ip", ip, "mac", bestMAC, "error", err)
+		return
+	}
+	o.log.Info("installed neighbor from type-2 route", "ip", ip, "mac", bestMAC)
+	if o.type2Neigh == nil {
+		o.type2Neigh = map[string]string{}
+	}
+	o.type2Neigh[ipStr] = bestMAC
+}
+
+// type2Neighbor is the bridge neighbor entry of a remote MAC/IP route,
+// installed like zebra: NOARP and extern_learn.
+func type2Neighbor(link netlink.Link, ip net.IP, mac net.HardwareAddr) *netlink.Neigh {
+	family := syscall.AF_INET6
+	if ip.To4() != nil {
+		family, ip = syscall.AF_INET, ip.To4()
+	}
+	return &netlink.Neigh{
+		LinkIndex:    link.Attrs().Index,
+		Family:       family,
+		State:        netlink.NUD_NOARP,
+		Flags:        netlink.NTF_EXT_LEARNED,
+		IP:           ip,
+		HardwareAddr: mac,
+	}
+}
+
+// removeType2Neighbors deletes the neighbor entries of the Type-2 routes.
+// The caller holds type2Mu.
+func (o *OverlayTier) removeType2Neighbors() {
+	if len(o.type2Neigh) == 0 || o.netlinkOps == nil {
+		return
+	}
+	link, err := o.netlinkOps.LinkByName(o.cfg.BridgeName)
+	if err != nil {
+		return
+	}
+	for ipStr, macStr := range o.type2Neigh {
+		mac, _ := net.ParseMAC(macStr)
+		if err := o.netlinkOps.NeighDel(type2Neighbor(link, net.ParseIP(ipStr), mac)); err != nil {
+			o.log.Debug("failed to delete type-2 neighbor", "ip", ipStr, "error", err)
+		}
+	}
 }
 
 // rememberType2Path records a live Type-2 path. The caller holds type2Mu.
