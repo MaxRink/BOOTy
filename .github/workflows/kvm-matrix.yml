@@ -238,6 +238,17 @@ jobs:
             setup: |
               docker buildx build --platform linux/amd64 --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" --output type=local,dest=out-flavor -f initrd.Dockerfile .
               docker buildx build --platform linux/amd64 --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" --target kernel-image --output type=local,dest=out-flavor -f initrd.Dockerfile .
+          # The published ISO on BIOS, UEFI (CD and USB) and UEFI Secure Boot
+          # with the Microsoft keys (shim -> Debian GRUB -> Debian kernel),
+          # and a kernel without signature that Secure Boot must refuse.
+          - scenario: iso-firmware
+            qemu_extra: ""
+            test_tag: e2e
+            # The regex is interpolated unquoted into the shell: no ( ) or |.
+            test_regex: "^TestISOFirmware"
+            privileged: true
+            setup: |
+              docker buildx build --platform linux/amd64 --target iso --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" --output type=local,dest=out-iso -f initrd.Dockerfile .
           # Boots the runner kernel (efivarfs built in). The BOOTy kernel with
           # efivarfs.ko is covered by flavor-storage-controllers under OVMF.
           - scenario: uefi-efi-entries
@@ -549,6 +560,7 @@ jobs:
           BOOTY_KERNEL: ${{ github.workspace }}/vmlinuz
           BOOTY_FLAVOR_INITRAMFS: ${{ github.workspace }}/out-flavor/initramfs.cpio.zst
           BOOTY_FLAVOR_KERNEL: ${{ github.workspace }}/out-flavor/vmlinuz
+          BOOTY_ISO: ${{ github.workspace }}/out-iso/booty.iso
           LUKS_DISK_IMAGE: ${{ matrix.luks_disk && format('{0}/{1}', github.workspace, matrix.luks_disk) || '' }}
           OVMF_VARS: ${{ matrix.ovmf_vars && format('{0}/{1}', github.workspace, matrix.ovmf_vars) || '' }}
           OVMF_CODE: ${{ matrix.ovmf_code || '' }}

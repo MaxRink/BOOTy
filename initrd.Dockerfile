@@ -219,6 +219,7 @@ RUN if [ -n "$KERNEL_SUITE" ]; then \
     #   Filesystems:      ext4 jbd2 mbcache crc32c_generic crc32c-cryptoapi xfs btrfs fat vfat nls_cp437 nls_iso8859-1 nls_ascii
     #   VRF/VXLAN/bridge: vrf dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc
     #   VLAN:             8021q (bonding is left out: loading it creates bond0)
+    #   Socket diag:      inet_diag tcp_diag udp_diag (ss and other sock_diag users)
     #   Intel NICs:       e1000e igb igc ixgbe i40e ice iavf igbvf ixgbevf (iavf, igbvf, ixgbevf: SR-IOV VFs)
     #   Broadcom NICs:    tg3 bnxt_en
     #   Mellanox/NVIDIA:  mlx4_core mlx4_en mlx5_core mlxfw
@@ -257,6 +258,7 @@ RUN if [ -n "$KERNEL_SUITE" ]; then \
         ext4 jbd2 mbcache crc32c_generic crc32c-cryptoapi xfs btrfs fat vfat nls_cp437 nls_iso8859-1 nls_ascii \
         vrf dummy vxlan udp_tunnel ip6_udp_tunnel bridge stp llc \
         8021q \
+        inet_diag tcp_diag udp_diag \
         e1000e igb igc ixgbe i40e ice iavf igbvf ixgbevf \
         tg3 bnxt_en \
         mlx4_core mlx4_en mlx5_core mlxfw \
@@ -462,31 +464,42 @@ RUN find . -print0 > ../initramfs.files \
     && rm ../initramfs.cpio
 
 # ── ISO build stage (optional, triggered by --target=iso) ──────────────────
-FROM debian:trixie-slim AS iso-builder
+# UEFI boot image: Debian shim (Microsoft UEFI CA) + Debian-signed GRUB,
+# which verifies the Debian-signed kernel, so the ISO boots with Secure Boot.
+# The package versions are pinned; bump them together when trixie updates
+# shim or GRUB (an old version leaves the mirror, so the build fails loudly).
+# The manifest records the versions and SHA-256 sums, and the ISO ships it as
+# /boot/efi-manifest.txt. amd64 only, like ISOLINUX.
+FROM debian:trixie-slim AS efi-boot
+ARG SHIM_SIGNED_VERSION=1.51~1+deb13u1+16.1-2~deb13u1
+ARG SHIM_HELPERS_VERSION=1+16.1+2~deb13u1
+ARG GRUB_SIGNED_VERSION=1+2.12+9+deb13u2
+ARG SOURCE_DATE_EPOCH=0
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
-    xorriso syslinux syslinux-common isolinux curl ca-certificates \
+    "shim-signed=${SHIM_SIGNED_VERSION}" "shim-helpers-amd64-signed=${SHIM_HELPERS_VERSION}" \
+    "grub-efi-amd64-signed=${GRUB_SIGNED_VERSION}" dosfstools mtools \
     && rm -rf /var/lib/apt/lists/*
+COPY hack/make-efiboot.sh /usr/local/bin/
+RUN make-efiboot.sh /efiboot.img /efi-manifest.txt
 
+# Shared by every ISO target (and reusable for other ISOs): BIOS ISOLINUX +
+# UEFI El Torito + isohybrid MBR + GPT with an ESP, see hack/make-iso.sh.
+FROM debian:trixie-slim AS iso-tools
+RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
+    xorriso isolinux syslinux-common \
+    && rm -rf /var/lib/apt/lists/*
+COPY hack/make-iso.sh /usr/local/bin/
+COPY --from=efi-boot /efiboot.img /efiboot.img
+COPY --from=efi-boot /efi-manifest.txt /efi-manifest.txt
+
+FROM iso-tools AS iso-builder
+ARG ISO_VOLID=BOOTY
+ARG SOURCE_DATE_EPOCH=0
+COPY --from=efi-boot /efi-manifest.txt /iso/boot/efi-manifest.txt
 COPY --from=busybox /initramfs.cpio.zst /iso/boot/initrd.img
-
 # Use the standard Debian kernel (has all common NIC drivers as modules)
 COPY --from=kernel /vmlinuz /iso/boot/vmlinuz
-
-# ISOLINUX bootloader
-RUN mkdir -p /iso/isolinux && \
-    cp /usr/lib/ISOLINUX/isolinux.bin /iso/isolinux/ && \
-    cp /usr/lib/syslinux/modules/bios/ldlinux.c32 /iso/isolinux/
-
-RUN printf 'DEFAULT booty\nLABEL booty\n  KERNEL /boot/vmlinuz\n  APPEND initrd=/boot/initrd.img console=tty0 console=ttyS0,115200n8\n' \
-    > /iso/isolinux/isolinux.cfg
-
-RUN xorriso -as mkisofs \
-    -o /booty.iso \
-    -b isolinux/isolinux.bin \
-    -c isolinux/boot.cat \
-    -no-emul-boot -boot-load-size 4 -boot-info-table \
-    -isohybrid-mbr /usr/lib/ISOLINUX/isohdpfx.bin \
-    /iso
+RUN make-iso.sh /iso /efiboot.img /booty.iso "$ISO_VOLID"
 
 FROM scratch AS iso
 COPY --from=iso-builder /booty.iso .
@@ -683,28 +696,13 @@ FROM scratch AS gobgp
 COPY --from=gobgp-builder /initramfs.cpio.zst .
 
 # ── GoBGP ISO target ──────────────────────────────────────────────────────
-FROM debian:trixie-slim AS gobgp-iso-builder
-RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
-    xorriso syslinux syslinux-common isolinux curl ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
+FROM iso-tools AS gobgp-iso-builder
+ARG ISO_VOLID=BOOTY
+ARG SOURCE_DATE_EPOCH=0
+COPY --from=efi-boot /efi-manifest.txt /iso/boot/efi-manifest.txt
 COPY --from=gobgp-builder /initramfs.cpio.zst /iso/boot/initrd.img
 COPY --from=kernel /vmlinuz /iso/boot/vmlinuz
-
-RUN mkdir -p /iso/isolinux && \
-    cp /usr/lib/ISOLINUX/isolinux.bin /iso/isolinux/ && \
-    cp /usr/lib/syslinux/modules/bios/ldlinux.c32 /iso/isolinux/
-
-RUN printf 'DEFAULT booty\nLABEL booty\n  KERNEL /boot/vmlinuz\n  APPEND initrd=/boot/initrd.img console=tty0 console=ttyS0,115200n8\n' \
-    > /iso/isolinux/isolinux.cfg
-
-RUN xorriso -as mkisofs \
-    -o /booty-gobgp.iso \
-    -b isolinux/isolinux.bin \
-    -c isolinux/boot.cat \
-    -no-emul-boot -boot-load-size 4 -boot-info-table \
-    -isohybrid-mbr /usr/lib/ISOLINUX/isohdpfx.bin \
-    /iso
+RUN make-iso.sh /iso /efiboot.img /booty-gobgp.iso "$ISO_VOLID"
 
 FROM scratch AS gobgp-iso
 COPY --from=gobgp-iso-builder /booty-gobgp.iso .

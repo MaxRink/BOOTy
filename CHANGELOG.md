@@ -235,6 +235,11 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 
 ### Features
 
+- The `iso` and `gobgp-iso` ISOs boot on UEFI (CD, virtual media and USB)
+  and with Secure Boot through Debian's shim and signed GRUB, besides BIOS.
+  Under Secure Boot, in-band Mellanox SR-IOV configuration (`mstconfig`) and
+  kexec into kernels not signed by Debian do not work (#737).
+- The initramfs ships `inet_diag`, `tcp_diag` and `udp_diag` (#737).
 - Out-of-band status: a fixed `BOOTY1 run=... phase=... code=... step=...
   result=...` line on every active console at each phase change and at the
   end of a run, also when the network setup fails (`OOB_STATUS`, default

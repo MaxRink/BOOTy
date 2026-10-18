@@ -177,8 +177,8 @@ The `initrd.Dockerfile` supports multiple build targets via `--target`:
 |--------|------|-----------|------------|----------|
 | *(default)* | ~47 MB | FRR/EVPN + DHCP | Full (LVM, sfdisk, mdadm) | Production bare-metal provisioning |
 | `gobgp` | ~42 MB | GoBGP/EVPN + DHCP | Full (LVM, sfdisk, mdadm) | Production without FRR dependency |
-| `iso` | ~61 MB | FRR/EVPN + DHCP | Full | Bootable ISO for Redfish virtual media |
-| `gobgp-iso` | ~56 MB | GoBGP/EVPN + DHCP | Full | Bootable GoBGP ISO for Redfish virtual media |
+| `iso` | ~66 MB | FRR/EVPN + DHCP | Full | Bootable ISO for Redfish virtual media |
+| `gobgp-iso` | ~62 MB | GoBGP/EVPN + DHCP | Full | Bootable GoBGP ISO for Redfish virtual media |
 | `slim` | ~30 MB | DHCP only | Provisioning basics, no LVM/FRR | Lightweight provisioning without BGP |
 | `micro` | ~10 MB | None (pure Go) | None | Minimal agent, custom network stack |
 | `kernel-image` | ~12 MB | n/a | n/a | The Debian `vmlinuz` that matches the shipped modules, for QEMU tests |
@@ -195,6 +195,62 @@ the usual target OS images. This is upstream behaviour by design (Linux commit
 a4166f1c4893, "md: Fix forward incompatibility from configurable logical block
 size"); no mdadm option, md module parameter or sysfs setting stops a new 1.x
 array from storing its logical block size.
+
+#### ISO boot paths
+
+The `iso` and `gobgp-iso` targets boot on:
+
+- BIOS (and UEFI with CSM) through ISOLINUX, from a CD or virtual media and
+  from a USB stick (isohybrid MBR), with a serial console on `ttyS0`;
+- UEFI from a CD or virtual media (El Torito EFI entry) and from a USB stick
+  (GPT partition 2, an EFI system partition);
+- UEFI with Secure Boot and the factory (Microsoft) keys: the EFI system
+  partition holds Debian's shim (signed by the Microsoft UEFI CA), Debian's
+  signed GRUB and shim's MokManager. GRUB verifies the Debian-signed kernel
+  through shim, and the kernel then locks itself down (see
+  [Secure Boot](#secure-boot)).
+
+GRUB only reads the medium it was started from: from a CD it reads
+`/EFI/debian/grub.cfg` on the ISO, from a USB stick the ISO filesystem on the
+same disk. It never searches other disks by label, so a second disk with the
+same files cannot take over the boot. The volume label is `BOOTY`
+(`--build-arg ISO_VOLID=...`) and only names the volume.
+
+`hack/make-efiboot.sh` builds the EFI system partition image and
+`hack/make-iso.sh` packs the ISO (the layout of the Debian installer images);
+other ISOs, for example a cable-check ISO, can reuse both, or the `efi-boot`
+and `iso-tools` stages. The `shim-signed`, `shim-helpers-amd64-signed` and
+`grub-efi-amd64-signed` versions are pinned with build arguments; the ISO
+carries `/boot/efi-manifest.txt` with the versions and SHA-256 sums, and
+`SOURCE_DATE_EPOCH` (default 0) fixes the timestamps. The kernel command line
+of an ISO boot is `console=tty0 console=ttyS0,115200n8`. The ISOs are amd64
+only.
+
+CAPRF renders its own ISO per machine, so it cannot take the BOOTy ISO as is.
+To boot with Secure Boot it must ship:
+
+- the BOOTy EFI system partition image as its El Torito EFI entry (extract it
+  with `xorriso -osirrox on -indev booty.iso -extract_boot_images <dir>`,
+  file `eltorito_img2_uefi.img`);
+- `/EFI/debian/grub.cfg` on its ISO filesystem, which GRUB reads when booted
+  from the CD. It can hold the CAPRF menu itself or `configfile` it;
+- a menu that boots the Debian-signed kernel and initrd from the BOOTy ISO
+  (`/boot/vmlinuz`, `/boot/initrd.img`) plus its `/boot/deploy.cpio`, and
+  not the legacy `/vmlinuz` and `/initrd.cpio.zstd` layout;
+- for USB or disk boot only: `/boot/grub/grub.cfg` on the ISO filesystem.
+
+#### Secure Boot side effects of the ISO
+
+- shim 16 applies its SBAT revocation level when it starts with Secure Boot
+  on: it may write the `SbatLevel` UEFI variable, after which the firmware
+  path rejects older shim and GRUB builds (from other ISOs or installed
+  systems) whose SBAT generation is below that level. Keep installed OS boot
+  loaders current before booting BOOTy with Secure Boot on such hosts.
+- shim starts MokManager (`mmx64.efi`) when a MOK change is pending (for
+  example after `mokutil --import` in an installed OS). MokManager waits for
+  a key press on the console and continues the boot after its timeout
+  (10 seconds), without applying the change. Headless hosts therefore boot,
+  but pending MOK requests stay pending.
 
 #### ARM64 Targets
 
@@ -275,7 +331,7 @@ asynchronously.
 | SAS/RAID HBA | `smartpqi`, `hpsa` | Microchip SmartRAID/SmartHBA, HPE Smart Array |
 | VM | `virtio_blk`, `virtio_scsi` | QEMU/KVM |
 | Software RAID | `md-mod`, `raid0`, `raid1`, `raid10`, `raid456` | `mdadm` RAID 0/1/10/5/6 |
-| Other | `loop`, `dm-mod`, `dm-crypt`, `efivarfs`, `8021q`, `sg` | Loop images, LUKS, EFI variables, VLANs, SCSI generic access |
+| Other | `loop`, `dm-mod`, `dm-crypt`, `efivarfs`, `8021q`, `sg`, `inet_diag`, `tcp_diag`, `udp_diag` | Loop images, LUKS, EFI variables, VLANs, SCSI generic access, socket diagnostics (`ss`) |
 
 ## Usage
 
@@ -917,6 +973,22 @@ digests of the installed shim, GRUB and kernel. The `verify-secureboot-chain`
 step fails provisioning on a mismatch. MOK enrollment (`MOK_CERT_PATH`,
 `MOK_PASSWORD`) is not implemented. See
 [Secure Boot](docs/configuration.md#secure-boot).
+
+When the BOOTy ISO boots with Secure Boot, the kernel runs in lockdown
+`integrity` mode. Measured in QEMU with OVMF, the Microsoft keys, shim and the
+Debian 6.12 kernel:
+
+| Interface | BOOTy users | Under Secure Boot |
+|-----------|-------------|-------------------|
+| Module loading (`finit_module`) | all shipped modules | works: the modules are signed |
+| `kexec_file_load` of a Debian-signed kernel | `tryKexec` | works (Debian CA from shim's MOK list) |
+| `kexec_file_load` of a kernel signed by another vendor (Ubuntu, Flatcar) or unsigned | `tryKexec` | refused (`ENOKEY`, `ENODATA`); BOOTy reboots through the firmware instead |
+| `kexec_load` (legacy syscall) | not used | refused |
+| efivarfs writes | `efibootmgr`, `booty-esp-sync`, `BootyLastResult` | work |
+| SCSI `SG_IO` and NVMe admin ioctls | `hdparm`, `sg_sanitize`, `sg_format`, `nvme` | work |
+| PCI config space writes (`/sys/bus/pci/devices/*/config`) and PCI BAR `mmap` | `mstflint`, `mstconfig` (Mellanox SR-IOV, `NUM_VFS`) | refused: in-band Mellanox firmware configuration fails; configure SR-IOV out of band or with Secure Boot off |
+| `/dev/mem`, `/dev/port`, `ioperm` | `dmidecode` fallback only (it reads `/sys/firmware/dmi/tables` first) | refused |
+| `/dev/ipmi0` | `ipmitool` | not restricted by lockdown (not measured: no IPMI device in QEMU) |
 
 ### LUKS Encryption (Planned)
 

@@ -353,7 +353,7 @@ jobs:
           # mdadm --create fails and efibootmgr has no EFI variables.
           for flavor in default gobgp slim; do
             zstd -dc "out-${flavor}/initramfs.cpio.zst" | cpio -t 2>/dev/null > "${flavor}-modules.txt"
-            for ko in nvme nvme-core ahci libahci libata sd_mod sg megaraid_sas mpt3sas scsi_transport_sas raid_class smartpqi hpsa md-mod raid1 raid10 raid456 efivarfs loop 8021q iavf igbvf ixgbevf qede cxgb4 sfc ionic; do
+            for ko in nvme nvme-core ahci libahci libata sd_mod sg megaraid_sas mpt3sas scsi_transport_sas raid_class smartpqi hpsa md-mod raid1 raid10 raid456 efivarfs loop 8021q inet_diag tcp_diag udp_diag iavf igbvf ixgbevf qede cxgb4 sfc ionic; do
               grep -Eq "^(\./)?modules/${ko}\.ko$" "${flavor}-modules.txt" || { echo "FAIL: ${flavor} has no modules/${ko}.ko"; exit 1; }
             done
             if grep -Eq '^(\./)?modules/bonding\.ko' "${flavor}-modules.txt"; then echo "FAIL: ${flavor} ships bonding.ko, loading it creates bond0"; exit 1; fi
