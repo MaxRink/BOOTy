@@ -484,6 +484,11 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 
 ### CI, build and tests
 
+- lldpd in the default and gobgp initramfs is built from the Debian source
+  without the SNMP subagent, which needs an `snmpd` the ramdisk does not ship.
+  The initramfs no longer carries net-snmp and `libperl`: default 2.28 MB,
+  gobgp 2.09 MB smaller. `lldpd` and `lldpcli` (including `-f xml`) work as
+  before (#759).
 - Release and PR ISOs are reproducible per commit and get distinct volume,
   GPT and FAT IDs per commit (`SOURCE_DATE_EPOCH` = commit time); the MBR has
   an active entry for older BIOSes (#742).

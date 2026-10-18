@@ -25,22 +25,19 @@ Measured on linux/amd64 from `main` at `af7dfed8` plus the build changes
 | ipmitool with libfreeipmi | 6,444,512 | 1,286,081 |
 | EFI fallback loader | 3,338,240 | 750,381 |
 
-## 1. Build lldpd without SNMP and XML (saves about 12 MB per flavor)
+## 1. Build lldpd without SNMP (done, #759)
 
-Debian builds lldpd with `--with-snmp` and lldpcli with `--with-xml`. The
-SNMP subagent needs a running `snmpd` master agent, which the ramdisk does
-not ship, so that code cannot work today. `libxml2` pulls in ICU, and
-`libicudata` alone is 31 MB raw. BOOTy itself does not run lldpd or
-lldpcli: they are rescue-shell tools.
+Debian builds lldpd with `--with-snmp`. The SNMP subagent needs a running
+`snmpd` master agent, which the ramdisk does not ship, so that code could
+not work there. The `lldpd` stage of `initrd.Dockerfile` builds the Debian
+source package without `--with-snmp` and the tools stage installs that
+package. The ramdisk loses net-snmp, `libperl`, `libsensors`, `libpci` and
+`libwrap`: 2,281,110 bytes of the zstd default ramdisk and 2,093,792 bytes
+of gobgp (slim ships no lldpd).
 
-Build lldpd from the upstream release in its own stage with
-`--without-snmp --without-xml`, keep the Debian privilege-separation and
-readline options, and copy `lldpd`, `lldpcli` and `liblldpctl` from that
-stage. Lost function: `lldpcli -f xml`. The `plain`, `keyvalue` and `json`
-output formats stay.
-
-This changes the tools stage package list, which `build/kernel-debian`
-(#701) also changes, so stack it on that branch.
+XML output stays (`lldpcli -f xml`): on trixie `libxml2` no longer pulls
+in ICU, and it costs 0.75 MB compressed, so dropping it would lose a
+function for little gain.
 
 ## 2. Opt-in xz compression for slow delivery paths
 
