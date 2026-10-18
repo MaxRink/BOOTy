@@ -231,6 +231,59 @@ EXTRA_KERNEL_PARAMS=intel_iommu=on
   HTTPS with a certificate that BOOTy verifies: do not use
   `INSECURE_TRANSPORT` or `SKIP_TLS_VERIFY` for agent mode in production.
 
+### Deploy archive payload
+
+A payload that starts with the gzip magic bytes is a deploy archive: a
+gzip-compressed tar of the per-job deploy tree, the same content as the
+`deploy.cpio` of a CAPRF ISO. A standby agent that was booted for one job
+needs it for the next one, because the cloud-init seed and the machine
+files are files, not vars.
+
+| Entry | Use |
+|-------|-----|
+| `deploy/vars` | Required. The vars of the job, a complete vars file. |
+| `deploy/machine-files/` | Replaces `/deploy/machine-files` (cloud-init seed, machine files). |
+| `deploy/machine-commands/` | Replaces `/deploy/machine-commands`. |
+| `deploy/file-system/` | Replaces `/deploy/file-system` (provisioner files). |
+
+- BOOTy unpacks the archive into a new staging directory and reads and
+  validates `deploy/vars`: a line that is not `KEY=VALUE` or a value that
+  does not parse or validate fails the command, and the error names keys,
+  never values. An unknown key is logged and ignored, like in the vars of
+  an ISO; vars without any known key fail the command. The three
+  directories replace the ones in `/deploy` only after every check of the
+  command passed, right before the command runs. A command that is
+  rejected leaves `/deploy` unchanged, and its staged files are dropped:
+  they never reach a later command. A directory that the
+  archive does not have is removed, so no file of the previous job stays.
+  `/deploy/vars` itself is not changed.
+- With `PROVISIONER_FILES_TARGET=ramdisk` (a `CAPRF_LEGACY_COMPAT` preset)
+  the command copies the new `deploy/file-system` into the running ramdisk
+  right after the swap, before it runs, so a CA bundle or `/etc/hosts` is
+  in place for the image download. `etc/frr` and `etc/netplan` are left
+  out: the network of the agent keeps the settings of the boot.
+- The settings that the running ramdisk uses keep their values from
+  `/deploy/vars`, as for a vars payload: transport (the agent token),
+  agent, network, `MODE`, `DRY_RUN`, `CAPRF_LEGACY_COMPAT` and the URLs that
+  carry the bearer token. The archive values of these keys are ignored, not
+  rejected: CAPRF renders the archive with the same builder as an ISO.
+  The `CAPRF_LEGACY_COMPAT` presets follow the value of the running ramdisk
+  too.
+- The archive is untrusted input to a root process. Only directories and
+  regular files are allowed: a symlink, a hard link or any other type fails
+  the command, so machine files can not be symlinks in a deploy archive.
+  Every entry must be below `deploy/`, not absolute, and have no `..`
+  anywhere in its name (also not inside a file name such as `a..b`). A
+  file name may appear once. Files are created with `O_EXCL|O_NOFOLLOW`,
+  with the permission bits of the archive entry (a 0600 file stays 0600),
+  owned by root; the archive owner and the setuid, setgid and sticky bits
+  are ignored.
+- `deploy/machine-files`, `deploy/machine-commands` and `deploy/file-system`
+  must be directories.
+- At most 10000 entries and created directories together (the parents
+  that a path implies count too), entry paths of at most 512 bytes and 16
+  levels, and 64 MiB of file content; the command response at most 16 MiB.
+
 ### End of a command
 
 | Command | Result | What BOOTy does |

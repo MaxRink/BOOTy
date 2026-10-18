@@ -419,6 +419,19 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   documented (#665)
 - Standby: the `completed` ACK of a deprovision command names the disks in
   use that the wipe of all disks skipped, like the success status (#679)
+- Standby: a `provision` or `deprovision` command payload can be a deploy
+  archive (#730), the gzip tar of the per-job `deploy/` tree that CAPRF
+  renders for an ISO (vars, cloud-init seed, machine files and commands,
+  provisioner files). BOOTy stages and checks it, swaps the directories into
+  `/deploy` right before the command runs, keeps the file permission bits
+  (no setuid, setgid or sticky), ignores unknown vars keys like the ISO, and
+  keeps the agent token, network and `CAPRF_LEGACY_COMPAT` of the running
+  ramdisk. With `PROVISIONER_FILES_TARGET=ramdisk` the new provisioner files
+  go into the ramdisk before the command runs, without `etc/frr` and
+  `etc/netplan`. Symlinks, hard links, paths outside `deploy/`, `..`
+  anywhere in an entry name (also `a..b`), vars without a known key and
+  oversized archives fail the command; a failed command drops its staged
+  files.
 - Standby picks up commands faster (#716): the command poll is a long poll
   (`GET COMMANDS_URL?wait=20`; CAPRF holds it until a command is queued, at
   most 25 s), the next poll starts 10 s after the start of the previous one

@@ -895,6 +895,29 @@ func ApplyProvisionerFilesToRamdisk(ctx context.Context) error {
 	if err := copyTree(ctx, provisionerFilesDir, ramdiskRoot); err != nil {
 		return err
 	}
+	return chmodRamdiskNetplan()
+}
+
+// commandRamdiskSkips are the provisioner file trees that a standby command
+// does not apply: the network of the agent keeps the settings of the boot.
+var commandRamdiskSkips = []string{filepath.Join("etc", "frr"), filepath.Join("etc", "netplan")}
+
+// ApplyCommandProvisionerFilesToRamdisk copies the provisioner files of a
+// standby command (a deploy archive) into the running ramdisk before the
+// command runs, so a CA bundle or /etc/hosts is in place for the image
+// download. etc/frr and etc/netplan are left out: the running network
+// does not change.
+func ApplyCommandProvisionerFilesToRamdisk(ctx context.Context) error {
+	if _, err := os.Stat(provisionerFilesDir); os.IsNotExist(err) {
+		return nil
+	}
+	slog.Info("applying the provisioner files of the command to the ramdisk", "src", provisionerFilesDir,
+		"skipped", strings.Join(commandRamdiskSkips, ","))
+	return copyTreeWith(ctx, provisionerFilesDir, ramdiskRoot, false, commandRamdiskSkips...)
+}
+
+// chmodRamdiskNetplan gives the netplan files in the ramdisk mode 0600.
+func chmodRamdiskNetplan() error {
 	netplanSrc := filepath.Join(provisionerFilesDir, "etc", "netplan")
 	entries, err := os.ReadDir(netplanSrc)
 	if os.IsNotExist(err) {
@@ -953,7 +976,7 @@ func copyTree(ctx context.Context, srcBase, destRoot string) error {
 
 // copyTreeWith copies srcBase into destRoot. With keepSymlinks, symlinks are
 // recreated as links and never followed; otherwise they are skipped.
-func copyTreeWith(ctx context.Context, srcBase, destRoot string, keepSymlinks bool) error {
+func copyTreeWith(ctx context.Context, srcBase, destRoot string, keepSymlinks bool, skipDirs ...string) error {
 	destRoot, err := filepath.Abs(destRoot)
 	if err != nil {
 		return fmt.Errorf("resolve dest root: %w", err)
@@ -972,6 +995,11 @@ func copyTreeWith(ctx context.Context, srcBase, destRoot string, keepSymlinks bo
 			return fmt.Errorf("stat %s: %w", path, err)
 		}
 		isSymlink := info.Mode()&os.ModeSymlink != 0
+		if d.IsDir() && len(skipDirs) > 0 {
+			if rel, relErr := filepath.Rel(srcBase, path); relErr == nil && slices.Contains(skipDirs, rel) {
+				return filepath.SkipDir
+			}
+		}
 		if skip, skipErr := skipCopyTreeEntry(srcBase, path, d, isSymlink, keepSymlinks); skip {
 			return skipErr
 		}

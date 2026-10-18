@@ -3,6 +3,9 @@
 package kvm
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"net/http"
 	"path/filepath"
@@ -159,6 +162,71 @@ func TestStandbyProvisionPayloadWinsQEMU(t *testing.T) {
 		!strings.Contains(acks[0].Message, "EXTRA_KERNEL_PARAMS,HOSTNAME") {
 		t.Fatalf("acks = %+v, want p1 completed with the payload keys", acks)
 	}
+}
+
+// A provision command whose payload is a deploy archive (tar.gz of the
+// deploy tree, like deploy.cpio of a CAPRF ISO) provisions with the vars
+// and machine files of the archive: a standby agent booted for another job
+// gets the files of the next machine.
+func TestStandbyProvisionDeployArchiveQEMU(t *testing.T) {
+	requireRoot(t)
+	qemuAvailable(t)
+	requireProvisionTools(t)
+	requireDiskInspectTools(t)
+
+	rawDisk := createChrootCapableTestDiskImage(t, 512)
+	caprf := startFakeCAPRF(t, compressGzip(t, rawDisk))
+	targetDisk := filepath.Join(t.TempDir(), "standby-archive.qcow2")
+	run(t, "create target disk", "qemu-img", "create", "-f", "qcow2", targetDisk, "2G")
+
+	vars := caprf.standbyVars()
+	vars["HOSTNAME"] = "agent-booted-for-another-job"
+	archiveVars := "HOSTNAME=archive-host\nIMAGE=" + vars["IMAGE"] + "\nIMAGE_ALLOW_INSECURE_HTTP=true\n" +
+		"DISK_DEVICE=/dev/vda\nPROVISION_TARGET_OS=linux\nSUCCESS_ACTION=poweroff\nTOKEN=not-used\n"
+	caprf.queueCommand(agentCommand{ID: "p1", Type: "provision", Payload: tarGz(t, map[string]string{
+		"deploy/vars": archiveVars,
+		"deploy/machine-files/etc/booty-archive-marker": "from the deploy archive\n",
+	})})
+
+	output := runQEMUProvision(t, findKernel(t), buildProvisionInitramfs(t, vars), targetDisk, 6*time.Minute)
+	t.Logf("standby deploy archive output tail:\n%s", tail(output, 3000))
+	assertProvisionSucceeded(t, output)
+	requirePowerOff(t, output)
+
+	rootMount, cleanup := mountQcow2(t, targetDisk)
+	defer cleanup()
+	if got := strings.TrimSpace(readProvisionedFile(t, rootMount, "etc/hostname")); got != "archive-host" {
+		t.Fatalf("/etc/hostname = %q, want archive-host", got)
+	}
+	if got := readProvisionedFile(t, rootMount, "etc/booty-archive-marker"); got != "from the deploy archive\n" {
+		t.Fatalf("machine file from the archive = %q", got)
+	}
+	if acks := caprf.ackList(); len(acks) != 1 || acks[0].Status != "completed" {
+		t.Fatalf("acks = %+v, want p1 completed", acks)
+	}
+}
+
+// tarGz returns a gzip-compressed tar of regular files.
+func tarGz(t *testing.T, files map[string]string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for name, body := range files {
+		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
 }
 
 // With STANDBY_DEPROVISION_SUCCESS_ACTION=standby a deprovision command

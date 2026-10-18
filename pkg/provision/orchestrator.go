@@ -535,7 +535,8 @@ func (o *Orchestrator) setHostname(_ context.Context) error {
 func (o *Orchestrator) copyProvisionerFiles(ctx context.Context) error {
 	if o.cfg.ProvisionerFilesInRamdisk() {
 		// Like the legacy CAPRF scripts: provisioner files go to the ramdisk
-		// only. main applies them before the network starts.
+		// only. main applies them before the network starts; standby
+		// applies the files of a deploy archive before the command runs.
 		o.log.Info("provisioner files stay in the ramdisk, not copied to the target")
 		return nil
 	}

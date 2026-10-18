@@ -217,3 +217,30 @@ func TestConfigureDNSWriteResolvConfPrecedence(t *testing.T) {
 		})
 	}
 }
+
+// The files of a standby command go into the ramdisk without etc/frr and
+// etc/netplan: the running network keeps the settings of the boot.
+func TestApplyCommandProvisionerFilesToRamdiskKeepsTheNetwork(t *testing.T) {
+	withProvisionerFiles(t, map[string]os.FileMode{
+		"etc/hosts":                             0o644,
+		"usr/local/share/ca-certificates/x.crt": 0o644,
+		"etc/frr/frr.conf":                      0o640,
+		"etc/netplan/50-provision.yaml":         0o600,
+	})
+	root := t.TempDir()
+	oldRoot := ramdiskRoot
+	ramdiskRoot = root
+	t.Cleanup(func() { ramdiskRoot = oldRoot })
+
+	if err := ApplyCommandProvisionerFilesToRamdisk(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for rel, want := range map[string]bool{
+		"etc/hosts": true, "usr/local/share/ca-certificates/x.crt": true,
+		"etc/frr/frr.conf": false, "etc/netplan/50-provision.yaml": false,
+	} {
+		if _, err := os.Stat(filepath.Join(root, rel)); (err == nil) != want {
+			t.Fatalf("%s in the ramdisk = %t, want %t", rel, err == nil, want)
+		}
+	}
+}

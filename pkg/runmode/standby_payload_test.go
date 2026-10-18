@@ -25,10 +25,16 @@ IMAGE=https://images.example.com/a.img
 // payloadProvider merges payloads like caprf.Client.CommandConfig.
 type payloadProvider struct {
 	*standbyProvider
+	// ramdiskFiles sets PROVISIONER_FILES_TARGET=ramdisk in the command config.
+	ramdiskFiles bool
 }
 
 func (p *payloadProvider) CommandConfig(payload []byte) (*config.MachineConfig, []string, error) {
-	return caprf.MergeCommandVars([]byte(payloadTestBaseVars), payload)
+	cfg, keys, err := caprf.MergeCommandVars([]byte(payloadTestBaseVars), payload)
+	if err == nil && p.ramdiskFiles {
+		cfg.ProvisionerFilesTarget = config.ProvisionerFilesRamdisk
+	}
+	return cfg, keys, err
 }
 
 func payloadStandby(t *testing.T, cmds []config.Command, deprovision func(*config.MachineConfig) error) (*StandbyMode, *payloadProvider) {
@@ -231,5 +237,115 @@ func TestStandbyFailureAckSurvivesACanceledContext(t *testing.T) {
 
 	if !slices.Equal(provider.acks, []string{"p1:failed", "d1:failed"}) {
 		t.Fatalf("acks = %v, want both failure ACKs despite the canceled context", provider.acks)
+	}
+}
+
+// stagingProvider stages files on a payload like caprf.Client: the first
+// command's payload stages and fails, the apply reports what is staged.
+type stagingProvider struct {
+	*payloadProvider
+	failFirst bool
+	applyErr  error
+	staged    bool
+	applied   []bool
+	discards  int
+	calls     int
+}
+
+func (p *stagingProvider) CommandConfig(payload []byte) (*config.MachineConfig, []string, error) {
+	p.calls++
+	p.staged = len(payload) > 0
+	if p.failFirst && p.calls == 1 {
+		return nil, nil, errors.New("rejected after the staging")
+	}
+	return p.payloadProvider.CommandConfig(payload)
+}
+
+func (p *stagingProvider) ApplyCommandFiles() (bool, error) {
+	applied := p.staged
+	p.staged = false
+	p.applied = append(p.applied, applied)
+	return applied, p.applyErr
+}
+
+func (p *stagingProvider) DiscardCommandFiles() {
+	p.discards++
+	p.staged = false
+}
+
+// The files that a command staged never reach a later command: the
+// command drops them on every path, also when it is rejected.
+func TestStandbyRejectedCommandFilesDoNotReachTheNext(t *testing.T) {
+	mode, provider := payloadStandby(t, []config.Command{
+		{ID: "d1", Type: "deprovision", Payload: []byte("HOSTNAME=job-a\n")},
+		{ID: "d2", Type: "deprovision"},
+		{ID: "r1", Type: "reboot"},
+	}, func(*config.MachineConfig) error { return nil })
+	stager := &stagingProvider{payloadProvider: provider, failFirst: true}
+	mode.deps.Client = stager
+
+	var rebootErr *RebootRequestedError
+	if err := mode.Run(context.Background()); !errors.As(err, &rebootErr) {
+		t.Fatalf("Run error = %v", err)
+	}
+	if !slices.Equal(stager.applied, []bool{false}) || stager.discards != 2 {
+		t.Fatalf("applied %v, discards %d; want d2 with nothing staged and a discard per command", stager.applied, stager.discards)
+	}
+	if !slices.Equal(provider.acks[:2], []string{"d1:failed", "d2:completed"}) {
+		t.Fatalf("acks = %v", provider.acks)
+	}
+}
+
+// The staged files are applied after the checks and, with the ramdisk as
+// the provisioner files target, copied into the ramdisk before the run; a
+// failed apply ACKs the command as failed and standby goes on.
+func TestStandbyAppliesCommandFilesBeforeTheRun(t *testing.T) {
+	prev := applyProvisionerFiles
+	t.Cleanup(func() { applyProvisionerFiles = prev })
+	for _, tc := range []struct {
+		name     string
+		ramdisk  bool
+		applyErr error
+		wantRun  bool
+		wantCopy int
+	}{
+		{"target files", false, nil, true, 0},
+		{"ramdisk files", true, nil, true, 1},
+		{"failed apply", false, errors.New("rename failed"), false, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var order []string
+			applyProvisionerFiles = func(context.Context) error { order = append(order, "copy"); return nil }
+			mode, provider := payloadStandby(t, []config.Command{
+				{ID: "d1", Type: "deprovision", Payload: []byte("HOSTNAME=t1\n")},
+				{ID: "r1", Type: "reboot"},
+			}, func(*config.MachineConfig) error { order = append(order, "run"); return nil })
+			if tc.ramdisk {
+				provider.ramdiskFiles = true
+			}
+			mode.deps.Client = &stagingProvider{payloadProvider: provider, applyErr: tc.applyErr}
+
+			var rebootErr *RebootRequestedError
+			if err := mode.Run(context.Background()); !errors.As(err, &rebootErr) {
+				t.Fatalf("Run error = %v", err)
+			}
+			want := []string{}
+			if tc.wantCopy > 0 {
+				want = append(want, "copy")
+			}
+			if tc.wantRun {
+				want = append(want, "run")
+			}
+			if !slices.Equal(order, want) {
+				t.Fatalf("order = %v, want %v", order, want)
+			}
+			wantAck := "d1:completed"
+			if !tc.wantRun {
+				wantAck = "d1:failed"
+			}
+			if provider.acks[0] != wantAck {
+				t.Fatalf("acks = %v, want %s first", provider.acks, wantAck)
+			}
+		})
 	}
 }
