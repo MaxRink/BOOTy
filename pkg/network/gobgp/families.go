@@ -188,7 +188,12 @@ func setCapabilities(p *apipb.Peer, c *network.BGPCapabilities) {
 		// address family tuples, so a peer does not keep our routes when
 		// the session ends. GoBGP then also sends long-lived graceful
 		// restart without tuples (FRR sends them with stale time 0).
-		p.GracefulRestart = &apipb.GracefulRestart{Enabled: true, HelperOnly: true, RestartTime: c.GracefulRestartTime, LonglivedEnabled: true}
+		// The N bit (RFC 8538) as FRR sets it by its version: with N
+		// exchanged a NOTIFICATION other than Hard Reset keeps the routes
+		// of a peer that sends family tuples, and GoBGP sends Hard Reset
+		// for an administrative shutdown.
+		p.GracefulRestart = &apipb.GracefulRestart{Enabled: true, HelperOnly: true, RestartTime: c.GracefulRestartTime, LonglivedEnabled: true,
+			NotificationEnabled: c.GracefulNotification}
 	}
 	for _, af := range p.AfiSafis {
 		if c.GracefulRestart {

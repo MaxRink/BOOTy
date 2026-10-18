@@ -256,6 +256,12 @@ behaviour.
   (osrg/gobgp#3741), and FRR's MAC/IP routes with the EVPN ARP/ND community
   are kept instead of being treated as withdrawn. `docs/networking.md` lists the fixes and when to
   drop the fork (#699).
+- GoBGP mode sets the N bit (RFC 8538) of the graceful restart capability
+  like FRR: on from `frr version` 8.3 (the CAPRF configs) and without
+  `frr.conf`, off below 8.3 (the bm4x templates). New key
+  `BGP_GRACEFUL_NOTIFICATION` (YAML `network.bgp.gracefulNotification`).
+  `TestOpenCapabilitiesMatchFRR` compares the OPEN of GoBGP on the wire
+  with FRR 10.2.1 and 10.3.1 captures (#744).
 
 ### Behaviour behind `CAPRF_LEGACY_COMPAT=true`
 

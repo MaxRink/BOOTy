@@ -556,6 +556,7 @@ func applyFRRParams(frr *FRRParams, cfg *network.Config) {
 	cfg.BlackholeRoutes = frr.BlackholeRoutes
 	if frr.Model != nil {
 		cfg.BGPDefaults = string(frr.Model.Defaults)
+		cfg.BGPFRRVersion = frr.Model.Version
 		// Only an explicit "[no] ip[v6] forwarding" changes the GoBGP
 		// defaults: IPv4 on, IPv6 off like the kernel default that zebra
 		// keeps.

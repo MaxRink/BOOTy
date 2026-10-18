@@ -205,10 +205,12 @@
   "BGPCapabilities": {
     "GracefulRestart": false,
     "GracefulRestartTime": 0,
+    "GracefulNotification": false,
     "AddPathReceive": false,
     "SoftwareVersion": false
   },
   "BGPDefaults": "traditional",
+  "BGPFRRVersion": "8.2.2",
   "BGPHostname": "",
   "BGPRouteMaps": [
     {

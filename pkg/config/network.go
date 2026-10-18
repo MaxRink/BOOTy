@@ -306,6 +306,11 @@ type BGPConfig struct {
 	// GracefulRestartTime is the graceful restart time in seconds, 1 to
 	// 4095. 0 means 120, like FRR.
 	GracefulRestartTime uint32 `yaml:"gracefulRestartTime,omitempty" json:"gracefulRestartTime,omitempty"`
+	// GracefulNotification sets the N bit (RFC 8538) of the graceful
+	// restart capability, like FRR "bgp graceful-restart notification"
+	// (GoBGP). Unset (nil) follows the FRR default: off for "frr version"
+	// below 8.3 in frr.conf, else on.
+	GracefulNotification *bool `yaml:"gracefulNotification,omitempty" json:"gracefulNotification,omitempty"`
 	// AddPathReceive sends the add-path capability with receive in every
 	// address family, like FRR (GoBGP). Unset (nil) means on.
 	AddPathReceive *bool `yaml:"addPathReceive,omitempty" json:"addPathReceive,omitempty"`

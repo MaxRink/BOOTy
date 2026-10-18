@@ -1444,6 +1444,22 @@ func networkConfigFromMachineConfig(cfg *config.MachineConfig) *network.Config {
 	return netCfg
 }
 
+// frrVersionBelow reports whether the "frr version" v is below
+// major.minor, like the match_version of FRR's FRR_CFG_DEFAULT_*. An empty
+// or unparsable version is the running FRR, so it is not below.
+func frrVersionBelow(v string, major, minor int) bool {
+	f := strings.SplitN(v, ".", 3)
+	if len(f) < 2 {
+		return false
+	}
+	ma, err1 := strconv.Atoi(f[0])
+	mi, err2 := strconv.Atoi(f[1])
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	return ma < major || ma == major && mi < minor
+}
+
 // applyBGPOptions applies the BGP options that frr.conf can also set. With
 // any BGP sessions (frr.conf or network.bgp.sessions) the default is FRR's
 // (routes installed); the BGP_PEER_MODE peers default it off. fast-external-failover is set in
@@ -1464,10 +1480,13 @@ func applyBGPOptions(o *config.BGPConfig, n *network.Config) {
 	n.BGPDefaults = cmp.Or(n.BGPDefaults, "datacenter")
 	n.BGPHostname = o.Hostname
 	datacenter := n.BGPDefaults == "datacenter"
+	gr := boolOr(o.GracefulRestart, true)
 	n.BGPCapabilities = network.BGPCapabilities{
-		GracefulRestart:     boolOr(o.GracefulRestart, true),
+		GracefulRestart:     gr,
 		GracefulRestartTime: cmp.Or(o.GracefulRestartTime, 120),
-		AddPathReceive:      boolOr(o.AddPathReceive, true),
+		// FRR BGP_GRACEFUL_NOTIFICATION: off for "frr version" < 8.3.
+		GracefulNotification: gr && boolOr(o.GracefulNotification, !frrVersionBelow(n.BGPFRRVersion, 8, 3)),
+		AddPathReceive:       boolOr(o.AddPathReceive, true),
 		// FRR 10.3 BGP_SOFT_VERSION_CAPABILITY: on for every peer with
 		// datacenter, iBGP only otherwise.
 		SoftwareVersion: boolOr(o.SoftwareVersion, datacenter),
@@ -1833,6 +1852,9 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	}
 	if src.BGPDefaults != "" {
 		dst.BGPDefaults = src.BGPDefaults
+	}
+	if src.BGPFRRVersion != "" {
+		dst.BGPFRRVersion = src.BGPFRRVersion
 	}
 	mergeBGPPolicy(dst, src)
 	mergeOverlayDevices(&dst.OverlayDevices, &src.OverlayDevices)

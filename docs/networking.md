@@ -387,7 +387,7 @@ rule of every key:
 | `BRIDGE_MTU`, `BRIDGE_IPV6_LINK_LOCAL`, `BRIDGE_ACCEPT_RA` | netplan bridge `mtu`, `link-local`, `accept-ra` | `network.overlay.*` | native wins |
 | `BRIDGE_STP` | netplan bridge `parameters` (`stp`, on when the block has no `stp`) | `network.overlay.bridgeSTP` | native wins |
 | `ACCEPT_RA_OFF`, `LLDP_EMIT` | netplan ethernet `accept-ra: false`, `emit-lldp: true` | `network.noAcceptRA`, `network.emitLLDP` | list replaces |
-| `BGP_GRACEFUL_RESTART`, `BGP_GRACEFUL_RESTART_TIME`, `BGP_ADDPATH_RX`, `BGP_SOFTWARE_VERSION` | none: `frr.conf` graceful restart and capability statements are rejected | `network.bgp.gracefulRestart`, `gracefulRestartTime`, `addPathReceive`, `softwareVersion` | native only; unset is the FRR default (for `BGP_SOFTWARE_VERSION`, of the `frr defaults` profile) |
+| `BGP_GRACEFUL_RESTART`, `BGP_GRACEFUL_RESTART_TIME`, `BGP_GRACEFUL_NOTIFICATION`, `BGP_ADDPATH_RX`, `BGP_SOFTWARE_VERSION` | none: `frr.conf` graceful restart and capability statements are rejected | `network.bgp.gracefulRestart`, `gracefulRestartTime`, `gracefulNotification`, `addPathReceive`, `softwareVersion` | native only; unset is the FRR default (for `BGP_SOFTWARE_VERSION`, of the `frr defaults` profile; for `BGP_GRACEFUL_NOTIFICATION`, of the `frr version`) |
 | `BGP_HOSTNAME` | none: FRR ignores the `frr.conf` `hostname` line and sends the system host name | `network.bgp.hostname` | native only; unset keeps the system host name |
 | `LLDP_RECEIVE` | none: the legacy ramdisk does not receive LLDP | `network.lldpReceive` | native only; unset is on |
 | `LLDP_DISABLE_FW_AGENT` | none: the legacy ramdisk never touches the flag | `network.lldp.disableFirmwareAgent` | native only; unset is on (a deliberate deviation, see below); `false` leaves the flag alone |
@@ -591,9 +591,17 @@ Both stacks:
 
 The OPEN message of GoBGP has the capabilities that FRR 10 sends with the
 bm4x template (`TestProdTplOpenCapabilities` compares the leaf and route
-reflector views of BOOTy and the shadow FRR node):
+reflector views of BOOTy and the shadow FRR node). The FRR lists were
+captured on the wire (tshark) from FRR 10.2.1, the version of the legacy
+ramdisk, and 10.3.1, with the bm4x template (`frr version 8.2.2`, `frr
+defaults traditional`) and the CAPRF config (`frr version 9.1`, `frr
+defaults datacenter`), to an unnumbered eBGP leaf and a numbered iBGP
+route reflector. Both FRR versions send the same capabilities.
+`TestOpenCapabilitiesMatchFRR` captures the OPEN of GoBGP for the same
+sessions and compares it with these lists and the deviations below:
 
-- route refresh, 4-octet AS, extended next hop;
+- route refresh, 4-octet AS, extended next hop (FRR: IPv4 unicast on the
+  unnumbered sessions only);
 - the hostname (FQDN capability, no domain): the system host name, as
   GoBGP takes it from `os.Hostname()`. It is `HOSTNAME` for provisioning
   with `RAMDISK_HOSTNAME=true`, else the host name of the ramdisk.
@@ -609,7 +617,14 @@ reflector views of BOOTy and the shadow FRR node):
   iBGP peers only with `traditional` (the bm4x templates). A set value
   wins;
 - graceful restart as helper with restart time 120 s
-  (`BGP_GRACEFUL_RESTART`, `BGP_GRACEFUL_RESTART_TIME`);
+  (`BGP_GRACEFUL_RESTART`, `BGP_GRACEFUL_RESTART_TIME`), without family
+  tuples;
+- the N bit (RFC 8538) of graceful restart like the FRR default of `bgp
+  graceful-restart notification`, which depends on `frr version`: off
+  below 8.3 (the bm4x templates, 8.2.2), on from 8.3 (the CAPRF configs,
+  9.1) and without `frr.conf` (`BGP_GRACEFUL_NOTIFICATION`). With N
+  exchanged, a NOTIFICATION other than Hard Reset keeps the routes of a
+  peer that sends family tuples, as in FRR;
 - long-lived graceful restart (without family tuples in GoBGP helper mode,
   so there is no stale time to set);
 - add-path receive in every address family (`BGP_ADDPATH_RX`);
@@ -619,16 +634,16 @@ The minimum route advertisement interval is 0 in both: FRR shows
 `minBtwnAdvertisementRunsTimerMsecs` 0 for these peers, and GoBGP sends
 updates without a timer.
 
-GoBGP 4.10 does not send the following, so they are known deviations:
+The known deviations, with the fix that closes each of them:
 
-| FRR 10 sends | GoBGP | Fabric impact |
-|---|---|---|
-| Enhanced route refresh (RFC 7313) | Not sent | A peer that refreshes its routes from BOOTy uses plain route refresh, without the begin and end markers. Nothing is lost; stale routes of BOOTy are not swept at the end of a refresh. |
-| Paths-limit (with add-path) | Not sent | FRR sends limit 0 (no limit), so the peer behaves the same. |
-| Dynamic capability: FRR sends it with `frr defaults datacenter` (`BGP_DYNAMIC_CAPABILITY`), so the CAPRF configs send it and the bm4x templates (`traditional`) do not | Not sent | A capability change needs a session reset. The fabric does not change capabilities at run time. |
-| Graceful restart Restart State (R) bit | Off | The R bit tells the peer that the speaker restarted. BOOTy is only a helper and keeps no forwarding state, so the peer's behaviour does not change. |
-| Long-lived graceful restart family tuples (stale time 0) | Without tuples in helper mode | With stale time 0 neither side keeps routes long-lived. |
-| Software version `FRRouting/10.x` | `GoBGP/4.10.0` | Information only. |
+| FRR 10 sends | GoBGP | Fabric impact | Status |
+|---|---|---|---|
+| Enhanced route refresh (RFC 7313) | Not sent | A peer that refreshes its routes from BOOTy uses plain route refresh, without the begin and end markers. Nothing is lost; stale routes of BOOTy are not swept at the end of a refresh. | Upstream-pending: needs a GoBGP change (the capability and the begin and end of refresh markers). |
+| Paths-limit (with add-path), limit 0 for each add-path family | Not sent | Limit 0 is no limit, so the peer behaves the same. | Upstream-pending: needs a GoBGP change. |
+| Dynamic capability: FRR sends it with `frr defaults datacenter` (`BGP_DYNAMIC_CAPABILITY`), so the CAPRF configs send it and the bm4x templates (`traditional`) do not | Not sent | A capability change needs a session reset. The fabric does not change capabilities at run time. | Not planned: GoBGP has no CAPABILITY message. |
+| Graceful restart Restart State (R) bit in the first restart time (120 s) after bgpd starts, then off | Off | The R bit tells the peer that the speaker restarted. BOOTy is only a helper and keeps no forwarding state, so the peer's behaviour does not change. GoBGP sets it only for a restarting speaker (`LocalRestarting`), which also holds back BOOTy's own routes until every peer has sent End-of-RIB, so BOOTy does not set it. | Accepted: no effect on the fabric; GoBGP would need an R bit without the restarting speaker procedure. |
+| Long-lived graceful restart family tuples (F bit, stale time 0) | Without tuples in helper mode | With stale time 0 neither side keeps routes long-lived. | Accepted: GoBGP sends the tuples only for a restarting speaker, and FRR's tuples claim preserved forwarding state (F bit). |
+| Software version `FRRouting/10.x` | `GoBGP/4.10.0` | Information only. The capability goes to the same peers as in FRR. | Not planned: GoBGP sends its own name. |
 
 Defaults of `frr defaults`: FRR 10.3.1 has these profile-dependent
 defaults (every `FRR_CFG_DEFAULT_*` with a `match_profile` in bgpd, zebra,
@@ -652,14 +667,16 @@ RIB check, and with the templates they always exist locally (the underlay
 /32 on its dummy, the lo /128 and the blackhole /64). The other
 `FRR_CFG_DEFAULT_*` (suppress-duplicates, graceful-restart notification,
 hard-admin-reset, enforce-first-as) depend on the FRR version, not on the
-profile.
+profile. BOOTy follows `frr version` for graceful-restart notification
+(the N bit above).
 
 Graceful restart and switch failures: as helper, BOOTy keeps the routes
 of a leaf or route reflector that restarts its BGP process with graceful
 restart (forwarding bit set) for the peer's restart time, like FRR, so a
 control plane restart of a switch does not take the server down. A switch
 that fails ends the session through BFD or the carrier with a NOTIFICATION
-and no N bit, so graceful restart does not apply and the routes go at
+without the N bit, or a Hard Reset when N is exchanged, so graceful
+restart does not apply and the routes go at
 once, as in FRR. When BOOTy restarts BGP (BFD down, the end of the run),
 its capability has no address family tuples, so the leaf removes BOOTy's
 routes at once, the same as for the legacy FRR.

@@ -112,6 +112,9 @@ type Config struct {
 	// profile of the legacy daemons file). It selects the FRR 10.3
 	// defaults that depend on it (bgpd/bgp_vty.c FRR_CFG_DEFAULT_*).
 	BGPDefaults string
+	// BGPFRRVersion is the "frr version" of frr.conf, empty without it. It
+	// selects the FRR defaults that depend on the version.
+	BGPFRRVersion string
 	// BGPHostname is BGP_HOSTNAME: when set, the ramdisk host name before
 	// BGP starts, because GoBGP sends the system host name as the FQDN
 	// capability.
@@ -328,6 +331,9 @@ type BGPCapabilities struct {
 	GracefulRestart bool
 	// GracefulRestartTime is the restart time in seconds (FRR 120).
 	GracefulRestartTime uint32
+	// GracefulNotification is the N bit of the graceful restart capability
+	// (RFC 8538), FRR "bgp graceful-restart notification".
+	GracefulNotification bool
 	// AddPathReceive is the add-path capability (RFC 7911) with receive in
 	// every address family, like FRR.
 	AddPathReceive bool

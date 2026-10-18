@@ -48,6 +48,9 @@ func prodtplCaps(ctx context.Context, container, neighbor string) (map[string]an
 	view["rcvHostName"] = host["rcvHostName"]
 	gr, _ := n["gracefulRestartInfo"].(map[string]any)
 	view["remoteGrMode"] = gr["remoteGrMode"]
+	// The N bit (RFC 8538). The R bit is a known deviation: FRR sets it
+	// for the first restart time after bgpd starts.
+	view["nBit"] = gr["nBit"]
 	view["state"] = n["bgpState"]
 	return view, nil
 }
@@ -71,7 +74,8 @@ func findNeighbor(v any, neighbor string) map[string]any {
 
 // The leaf (eBGP) and dcgw01 (iBGP) receive the same OPEN capabilities
 // from BOOTy as from the shadow FRR node: graceful restart with restart
-// time 120 and the family tuples (helper), long-lived graceful restart,
+// time 120 and the family tuples (helper) and the N bit of "frr version
+// 8.2.2" (off), long-lived graceful restart,
 // add-path receive, route refresh, 4-octet AS and the hostname.
 func TestProdTplOpenCapabilities(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), prodtplTimeout)

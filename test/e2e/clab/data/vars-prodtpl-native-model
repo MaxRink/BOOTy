@@ -34,6 +34,9 @@ export BGP_MULTIPATH_RELAX="true"
 export BGP_EBGP_REQUIRES_POLICY="false"
 export BGP_INSTALL_ROUTES="true"
 export BGP_FAST_EXTERNAL_FAILOVER="true"
+# The bm4x template has "frr version 8.2.2": FRR sends no graceful restart
+# N bit (FRR sets it from version 8.3 on).
+export BGP_GRACEFUL_NOTIFICATION="false"
 export BLACKHOLE_ROUTES="2001:db8:40a:5481::/64"
 export EVPN_TYPE5_NETWORKS="2001:db8:40a:5481::19/128,2001:db8:40a:5481::/64"
 export IP_FORWARDING="false"

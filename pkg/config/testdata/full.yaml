@@ -236,11 +236,14 @@ network:
     # OPEN capabilities (GoBGP), unset means the FRR default:
     # gracefulRestart (BGP_GRACEFUL_RESTART): helper, default true
     # gracefulRestartTime (BGP_GRACEFUL_RESTART_TIME): 1 to 4095 s, default 120
+    # gracefulNotification (BGP_GRACEFUL_NOTIFICATION): the N bit; default
+    # off for "frr version" below 8.3 in frr.conf, else on
     # addPathReceive (BGP_ADDPATH_RX): add-path receive, default true
     # softwareVersion (BGP_SOFTWARE_VERSION): also to eBGP peers; default
     # true with "frr defaults datacenter", else iBGP only
     gracefulRestart: true
     gracefulRestartTime: 90
+    gracefulNotification: false
     addPathReceive: false
     softwareVersion: false
     # hostname (BGP_HOSTNAME): the FQDN capability host name; set as the

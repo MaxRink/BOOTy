@@ -2044,28 +2044,40 @@ func TestApplyBGPOptions(t *testing.T) {
 	// (also the default without frr.conf and BGP_DEFAULTS), to iBGP peers
 	// only with traditional. BGP_DEFAULTS wins over frr.conf; a set value
 	// wins over the profile.
+	// The N bit follows "frr version" like FRR BGP_GRACEFUL_NOTIFICATION:
+	// off below 8.3 (the bm4x templates have 8.2.2), else and without a
+	// version on.
 	t.Run("capabilities", func(t *testing.T) {
 		for _, tt := range []struct {
-			name, parsed, native, want string
-			version                    bool
+			name, parsed, native, want, frrVersion string
+			version, notification                  bool
 		}{
-			{"no profile", "", "", "datacenter", true},
-			{"frr.conf datacenter", "datacenter", "", "datacenter", true},
-			{"frr.conf traditional", "traditional", "", "traditional", false},
-			{"BGP_DEFAULTS wins", "datacenter", "traditional", "traditional", false},
+			{"no profile", "", "", "datacenter", "", true, true},
+			{"frr.conf datacenter", "datacenter", "", "datacenter", "9.1", true, true},
+			{"frr.conf traditional", "traditional", "", "traditional", "8.2.2", false, false},
+			{"BGP_DEFAULTS wins", "datacenter", "traditional", "traditional", "8.3", false, true},
+			{"frr version 7.5.1", "", "", "datacenter", "7.5.1", true, false},
+			{"frr version 10.2.1", "", "", "datacenter", "10.2.1", true, true},
+			{"unparsable frr version", "", "", "datacenter", "8", true, true},
 		} {
-			n := &network.Config{BGPDefaults: tt.parsed}
+			n := &network.Config{BGPDefaults: tt.parsed, BGPFRRVersion: tt.frrVersion}
 			applyBGPOptions(&config.BGPConfig{Defaults: tt.native}, n)
-			want := network.BGPCapabilities{GracefulRestart: true, GracefulRestartTime: 120, AddPathReceive: true, SoftwareVersion: tt.version}
+			want := network.BGPCapabilities{GracefulRestart: true, GracefulRestartTime: 120, AddPathReceive: true, SoftwareVersion: tt.version,
+				GracefulNotification: tt.notification}
 			if n.BGPDefaults != tt.want || n.BGPCapabilities != want {
 				t.Errorf("%s: profile %q capabilities %+v, want %q %+v", tt.name, n.BGPDefaults, n.BGPCapabilities, tt.want, want)
 			}
 		}
 		n := &network.Config{}
 		applyBGPOptions(&config.BGPConfig{GracefulRestart: new(false), GracefulRestartTime: 60,
-			AddPathReceive: new(false), SoftwareVersion: new(false)}, n)
+			AddPathReceive: new(false), SoftwareVersion: new(false), GracefulNotification: new(true)}, n)
 		if want := (network.BGPCapabilities{GracefulRestartTime: 60}); n.BGPCapabilities != want {
 			t.Fatalf("set capabilities = %+v, want %+v", n.BGPCapabilities, want)
+		}
+		n = &network.Config{}
+		applyBGPOptions(&config.BGPConfig{GracefulNotification: new(false)}, n)
+		if n.BGPCapabilities.GracefulNotification {
+			t.Fatal("BGP_GRACEFUL_NOTIFICATION=false must win")
 		}
 	})
 	// The peer options are defaults: a session value wins.
@@ -2221,12 +2233,13 @@ func TestMergeNetplanConfigOverlayDevices(t *testing.T) {
 	}
 }
 
-// The "frr defaults" profile of frr.conf reaches the network config.
+// The "frr defaults" profile and the "frr version" of frr.conf reach the
+// network config.
 func TestMergeNetplanConfigBGPDefaults(t *testing.T) {
 	dst := &network.Config{}
-	mergeNetplanConfig(dst, &network.Config{BGPDefaults: "traditional"})
-	if dst.BGPDefaults != "traditional" {
-		t.Fatalf("BGPDefaults = %q, want traditional", dst.BGPDefaults)
+	mergeNetplanConfig(dst, &network.Config{BGPDefaults: "traditional", BGPFRRVersion: "8.2.2"})
+	if dst.BGPDefaults != "traditional" || dst.BGPFRRVersion != "8.2.2" {
+		t.Fatalf("BGPDefaults = %q, BGPFRRVersion = %q, want traditional 8.2.2", dst.BGPDefaults, dst.BGPFRRVersion)
 	}
 }
 

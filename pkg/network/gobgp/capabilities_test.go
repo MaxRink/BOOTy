@@ -11,10 +11,12 @@ import (
 
 // The FRR default capabilities reach every kind of peer: graceful restart
 // as helper (no family tuples), long-lived graceful restart, add-path
-// receive; the software version only when asked for.
+// receive; the software version and the N bit only when asked for.
 func TestSetCapabilities(t *testing.T) {
 	frr := network.BGPCapabilities{GracefulRestart: true, GracefulRestartTime: 120, AddPathReceive: true, SoftwareVersion: true}
-	for _, caps := range []network.BGPCapabilities{frr, {}} {
+	frr83 := frr
+	frr83.GracefulNotification = true
+	for _, caps := range []network.BGPCapabilities{frr, frr83, {}} {
 		cfg := &Config{ASN: 65000, Capabilities: caps}
 		for name, p := range map[string]*apipb.Peer{
 			"numbered":  buildNumberedPeer(cfg, "10.0.0.1", allFamilies()),
@@ -23,7 +25,8 @@ func TestSetCapabilities(t *testing.T) {
 		} {
 			gr := p.GetGracefulRestart()
 			if caps.GracefulRestart != gr.GetEnabled() || gr.GetHelperOnly() != caps.GracefulRestart || gr.GetRestartTime() != caps.GracefulRestartTime ||
-				gr.GetLonglivedEnabled() != caps.GracefulRestart || p.GetConf().GetSendSoftwareVersion() != caps.SoftwareVersion {
+				gr.GetLonglivedEnabled() != caps.GracefulRestart || p.GetConf().GetSendSoftwareVersion() != caps.SoftwareVersion ||
+				gr.GetNotificationEnabled() != caps.GracefulNotification {
 				t.Errorf("%s peer with %+v: graceful restart %+v, software version %v", name, caps, gr, p.GetConf().GetSendSoftwareVersion())
 			}
 			for _, af := range p.GetAfiSafis() {
