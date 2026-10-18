@@ -349,3 +349,27 @@ func TestStandbyAppliesCommandFilesBeforeTheRun(t *testing.T) {
 		})
 	}
 }
+
+// The ramdisk copy runs only when the command swapped archive files in: a
+// command without an archive leaves the ramdisk files of the boot.
+func TestStandbyCopiesRamdiskFilesOnlyAfterAnArchive(t *testing.T) {
+	prev := applyProvisionerFiles
+	t.Cleanup(func() { applyProvisionerFiles = prev })
+	copies := 0
+	applyProvisionerFiles = func(context.Context) error { copies++; return nil }
+	mode, provider := payloadStandby(t, []config.Command{
+		{ID: "d1", Type: "deprovision"},
+		{ID: "r1", Type: "reboot"},
+	}, func(*config.MachineConfig) error { return nil })
+	provider.ramdiskFiles = true
+	mode.deps.Cfg.ProvisionerFilesTarget = config.ProvisionerFilesRamdisk
+	mode.deps.Client = &stagingProvider{payloadProvider: provider}
+
+	var rebootErr *RebootRequestedError
+	if err := mode.Run(context.Background()); !errors.As(err, &rebootErr) {
+		t.Fatalf("Run error = %v", err)
+	}
+	if copies != 0 {
+		t.Fatalf("ramdisk copies = %d without an archive, want 0", copies)
+	}
+}

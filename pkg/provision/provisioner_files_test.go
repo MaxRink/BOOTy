@@ -225,6 +225,7 @@ func TestApplyCommandProvisionerFilesToRamdiskKeepsTheNetwork(t *testing.T) {
 		"etc/hosts":                             0o644,
 		"usr/local/share/ca-certificates/x.crt": 0o644,
 		"etc/frr/frr.conf":                      0o640,
+		"etc/frr2/x":                            0o644,
 		"etc/netplan/50-provision.yaml":         0o600,
 	})
 	root := t.TempDir()
@@ -238,6 +239,7 @@ func TestApplyCommandProvisionerFilesToRamdiskKeepsTheNetwork(t *testing.T) {
 	for rel, want := range map[string]bool{
 		"etc/hosts": true, "usr/local/share/ca-certificates/x.crt": true,
 		"etc/frr/frr.conf": false, "etc/netplan/50-provision.yaml": false,
+		"etc/frr2/x": true, // the skip matches whole directories, not prefixes
 	} {
 		if _, err := os.Stat(filepath.Join(root, rel)); (err == nil) != want {
 			t.Fatalf("%s in the ramdisk = %t, want %t", rel, err == nil, want)

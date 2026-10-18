@@ -261,7 +261,14 @@ files are files, not vars.
   the command copies the new `deploy/file-system` into the running ramdisk
   right after the swap, before it runs, so a CA bundle or `/etc/hosts` is
   in place for the image download. `etc/frr` and `etc/netplan` are left
-  out: the network of the agent keeps the settings of the boot.
+  out: the network of the agent keeps the settings of the boot. Other
+  files apply as at boot, like the legacy `copy_files`: an
+  `etc/resolv.conf` or `etc/hosts` in the archive changes the DNS of the
+  running agent for this command and later ones.
+- If the copy into the ramdisk fails after the swap, the command is ACKed
+  as `failed` and `/deploy` keeps the files of the archive. CAPRF then
+  takes the cold path (power cycle with a new ISO), so no later command
+  runs on them.
 - The settings that the running ramdisk uses keep their values from
   `/deploy/vars`, as for a vars payload: transport (the agent token),
   agent, network, `MODE`, `DRY_RUN`, `CAPRF_LEGACY_COMPAT` and the URLs that
