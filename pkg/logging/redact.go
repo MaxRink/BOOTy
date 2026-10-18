@@ -17,14 +17,15 @@ var (
 	sensitiveAssignPattern = regexp.MustCompile(
 		`(?i)(^|[\s,;&?=])` +
 			`([A-Za-z0-9_.-]*(?:password|passwd|passphrase|token|secret|credential|authorization|auth|private)[A-Za-z0-9_.-]*|` +
-			`(?:api[-_]?key|secret[-_]?key|private[-_]?key|access[-_]?key|luks[-_]?key|master[-_]?key|volume[-_]?key|key))` +
+			`(?:api[-_]?key|secret[-_]?key|private[-_]?key|access[-_]?key|luks[-_]?key|master[-_]?key|volume[-_]?key|key|x-amz-signature|signature|sig))` +
 			`\s*([=:])\s*("[^"]*"|'[^']*'|[^\s,;&]+)`)
 )
 
 // RedactText replaces known secret shapes in free text with [REDACTED]:
 // PEM private key blocks, JWTs, LUKS key dumps, Authorization headers,
 // bearer tokens, URL user info, and values of sensitive keys such as
-// password= or token:. It leaves prose such as "token can not be renewed"
+// password= or token:, and signed URL signatures (X-Amz-Signature=,
+// signature=, sig=). It leaves prose such as "token can not be renewed"
 // alone, so it is safe on every log line; pkg/provision adds the
 // "password <value>" word rule for command lines.
 func RedactText(s string) string {

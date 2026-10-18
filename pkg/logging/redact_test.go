@@ -22,6 +22,9 @@ func TestRedactText(t *testing.T) {
 		{"MK dump:\tde ad be ef\n\t\tca fe ba be", "ca fe ba be"},
 		{"Volume key: 0a 1b 2c", "0a 1b 2c"},
 		{"token=query-secret&x=1", "query-secret"},
+		{"https://s3.example/img.raw?X-Amz-Date=1&X-Amz-Signature=abc123def&y=2", "abc123def"},
+		{"https://blob.example/img?sv=2024&sig=azsig%2Bvalue", "azsig"},
+		{"https://cdn.example/img?Expires=1&Signature=cfsig~value", "cfsig"},
 	} {
 		got := RedactText(tc.in)
 		if strings.Contains(got, tc.secret) {
@@ -49,6 +52,8 @@ func TestRedactTextKeepsPlainText(t *testing.T) {
 		"credential helper not configured",
 		"authorization policy loaded",
 		"passphrase file missing",
+		"module verification failed: signature and/or required key missing",
+		"design=final signals=3",
 	} {
 		if got := RedactText(in); got != in {
 			t.Errorf("RedactText(%q) = %q, want unchanged", in, got)

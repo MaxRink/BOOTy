@@ -107,7 +107,7 @@ func collectNetwork(ctx context.Context) NetworkSnapshot {
 
 func collectKernel(ctx context.Context) KernelSnapshot {
 	return KernelSnapshot{
-		Dmesg:      runCmd(ctx, "dmesg", "--level=err,warn"),
+		Dmesg:      runCmd(ctx, "dmesg"),
 		Lsmod:      runCmd(ctx, "lsmod"),
 		Cmdline:    readFile("/proc/cmdline"),
 		EFIBootmgr: runCmd(ctx, "efibootmgr", "-v"),

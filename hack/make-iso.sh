@@ -21,7 +21,10 @@ out=${3:?usage: make-iso.sh <iso-root> <efiboot.img> <out.iso> [volid]}
 volid=${4:-BOOTY}
 : "${SOURCE_DATE_EPOCH:=315532800}"
 export SOURCE_DATE_EPOCH
-cmdline="console=tty0 console=ttyS0,115200n8"
+# loglevel=4: the console shows kernel errors only. Every kernel line costs
+# about 87 us per byte on a 115200 baud BMC serial console; BOOTy logs the
+# Secure Boot and lockdown state itself and ships the whole kernel log.
+cmdline="console=tty0 console=ttyS0,115200n8 loglevel=4"
 
 for f in boot/vmlinuz boot/initrd.img; do
 	[ -s "$root/$f" ] || { echo "make-iso: $root/$f is missing" >&2; exit 1; }

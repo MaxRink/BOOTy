@@ -221,7 +221,10 @@ same files cannot take over the boot. The volume label is `BOOTY`
 `hack/make-iso.sh` packs the ISO (xorriso's hybrid GPT layout with an appended
 EFI partition, as Ubuntu's ISOs use it); other ISOs, for example a
 cable-check ISO, can reuse both, or the `efi-boot` and `iso-tools` stages. The
-kernel command line of an ISO boot is `console=tty0 console=ttyS0,115200n8`.
+kernel command line of an ISO boot is
+`console=tty0 console=ttyS0,115200n8 loglevel=4`: the console shows kernel
+errors only, and BOOTy logs the Secure Boot and lockdown state itself
+(`kernel security state`).
 The ISOs are amd64 only.
 
 Neither boot loader waits. ISOLINUX (BIOS) has no `PROMPT` or `TIMEOUT`, so

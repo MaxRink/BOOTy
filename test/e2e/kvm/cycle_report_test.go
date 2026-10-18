@@ -7,8 +7,11 @@ package kvm
 // tests below run with the normal unit tests.
 
 import (
+	"cmp"
 	"fmt"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -65,10 +68,31 @@ func boundary(text string) string {
 	return ""
 }
 
+// uptimeRE reads the seconds since the kernel start from "starting BOOTy".
+var uptimeRE = regexp.MustCompile(`msg="starting BOOTy".* uptime=([0-9.]+)`)
+
+// withKernelStarts adds a kernel banner line at each kernel start that a
+// "starting BOOTy" line names with its uptime. The ISO boots with
+// loglevel=4, so the console has no kernel banner of its own.
+func withKernelStarts(lines []timedLine) []timedLine {
+	out := make([]timedLine, 0, len(lines))
+	for _, l := range lines {
+		if m := uptimeRE.FindStringSubmatch(l.text); m != nil {
+			if up, err := strconv.ParseFloat(m[1], 64); err == nil {
+				out = append(out, timedLine{at: max(l.at-time.Duration(up*float64(time.Second)), 0), text: "Linux version (from uptime)"})
+			}
+		}
+		out = append(out, l)
+	}
+	slices.SortStableFunc(out, func(a, b timedLine) int { return cmp.Compare(a.at, b.at) })
+	return out
+}
+
 // phasesBetween splits [from, to] at the phase boundaries of lines. The time
 // before the first boundary is "firmware-iso-load", the time from VM start
-// until the kernel prints its banner.
+// until the kernel starts.
 func phasesBetween(lines []timedLine, from, to time.Duration) []cyclePhase {
+	lines = withKernelStarts(lines)
 	name, start := "firmware-iso-load", time.Duration(0)
 	var phases []cyclePhase
 	add := func(end time.Duration) {
@@ -250,6 +274,17 @@ func TestCyclePhasesBetween(t *testing.T) {
 	all := phasesBetween(lines, 0, 3*s)
 	if fmt.Sprint(all) != fmt.Sprint([]cyclePhase{{"firmware-iso-load", 2}, {"kernel-boot", 1}}) {
 		t.Fatalf("boot phases = %v", all)
+	}
+	// loglevel=4 hides the banner: the uptime of "starting BOOTy" marks
+	// the kernel start.
+	quiet := []timedLine{
+		{3 * s, `time=x level=INFO msg="starting BOOTy" version=dev build=x uptime=1.50`},
+		{5 * s, `time=x level=INFO msg="network connectivity established"`},
+	}
+	got = phasesBetween(quiet, 0, 6*s)
+	want = []cyclePhase{{"firmware-iso-load", 1.5}, {"kernel-boot", 1.5}, {"network-bring-up", 2}, {"pre-task", 1}}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("quiet boot phases = %v, want %v", got, want)
 	}
 }
 
