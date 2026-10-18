@@ -555,6 +555,7 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 - gobgp: behaviour change: in every mode, a received Type-5 route with a non-zero gateway IP is no longer installed by default. It is installed only with `enable-resolve-overlay-index` (`frr.conf`) or `EVPN_RESOLVE_OVERLAY_INDEX`, in L2 mode, and while a Type-2 route carries the gateway IP (RFC 9136). This is legacy parity: the legacy ramdisk runs FRR with a host `frr.conf` without `enable-resolve-overlay-index`, so it installs no such routes either. Routes with gateway `0.0.0.0` or `::` are unchanged (#775)
 - gobgp: the IPs of Type-2 MAC/IP routes get NOARP extern_learn neighbor entries on the provision bridge, like zebra (RFC 9135)
 - gobgp: the Type-2 FDB entry follows the best live route of the MAC (MAC Mobility sequence number), and a MAC/IP withdraw keeps the MAC-only entry (RFC 7432) (#748)
+- lldp: LLDPDUs with a second Chassis ID, Port ID or TTL TLV are dropped (802.1AB) (#769)
 - lldp: a shutdown LLDPDU when the sending stops; LLDPDUs whose first TLVs are not Chassis ID, Port ID and TTL are dropped (802.1AB) (#754)
 - GoBGP mode: an L3VNI provision VNI without `provision_gateway` (bm4x IPv6
   provisioning network) selects Type-5 only, instead of failing with

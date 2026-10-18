@@ -127,6 +127,15 @@ func TestParseLLDPMandatoryTLVs(t *testing.T) {
 		{"TTL after an optional TLV", join(chassis, port, rawTLV(layers.LLDPTLVSysName, 'x'), ttl, end), false},
 		{"short TTL", join(chassis, port, rawTLV(layers.LLDPTLVTTL, 0), end), false},
 		{"truncated chassis", chassis[:4], false},
+		{"empty payload", nil, false},
+		{"one byte", []byte{0x02}, false},
+		{"Chassis ID and Port ID only", join(chassis, port), false},
+		{"TTL TLV header only", join(chassis, port, []byte{0x06}), false},
+		{"second TTL TLV", join(chassis, port, ttl, rawTLV(layers.LLDPTLVTTL, 0, 0), end), false},
+		{"second Chassis ID TLV", join(chassis, port, ttl, chassis, end), false},
+		{"second Port ID TLV", join(chassis, port, ttl, port, end), false},
+		{"mandatory TLVs after End are ignored", join(chassis, port, ttl, end, chassis, port, ttl), true},
+		{"optional TLV after the mandatory ones", join(chassis, port, ttl, rawTLV(layers.LLDPTLVSysName, 'x'), end), true},
 	}
 	for _, tt := range tests {
 		n := parseLLDP(tt.data, "eth0")
