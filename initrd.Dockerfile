@@ -284,34 +284,9 @@ RUN if [ -n "$KERNEL_SUITE" ]; then \
     echo "Extracted $(ls /modules/*.ko 2>/dev/null | wc -l) kernel modules of $KVER" && \
     rm -rf /tmp/kernel /tmp/debs /var/lib/apt/lists/*
 
-# lldpd and lldpcli from the Debian source package, built like Debian but
-# without the SNMP subagent. The subagent needs a running snmpd master
-# agent, which the ramdisk does not ship, so it can not work there. Its
-# libraries (net-snmp, libperl, libsensors, libpci, libwrap) were 2.3 MB of
-# every zstd ramdisk with lldpd. apt verifies the source files against the
-# signed archive index, like a binary package.
-FROM debian:trixie-slim AS lldpd
-RUN sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/debian.sources && \
-    apt-get -o Acquire::Retries=5 update && \
-    apt-get -o Acquire::Retries=5 install -y --no-install-recommends dpkg-dev fakeroot && \
-    mkdir /build && cd /build && \
-    apt-get -o Acquire::Retries=5 source lldpd && \
-    cd lldpd-*/ && \
-    sed -i '/--with-snmp/d' debian/rules && \
-    sed -i '/libsnmp-dev/d' debian/control && \
-    ! grep -q snmp debian/rules && \
-    apt-get -o Acquire::Retries=5 build-dep -y --no-install-recommends . && \
-    DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -b -uc -us && \
-    mkdir /debs && cp ../lldpd_*.deb /debs/
-
 # Build disk, system, and firmware tools
 FROM debian:trixie-slim AS tools
-COPY --from=lldpd /debs/ /tmp/lldpd-debs/
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
-    /tmp/lldpd-debs/*.deb && rm -rf /tmp/lldpd-debs && \
-    apt-mark hold lldpd && \
-    ! ldd /usr/sbin/lldpd | grep -q snmp && \
-    apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     binutils \
     mdadm util-linux fdisk e2fsprogs xfsprogs btrfs-progs parted gdisk kpartx dosfstools \
     efibootmgr dmidecode ethtool curl iproute2 bridge-utils \
@@ -331,7 +306,7 @@ RUN mkdir -p /tool-libs /tool-libs-full && \
         /usr/bin/btrfs /usr/sbin/parted /usr/sbin/sgdisk /usr/sbin/sfdisk \
         /sbin/partprobe /usr/bin/partx /usr/sbin/kpartx /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
         /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme /usr/bin/sg_sanitize /usr/bin/sg_format \
-        /usr/bin/mstconfig /usr/bin/mstflint /usr/sbin/lldpcli /usr/sbin/lldpd \
+        /usr/bin/mstconfig /usr/bin/mstflint \
         /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk /sbin/blkid /usr/sbin/losetup \
         /sbin/cryptsetup /usr/bin/ipmitool 2>/dev/null \
     | awk '{for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' \
@@ -359,7 +334,7 @@ RUN strip --strip-all \
         /usr/bin/btrfs /usr/sbin/parted /usr/sbin/sgdisk /usr/sbin/sfdisk \
         /sbin/partprobe /usr/bin/partx /usr/sbin/kpartx /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
         /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme /usr/bin/sg_sanitize /usr/bin/sg_format \
-        /usr/bin/mstconfig /usr/bin/mstflint /usr/sbin/lldpcli /usr/sbin/lldpd \
+        /usr/bin/mstconfig /usr/bin/mstflint \
         /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk /sbin/blkid /usr/sbin/losetup /usr/bin/gpgv /usr/bin/qemu-img \
         /sbin/cryptsetup /usr/bin/ipmitool
 
@@ -458,10 +433,6 @@ COPY --from=tools /usr/bin/mstflint bin/mstflint
 
 # IPMI local management
 COPY --from=tools /usr/bin/ipmitool bin/ipmitool
-
-# LLDP daemon for switch topology discovery
-COPY --from=tools /usr/sbin/lldpcli bin/lldpcli
-COPY --from=tools /usr/sbin/lldpd sbin/lldpd
 
 # Dropbear lightweight SSH server for rescue mode (~110 KB)
 COPY --from=tools /usr/sbin/dropbear bin/dropbear
@@ -713,10 +684,6 @@ COPY --from=tools /usr/bin/mstflint bin/mstflint
 
 # IPMI local management
 COPY --from=tools /usr/bin/ipmitool bin/ipmitool
-
-# LLDP daemon for switch topology discovery
-COPY --from=tools /usr/sbin/lldpcli bin/lldpcli
-COPY --from=tools /usr/sbin/lldpd sbin/lldpd
 
 # Dropbear lightweight SSH server for rescue mode (~110 KB)
 COPY --from=tools /usr/sbin/dropbear bin/dropbear

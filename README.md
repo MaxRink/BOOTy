@@ -1452,9 +1452,10 @@ ldd /usr/sbin/your-binary
 The default flavor bundles, among others: `mdadm`, `wipefs`, `sfdisk`,
 `sgdisk`, `growpart`, `e2fsck`, `resize2fs`, `xfs_growfs`, `xfs_repair`,
 `btrfs`, `parted`, `kpartx`, `lvm`, `lsblk`, `blkid`, `hdparm`, `nvme`,
-`qemu-img`, `gpgv`, `mstconfig`, `mstflint`, `ethtool`, `lldpcli`, `lldpd`,
-`dropbear`, `efibootmgr`. See `initrd.Dockerfile` for the full list per
-flavor.
+`qemu-img`, `gpgv`, `mstconfig`, `mstflint`, `ethtool`, `dropbear`,
+`efibootmgr`. See `initrd.Dockerfile` for the full list per flavor. No flavor
+ships `lldpd` or `lldpcli`: `booty lldp neighbors` and `booty lldp status`
+show the LLDP state (docs/networking.md, LLDP diagnosis in the rescue shell).
 
 > **Prefer Go libraries**: Where possible, use Go syscalls or libraries instead of
 > shelling out to external binaries. Examples: `unix.FinitModule()` instead of `insmod`,

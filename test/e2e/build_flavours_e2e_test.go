@@ -11,14 +11,14 @@ import (
 	"time"
 )
 
-// Size budgets in MiB, about 5% above main (default 45.4, gobgp 40.5,
-// slim 29.0, micro 9.5 MiB). Every MB is up to 0.5 s of boot time on slow
+// Size budgets in MiB, about 5% above main (default 42.2, gobgp 37.7
+// without lldpd, slim 29.0, micro 9.5 MiB). Every MB is up to 0.5 s of boot time on slow
 // BMC virtual media; see docs/size-optimization.md.
 const (
 	maxMicroInitramfsMB   = 11.0
 	maxSlimInitramfsMB    = 31.0
-	maxGoBGPInitramfsMB   = 43.0
-	maxDefaultInitramfsMB = 48.0
+	maxGoBGPInitramfsMB   = 40.0
+	maxDefaultInitramfsMB = 45.0
 )
 
 func dockerAvailable(t *testing.T) {
@@ -831,8 +831,9 @@ func TestDefaultContainsNetworkAndSSHE2E(t *testing.T) {
 	assertContains(t, files, "bin/curl", "curl")
 	assertContains(t, files, "bin/dropbear", "dropbear SSH")
 	assertContains(t, files, "bin/dropbearkey", "dropbearkey")
-	assertContains(t, files, "bin/lldpcli", "LLDP client")
-	assertContains(t, files, "sbin/lldpd", "LLDP daemon")
+	// LLDP diagnosis is "booty lldp"; lldpd and lldpcli are not shipped.
+	assertNotContains(t, files, "bin/lldpcli", "LLDP client")
+	assertNotContains(t, files, "sbin/lldpd", "LLDP daemon")
 	assertContains(t, files, "etc/ssl/certs/ca-certificates.crt", "CA certificates")
 	assertContains(t, files, "bin/gpgv", "GPG signature verifier")
 }
@@ -929,7 +930,7 @@ func TestGoBGPContainsNetworkAndSSHE2E(t *testing.T) {
 	assertContains(t, files, "bin/ethtool", "ethtool")
 	assertContains(t, files, "bin/curl", "curl")
 	assertContains(t, files, "bin/dropbear", "dropbear SSH")
-	assertContains(t, files, "bin/lldpcli", "LLDP client")
+	assertNotContains(t, files, "bin/lldpcli", "LLDP client")
 	assertContains(t, files, "etc/ssl/certs/ca-certificates.crt", "CA certificates")
 	assertContains(t, files, "bin/gpgv", "GPG signature verifier")
 }

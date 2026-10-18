@@ -110,7 +110,8 @@ func (m *Manager) Capture(ctx context.Context, n nic.NICIdentifier) (*nic.Firmwa
 ### Intel LLDP Agent Management
 
 The ice driver's firmware has a built-in LLDP agent that conflicts with the
-OS-level `lldpd` daemon (already in BOOTy's initramfs). Disabling it is a
+OS-level LLDP agent (BOOTy's own LLDP sender and receiver; the ramdisk no
+longer ships `lldpd`). Disabling it is a
 critical operation:
 
 ```go

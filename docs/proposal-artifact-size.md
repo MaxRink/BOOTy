@@ -35,7 +35,8 @@ package. The ramdisk loses net-snmp, `libperl`, `libsensors`, `libpci` and
 `libwrap`: 2,281,110 bytes of the zstd default ramdisk and 2,093,792 bytes
 of gobgp (slim ships no lldpd).
 
-XML output stays (`lldpcli -f xml`): on trixie `libxml2` no longer pulls
+Later BOOTy dropped lldpd and lldpcli altogether: `booty lldp` (#735)
+shows the neighbors and what BOOTy sends. Before that, XML output stayed (`lldpcli -f xml`): on trixie `libxml2` no longer pulls
 in ICU, and it costs 0.75 MB compressed, so dropping it would lose a
 function for little gain.
 
