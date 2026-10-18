@@ -130,6 +130,7 @@ provision or deprovision that names its disk, after "network ready".
 |---|---|---|---|
 | lldpd without the SNMP subagent | yes | default 2.28 MB, gobgp 2.09 MB | done, #759 |
 | zstd --ultra -22 --long, files grouped by kind | yes | default 0.98 MB, gobgp 0.52 MB, slim 0.21 MB | done, #757 |
+| Drop `curl` (BOOTy uses net/http; busybox `wget` in the shell) | yes | default 1.95 MB, gobgp 1.95 MB, slim 6.13 MB | done, #814 |
 | Module load in dependency order, in parallel, one log line | yes | 1.6 s, 27.5 KB console on x86 (43 KB arm64) | done, #758 |
 | LLDP receive NIC detection in the background | yes | 3.0 s on single-NIC hosts | done, #760 |
 | Disk settle window counted from boot | yes | up to 2 s per run that names its disk | done, #762 (only for a named disk) |

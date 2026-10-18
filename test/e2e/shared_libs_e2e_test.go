@@ -108,7 +108,7 @@ func TestDefaultSharedLibsResolveE2E(t *testing.T) {
 		// EFI
 		"bin/efibootmgr",
 		// System
-		"bin/dmidecode", "bin/ethtool", "bin/curl",
+		"bin/dmidecode", "bin/ethtool",
 		// Network
 		"bin/ip", "bin/bridge",
 		// Secure erase
@@ -138,7 +138,7 @@ func TestGoBGPSharedLibsResolveE2E(t *testing.T) {
 		// EFI
 		"bin/efibootmgr",
 		// System
-		"bin/dmidecode", "bin/ethtool", "bin/curl",
+		"bin/dmidecode", "bin/ethtool",
 		// Network
 		"bin/ip", "bin/bridge",
 		// Secure erase
@@ -275,7 +275,7 @@ func TestFullInitramfsDiskProbeToolsUseUtilLinuxE2E(t *testing.T) {
 func TestSlimSharedLibsResolveE2E(t *testing.T) {
 	image := buildStageImage(t, "slim-builder")
 	checkSharedLibs(t, image, []string{
-		"bin/ip", "bin/ethtool", "bin/curl",
+		"bin/ip", "bin/ethtool",
 		"bin/partprobe", "bin/partx", "bin/lsblk", "sbin/e2fsck", "sbin/blkid", "bin/losetup", "sbin/resize2fs",
 		"sbin/mkfs.ext4", "sbin/mkfs.vfat", "sbin/mkfs.xfs",
 		"sbin/xfs_growfs", "sbin/xfs_repair", "bin/btrfs",

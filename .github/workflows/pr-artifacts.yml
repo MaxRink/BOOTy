@@ -76,8 +76,8 @@ jobs:
           }
 
           # Hard caps in MiB, about 5% above main (docs/size-optimization.md).
-          build_iso full iso booty.iso 64
-          build_iso gobgp gobgp-iso booty-gobgp.iso 59
+          build_iso full iso booty.iso 62
+          build_iso gobgp gobgp-iso booty-gobgp.iso 57
 
           # Split ramdisk: base plus one archive per payload (pkg/payload).
           docker buildx build --platform linux/amd64 --target split \

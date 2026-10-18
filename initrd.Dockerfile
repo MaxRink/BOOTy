@@ -289,7 +289,7 @@ FROM debian:trixie-slim AS tools
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     binutils \
     mdadm util-linux fdisk e2fsprogs xfsprogs btrfs-progs parted gdisk kpartx dosfstools \
-    efibootmgr dmidecode ethtool curl iproute2 bridge-utils \
+    efibootmgr dmidecode ethtool iproute2 bridge-utils \
     hdparm nvme-cli sg3-utils mstflint gpgv qemu-utils \
     dropbear-bin cryptsetup-bin ipmitool \
     && rm -rf /var/lib/apt/lists/*
@@ -305,7 +305,7 @@ RUN mkdir -p /tool-libs /tool-libs-full && \
         /usr/sbin/xfs_growfs /usr/sbin/xfs_repair \
         /usr/bin/btrfs /usr/sbin/parted /usr/sbin/sgdisk /usr/sbin/sfdisk \
         /sbin/partprobe /usr/bin/partx /usr/sbin/kpartx /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
-        /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme /usr/bin/sg_sanitize /usr/bin/sg_format \
+        /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme /usr/bin/sg_sanitize /usr/bin/sg_format \
         /usr/bin/mstconfig /usr/bin/mstflint \
         /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk /sbin/blkid /usr/sbin/losetup \
         /sbin/cryptsetup /usr/bin/ipmitool 2>/dev/null \
@@ -333,7 +333,7 @@ RUN strip --strip-all \
         /usr/sbin/xfs_growfs /usr/sbin/xfs_repair \
         /usr/bin/btrfs /usr/sbin/parted /usr/sbin/sgdisk /usr/sbin/sfdisk \
         /sbin/partprobe /usr/bin/partx /usr/sbin/kpartx /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
-        /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme /usr/bin/sg_sanitize /usr/bin/sg_format \
+        /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme /usr/bin/sg_sanitize /usr/bin/sg_format \
         /usr/bin/mstconfig /usr/bin/mstflint \
         /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk /sbin/blkid /usr/sbin/losetup /usr/bin/gpgv /usr/bin/qemu-img \
         /sbin/cryptsetup /usr/bin/ipmitool
@@ -414,7 +414,6 @@ COPY --from=tools /usr/bin/qemu-img bin/qemu-img
 COPY --from=tools /usr/bin/efibootmgr bin/efibootmgr
 COPY --from=tools /usr/sbin/dmidecode bin/dmidecode
 COPY --from=tools /usr/sbin/ethtool bin/ethtool
-COPY --from=tools /usr/bin/curl bin/curl
 COPY --from=tools /sbin/ip bin/ip
 COPY --from=tools /sbin/bridge bin/bridge
 
@@ -558,7 +557,6 @@ COPY --from=dev /go/src/github.com/telekom/BOOTy/esp-sync usr/lib/booty/booty-es
 # Minimal networking tools (DHCP mode — no FRR, no BGP)
 COPY --from=tools /sbin/ip bin/ip
 COPY --from=tools /usr/sbin/ethtool bin/ethtool
-COPY --from=tools /usr/bin/curl bin/curl
 # EFI boot entries: on UEFI a failed efibootmgr fails provisioning
 # (EFI_BOOT_ENTRY_REQUIRED); its libraries are in /tool-libs.
 COPY --from=tools /usr/bin/efibootmgr bin/efibootmgr
@@ -665,7 +663,6 @@ COPY --from=tools /usr/bin/qemu-img bin/qemu-img
 COPY --from=tools /usr/bin/efibootmgr bin/efibootmgr
 COPY --from=tools /usr/sbin/dmidecode bin/dmidecode
 COPY --from=tools /usr/sbin/ethtool bin/ethtool
-COPY --from=tools /usr/bin/curl bin/curl
 COPY --from=tools /sbin/ip bin/ip
 COPY --from=tools /sbin/bridge bin/bridge
 

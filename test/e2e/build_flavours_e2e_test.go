@@ -11,14 +11,14 @@ import (
 	"time"
 )
 
-// Size budgets in MiB, about 5% above main (default 42.2, gobgp 37.7,
-// slim 29.4, micro 10.3 MiB). Every MB is up to 0.5 s of boot time on
+// Size budgets in MiB, about 5% above main (default 40.3, gobgp 35.8,
+// slim 23.6, micro 10.3 MiB). Every MB is up to 0.5 s of boot time on
 // slow BMC virtual media; see docs/size-optimization.md.
 const (
 	maxMicroInitramfsMB   = 11.0
-	maxSlimInitramfsMB    = 31.0
-	maxGoBGPInitramfsMB   = 40.0
-	maxDefaultInitramfsMB = 45.0
+	maxSlimInitramfsMB    = 25.0
+	maxGoBGPInitramfsMB   = 38.0
+	maxDefaultInitramfsMB = 42.5
 )
 
 func dockerAvailable(t *testing.T) {
@@ -497,7 +497,9 @@ func TestSlimContainsNetworkToolsE2E(t *testing.T) {
 
 	assertContains(t, files, "bin/ip", "iproute2 ip command")
 	assertContains(t, files, "bin/ethtool", "ethtool")
-	assertContains(t, files, "bin/curl", "curl")
+	// BOOTy fetches with net/http; busybox wget does HTTP and HTTPS in the shell.
+	assertNotContains(t, files, "bin/curl", "curl")
+	assertContains(t, files, "bin/wget", "busybox wget")
 	assertContains(t, files, "etc/ssl/certs/ca-certificates.crt", "CA certificates")
 }
 
@@ -828,7 +830,9 @@ func TestDefaultContainsNetworkAndSSHE2E(t *testing.T) {
 	assertContains(t, files, "bin/ip", "iproute2 ip")
 	assertContains(t, files, "bin/bridge", "iproute2 bridge")
 	assertContains(t, files, "bin/ethtool", "ethtool")
-	assertContains(t, files, "bin/curl", "curl")
+	// BOOTy fetches with net/http; busybox wget does HTTP and HTTPS in the shell.
+	assertNotContains(t, files, "bin/curl", "curl")
+	assertContains(t, files, "bin/wget", "busybox wget")
 	assertContains(t, files, "bin/dropbear", "dropbear SSH")
 	assertContains(t, files, "bin/dropbearkey", "dropbearkey")
 	// LLDP diagnosis is "booty lldp"; lldpd and lldpcli are not shipped.
@@ -928,7 +932,9 @@ func TestGoBGPContainsNetworkAndSSHE2E(t *testing.T) {
 	assertContains(t, files, "bin/ip", "iproute2 ip")
 	assertContains(t, files, "bin/bridge", "iproute2 bridge")
 	assertContains(t, files, "bin/ethtool", "ethtool")
-	assertContains(t, files, "bin/curl", "curl")
+	// BOOTy fetches with net/http; busybox wget does HTTP and HTTPS in the shell.
+	assertNotContains(t, files, "bin/curl", "curl")
+	assertContains(t, files, "bin/wget", "busybox wget")
 	assertContains(t, files, "bin/dropbear", "dropbear SSH")
 	assertNotContains(t, files, "bin/lldpcli", "LLDP client")
 	assertNotContains(t, files, "sbin/lldpd", "LLDP daemon")

@@ -674,7 +674,7 @@ Update `initrd.Dockerfile` to include additional tools needed for provisioning:
 **FRR binaries**: bgpd, zebra, bfdd, vtysh
 **Disk tools**: mdadm, wipefs, growpart, sgdisk, sfdisk, lsblk, resize2fs, xfs_growfs,
 e2fsck, partprobe, partx, parted
-**Networking tools**: ip, bridge, ethtool, curl
+**Networking tools**: ip, bridge, ethtool
 **System tools**: dmidecode, efibootmgr, chroot, mount, umount, hostname
 **Mellanox tools**: mstconfig (optional, large)
 
