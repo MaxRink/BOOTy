@@ -4121,6 +4121,9 @@ func mustPMSI(t *testing.T, tunnelType uint32) *apipb.Attribute {
 // Tunnel attribute like FRR (evpn_zebra_install): a BUM entry only for
 // ingress replication; a missing attribute or another tunnel type gets
 // none, and removes an entry that an earlier update of the route added.
+// That last part differs from FRR: zebra keeps the entry on an update from
+// ingress replication to another tunnel type, because the check in
+// zebra_vxlan_remote_vtep_add (zebra_vxlan.c) is inverted.
 func TestProcessRouteUpdateType3TunnelType(t *testing.T) {
 	const pimSSM = 3
 	newOverlay := func() (*OverlayTier, *mockOverlayNetlinkOps) {
