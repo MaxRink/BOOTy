@@ -2233,7 +2233,7 @@ func buildType5PathAttrsRTs(nlri *apipb.NLRI, nextHop string, asn, vni uint32, r
 		communities = append(communities, rt)
 	}
 
-	communities = append(communities, &apipb.ExtendedCommunity{Extcom: &apipb.ExtendedCommunity_Encap{Encap: &apipb.EncapExtended{TunnelType: vxlanTunnelType}}})
+	communities = append(communities, vxlanEncapCommunity())
 	if routerMAC != "" {
 		rmac, err := buildRouterMACExtended(routerMAC)
 		if err != nil {
@@ -2495,6 +2495,13 @@ func buildRouteTargetForSpec(spec string, fallbackASN, fallbackVNI uint32) (*api
 // vxlanTunnelType is the BGP encapsulation extended-community tunnel type for VXLAN.
 const vxlanTunnelType = 8
 
+// vxlanEncapCommunity is the BGP Encapsulation extended community with
+// tunnel type VXLAN. RFC 8365 section 5.1.3 includes it with every EVPN
+// route; without it a receiver assumes MPLS or a configured encapsulation.
+func vxlanEncapCommunity() *apipb.ExtendedCommunity {
+	return &apipb.ExtendedCommunity{Extcom: &apipb.ExtendedCommunity_Encap{Encap: &apipb.EncapExtended{TunnelType: vxlanTunnelType}}}
+}
+
 const type5DirectGateway = "0.0.0.0"
 
 // pmsiTunnelTypeIngressReplication is the PMSI tunnel type for ingress
@@ -2512,13 +2519,13 @@ func buildEVPNType3NLRI(rd *apipb.RouteDistinguisher, routerID string) *apipb.NL
 }
 
 // buildType3PathAttrs builds BGP path attributes for EVPN Type-3 (IMET)
-// advertisement, including Origin, MpReach, Route Target, and PMSI Tunnel.
+// advertisement, including Origin, MpReach, Route Target, VXLAN
+// encapsulation and PMSI Tunnel.
 func buildType3PathAttrs(nlri *apipb.NLRI, nextHop string, asn, vni uint32, vpnRT string) ([]*apipb.Attribute, error) {
 	rt, err := buildRouteTargetForSpec(vpnRT, asn, vni)
 	if err != nil {
 		return nil, fmt.Errorf("build route target: %w", err)
 	}
-
 	pmsi := &apipb.Attribute{Attr: &apipb.Attribute_PmsiTunnel{PmsiTunnel: &apipb.PmsiTunnelAttribute{
 		Flags: 0,
 		Type:  pmsiTunnelTypeIngressReplication,
@@ -2526,7 +2533,7 @@ func buildType3PathAttrs(nlri *apipb.NLRI, nextHop string, asn, vni uint32, vpnR
 		Id:    net.ParseIP(nextHop).To4(),
 	}}}
 
-	return []*apipb.Attribute{originIGP(), evpnMpReach(nextHop, nlri), extCommunities(rt), pmsi}, nil
+	return []*apipb.Attribute{originIGP(), evpnMpReach(nextHop, nlri), extCommunities(rt, vxlanEncapCommunity()), pmsi}, nil
 }
 
 // buildEVPNType2NLRI builds an EVPN MAC/IP Advertisement (Type-2) NLRI for
@@ -2547,11 +2554,12 @@ func buildEVPNType2NLRI(rd *apipb.RouteDistinguisher, mac, ip string, label uint
 }
 
 // buildType2PathAttrs builds BGP path attributes for EVPN Type-2 (MAC/IP)
-// advertisement, including Origin, MpReach, and Route Target.
+// advertisement, including Origin, MpReach, Route Target and VXLAN
+// encapsulation.
 func buildType2PathAttrs(nlri *apipb.NLRI, nextHop string, asn, vni uint32, vpnRT string) ([]*apipb.Attribute, error) {
 	rt, err := buildRouteTargetForSpec(vpnRT, asn, vni)
 	if err != nil {
 		return nil, fmt.Errorf("build route target: %w", err)
 	}
-	return []*apipb.Attribute{originIGP(), evpnMpReach(nextHop, nlri), extCommunities(rt)}, nil
+	return []*apipb.Attribute{originIGP(), evpnMpReach(nextHop, nlri), extCommunities(rt, vxlanEncapCommunity())}, nil
 }

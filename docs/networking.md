@@ -821,8 +821,8 @@ or FRR's auto route target of an `frr.conf` L3VNI, then `vpn_rt`, then
 |---|---|---|
 | Type-5 (IP prefix) | `/32` of the `provision_ip` host address, gateway `0.0.0.0`, label = VNI, extended communities: route target, VXLAN encapsulation, router MAC | All. Skipped when `provision_ip` is empty |
 | Type-5 (IP prefix) | Each `network` of the L3VNI VRF in `frr.conf` (see [Netplan and FRR config input](#netplan-and-frr-config-input)), gateway `0.0.0.0` or `::`, same label and extended communities. Like the FRR import check, only a prefix that is a `lo` address, the `provision_ip` prefix or a blackhole route is advertised. BOOTy logs the others. | Type-5-only from an L3VNI |
-| Type-3 (IMET) | Router ID, PMSI tunnel type ingress replication | L2 |
-| Type-2 (MAC/IP) | Bridge MAC and `provision_ip` host address | L2 |
+| Type-3 (IMET) | Router ID, PMSI tunnel type ingress replication, extended communities: route target, VXLAN encapsulation | L2 |
+| Type-2 (MAC/IP) | Bridge MAC and `provision_ip` host address, extended communities: route target, VXLAN encapsulation | L2 |
 
 With `asn_server` > 65535, `provision_vni` must be 65535 or lower, because a
 4-octet ASN route target carries only a 16-bit value.

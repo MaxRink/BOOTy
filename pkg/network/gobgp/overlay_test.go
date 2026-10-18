@@ -4890,3 +4890,42 @@ func TestType2ESIAliasingAndMassWithdraw(t *testing.T) {
 		t.Fatalf("the single-homed MAC was touched: %v", mock.dels)
 	}
 }
+
+// TestEVPNRoutesCarryVXLANEncapsulation checks RFC 8365 section 5.1.3:
+// every EVPN route of an NVE carries the BGP Encapsulation extended
+// community. Without it a receiver assumes MPLS or a configured
+// encapsulation for BOOTy's Type-2 and Type-3 routes.
+func TestEVPNRoutesCarryVXLANEncapsulation(t *testing.T) {
+	rd := buildRouteDistinguisher(65000, 4000)
+	t2 := buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "10.100.0.20", 4000)
+	t3 := buildEVPNType3NLRI(rd, "10.0.0.1")
+	t5, err := buildEVPNType5NLRI(rd, "10.100.0.20/32", type5DirectGateway, 4000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type2, err := buildType2PathAttrs(t2, "10.0.0.1", 65000, 4000, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	type3, err := buildType3PathAttrs(t3, "10.0.0.1", 65000, 4000, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	type5, err := buildType5PathAttrs(t5, "10.0.0.1", 65000, 4000, "", "02:54:00:00:00:01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, pattrs := range map[string][]*apipb.Attribute{"type-2": type2, "type-3": type3, "type-5": type5} {
+		var encaps []uint32
+		for _, attr := range pattrs {
+			for _, c := range attr.GetExtendedCommunities().GetCommunities() {
+				if e := c.GetEncap(); e != nil {
+					encaps = append(encaps, e.GetTunnelType())
+				}
+			}
+		}
+		if len(encaps) != 1 || encaps[0] != vxlanTunnelType {
+			t.Errorf("%s: encapsulation communities %v, want exactly [%d] (VXLAN)", name, encaps, vxlanTunnelType)
+		}
+	}
+}
