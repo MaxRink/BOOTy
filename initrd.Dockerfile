@@ -377,6 +377,10 @@ RUN mkdir -p dev proc run sys tmp etc && \
     mknod -m 600 dev/console c 5 1 && \
     mknod -m 666 dev/null c 1 3 && \
     mknod -m 600 dev/ttyS0 c 4 64
+# Users and groups: root, and frr and frrvty, which the FRR daemons switch
+# to (zebra: "could not lookup user frr" without them). Every flavor gets
+# them, so a ramdisk with FRR never lacks them.
+COPY hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
 
 # Pre-built static busybox binary from Docker Hub (cached by Docker layer cache)
 COPY --from=busybox-bin /bin/busybox bin/busybox
@@ -481,6 +485,10 @@ COPY --from=kernel /modules/ modules/
 # that every dynamic executable resolves its libraries from the tree alone.
 # Nothing may change the tree between this step and cpio.
 COPY hack/prune-initramfs-libs.sh hack/pack-initramfs.sh /usr/local/bin/
+# The FRR daemons run as frr with the vty group frrvty: both must resolve
+# in the tree (busybox id reads its /etc/passwd and /etc/group).
+RUN chroot . /bin/busybox id frr | tee /dev/stderr | grep -q '(frrvty)' && \
+    chroot . /bin/busybox id root >/dev/null
 RUN prune-initramfs-libs.sh .
 
 # Package initramfs
@@ -536,6 +544,10 @@ RUN mkdir -p dev proc run sys tmp etc && \
     mknod -m 600 dev/console c 5 1 && \
     mknod -m 666 dev/null c 1 3 && \
     mknod -m 600 dev/ttyS0 c 4 64
+# Users and groups: root, and frr and frrvty, which the FRR daemons switch
+# to (zebra: "could not lookup user frr" without them). Every flavor gets
+# them, so a ramdisk with FRR never lacks them.
+COPY hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
 
 # Copy busybox binary and create all applet symlinks (same as default variant).
 # This ensures utilities like tail, grep, dmesg, hostname, ps, and xargs are
@@ -612,6 +624,10 @@ RUN mkdir -p dev proc run sys tmp etc && \
     mknod -m 600 dev/console c 5 1 && \
     mknod -m 666 dev/null c 1 3 && \
     mknod -m 600 dev/ttyS0 c 4 64
+# Users and groups: root, and frr and frrvty, which the FRR daemons switch
+# to (zebra: "could not lookup user frr" without them). Every flavor gets
+# them, so a ramdisk with FRR never lacks them.
+COPY hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
 
 # Copy busybox binary and create all applet symlinks (same as default variant).
 # This ensures utilities like tail, pgrep, dmesg, lsblk, hostname, ps, grep,
@@ -760,6 +776,10 @@ RUN mkdir -p bin sbin dev proc run sys tmp etc && \
     mknod -m 600 dev/console c 5 1 && \
     mknod -m 666 dev/null c 1 3 && \
     mknod -m 600 dev/ttyS0 c 4 64
+# Users and groups: root, and frr and frrvty, which the FRR daemons switch
+# to (zebra: "could not lookup user frr" without them). Every flavor gets
+# them, so a ramdisk with FRR never lacks them.
+COPY hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
 COPY --from=micro-dev /go/src/github.com/telekom/BOOTy/init .
 RUN mkdir -p etc/ssl/certs && cp /etc/ssl/certs/ca-certificates.crt etc/ssl/certs/
 

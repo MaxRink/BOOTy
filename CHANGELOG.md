@@ -506,6 +506,12 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 
 ### Fixes
 
+- FRR mode works on the release ramdisks. They had no `/etc/passwd` and
+  `/etc/group`, so zebra failed with "could not lookup user frr" and BOOTy
+  fell back to DHCP: FRR mode was broken on every release ramdisk (the
+  containerlab vrnetlab image adds the user itself, which hid it). Every
+  flavor now ships root, frr and frrvty, and the default build checks that
+  frr resolves with the frrvty group (#794).
 - gobgp: a Type-3 route adds a BUM entry only with PMSI tunnel type ingress replication, like FRR (RFC 8365)
 - bfd: a detection time without packets forgets the remote discriminator in every state, and the peer's Demand mode stops the periodic packets (RFC 5880) (#749)
 - gobgp: a BFD Down in the second a BGP session came up does not reset it, like
