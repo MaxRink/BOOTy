@@ -15,6 +15,7 @@ import (
 	"syscall"
 
 	exec "github.com/telekom/BOOTy/pkg/executil"
+	"github.com/telekom/BOOTy/pkg/payload"
 )
 
 const (
@@ -148,9 +149,12 @@ func writeImageToFile(src io.Reader, dest string) error {
 }
 
 func requireQCOW2Converter() (string, error) {
+	if err := payload.Require(payload.QemuImg); err != nil {
+		return "", fmt.Errorf("qcow2 conversion: %w", err)
+	}
 	qemuImg, err := exec.LookPath("qemu-img")
 	if err != nil {
-		return "", fmt.Errorf("qemu-img not found (install qemu-utils): %w", err)
+		return "", fmt.Errorf("qemu-img not found (install qemu-utils): %w", errors.Join(payload.ErrMissing, err))
 	}
 	return qemuImg, nil
 }

@@ -24,6 +24,10 @@ func ProbeSourceFormat(ctx context.Context, source string) (Format, error) {
 	return format, nil
 }
 
+// LooksQCOW2 reports whether the image URL names a qcow2 file (possibly
+// compressed), from its path alone.
+func LooksQCOW2(source string) bool { return sourceLooksQCOW2(source) }
+
 func sourceLooksQCOW2(source string) bool {
 	parsed, err := url.Parse(source)
 	name := source

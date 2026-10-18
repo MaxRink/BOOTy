@@ -84,3 +84,5 @@ step (step `*`). Any other error gets the code of its step.
 | `BOOTY-OS-014` | environment | `teardown-chroot` | Chroot teardown failed. |
 | `BOOTY-OS-015` | config | `soft-deprovision` | Soft deprovision failed. |
 | `BOOTY-WDT-001` | environment | `*` | A step made no progress within its watchdog budget; the hardware watchdog resets the host. |
+| `BOOTY-PAY-001` | config | `*` | The vars need a ramdisk payload (FRR, qemu-img or ipmitool) that the ramdisk does not have: the boot loader did not load its archive, or the flavor has no such tool. |
+| `BOOTY-PAY-002` | permanent | `check-payloads` | A ramdisk payload archive is from another BOOTy build than the base ramdisk. |

@@ -567,6 +567,11 @@ func runCAPRF(ctx context.Context) {
 	if cfg.DryRun {
 		cfg.Mode = "dry-run"
 	}
+	if err := checkPayloads(cfg); err != nil {
+		code := provision.CodeOf(provision.WithCode("check-payloads", err))
+		failRun(ctx, cfg, client, "check-payloads", code, fmt.Sprintf("ramdisk payload check failed [%s]: %v", code, err), reboot)
+		return
+	}
 	startWatchdog(ctx, cfg)
 
 	// Wire remote log shipping.
@@ -942,7 +947,8 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 	// rebuild the entire network stack before giving up.
 	netMode, err := setupNetworkModeFn(ctx, cfg)
 	if err != nil {
-		return nil, func() {}, &provision.CodedError{Code: provision.CodeNetworkSetup, Err: err}
+		// A known error (a missing FRR payload) keeps its own code.
+		return nil, func() {}, provision.WithCode("network-setup", err)
 	}
 	if lldpReceiveEnabled(cfg) {
 		startLLDPReceive(ctx)
@@ -1341,6 +1347,9 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (_ network
 	if netCfg.IsFRRMode() {
 		if cfg.Network.BGP.HasSessions() {
 			slog.Warn("network.bgp.sessions (BGP_SESSIONS) applies to GoBGP mode only; the FRR stack ignores it")
+		}
+		if err := requireFRRPayload(ctx, linkCleanup); err != nil {
+			return nil, err
 		}
 		detectIPMI(netCfg)
 		slog.Info("using FRR/EVPN network mode", "asn", cfg.Network.BGP.ASN)

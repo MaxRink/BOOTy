@@ -8,6 +8,7 @@ import (
 
 	"github.com/telekom/BOOTy/pkg/disk"
 	"github.com/telekom/BOOTy/pkg/image"
+	"github.com/telekom/BOOTy/pkg/payload"
 	"github.com/telekom/BOOTy/pkg/timesync"
 )
 
@@ -122,6 +123,9 @@ var failureCodes = []FailureCode{
 	{"BOOTY-OS-015", ClassConfig, "soft-deprovision", "Soft deprovision failed."},
 
 	{"BOOTY-WDT-001", ClassEnvironment, AnyStep, "A step made no progress within its watchdog budget; the hardware watchdog resets the host."},
+
+	{"BOOTY-PAY-001", ClassConfig, AnyStep, "The vars need a ramdisk payload (FRR, qemu-img or ipmitool) that the ramdisk does not have: the boot loader did not load its archive, or the flavor has no such tool."},
+	{"BOOTY-PAY-002", ClassPermanent, "check-payloads", "A ramdisk payload archive is from another BOOTy build than the base ramdisk."},
 }
 
 // Failure codes used outside the step table.
@@ -142,6 +146,9 @@ const (
 	codeVerifyReboot     = "BOOTY-HW-006"
 	// CodeStalled is watchdog.CodeStalled (main_watchdog_test.go checks it).
 	CodeStalled = "BOOTY-WDT-001"
+	// CodePayloadMissing marks a run that needs a payload the ramdisk lacks.
+	CodePayloadMissing = "BOOTY-PAY-001"
+	codePayloadBuild   = "BOOTY-PAY-002"
 )
 
 // sentinelCodes maps known errors to a specific code. The first match wins.
@@ -160,6 +167,8 @@ var sentinelCodes = []struct {
 	{ErrVerifyRebootUnsupported, codeVerifyReboot},
 	{timesync.ErrNoTime, CodeNoTime},
 	{timesync.ErrClockSkew, CodeCertTime},
+	{payload.ErrMissing, CodePayloadMissing},
+	{payload.ErrBuildMismatch, codePayloadBuild},
 }
 
 // FailureCodes returns a copy of the code catalog.
