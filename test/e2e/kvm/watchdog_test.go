@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +20,8 @@ import (
 // The guest gets an Intel 6300ESB watchdog. With -no-reboot a watchdog
 // reset ends QEMU, like a reboot, but without the kernel "reboot:" message.
 const watchdogQEMUArgs = "-device i6300esb -action watchdog=reset"
+
+var stallStatusLine = regexp.MustCompile(`BOOTY1 run=\S+ phase=\S+ code=BOOTY-WDT-001 step=run-machine-commands result=failed`)
 
 // TestWatchdogHungStepResetsQEMU hangs a machine command. The step makes no
 // progress, BOOTy stops petting the i6300esb, and the watchdog resets the
@@ -36,6 +39,11 @@ func TestWatchdogHungStepResetsQEMU(t *testing.T) {
 	requireWatchdogArmed(t, output)
 	if !strings.Contains(text, "BOOTY-WDT-001") || !strings.Contains(text, "step=run-machine-commands") {
 		t.Fatalf("no stall of run-machine-commands (BOOTY-WDT-001) in the output. tail:\n%s", tail(output, 4000))
+	}
+	// The out-of-band status line on the serial console records the stall
+	// before the reset.
+	if !stallStatusLine.MatchString(text) {
+		t.Fatalf("no BOOTY1 status line with code=BOOTY-WDT-001 step=run-machine-commands. tail:\n%s", tail(output, 4000))
 	}
 	for _, bad := range []string{"reboot: Restarting system", "reboot: Power down", "disarming the watchdog"} {
 		if strings.Contains(text, bad) {

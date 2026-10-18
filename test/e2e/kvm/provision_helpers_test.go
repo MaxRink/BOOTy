@@ -743,9 +743,13 @@ func buildESPSync(t *testing.T, output string) {
 
 func buildBooty(t *testing.T, output string) {
 	t.Helper()
-	cmd := exec.Command("go", "build",
-		"-ldflags", "-linkmode external -extldflags '-static' -s -w",
-		"-o", output, "github.com/telekom/BOOTy")
+	ldflags := "-linkmode external -extldflags '-static' -s -w"
+	// Stamp the commit time like the release builds: the time sync uses it
+	// as its floor.
+	if out, err := exec.Command("git", "log", "-1", "--format=%cI").Output(); err == nil && len(strings.TrimSpace(string(out))) > 0 {
+		ldflags += " -X github.com/telekom/BOOTy/pkg/buildinfo.commitTime=" + strings.TrimSpace(string(out))
+	}
+	cmd := exec.Command("go", "build", "-ldflags", ldflags, "-o", output, "github.com/telekom/BOOTy")
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=1", "GOOS=linux", "GOARCH=amd64")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build booty: %v\n%s", err, out)

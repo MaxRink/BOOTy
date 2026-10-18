@@ -475,6 +475,7 @@ oci-push-initramfs: check-oci-vars
 	@target_arg=""; \
 	if [ "$$OCI_FLAVOR" != "default" ]; then target_arg="--target=$$OCI_FLAVOR"; fi; \
 	docker buildx build --platform "linux/$$OCI_ARCH" $$target_arg \
+		--build-arg "BOOTY_COMMIT_TIME=$(COMMIT_TIME)" \
 		--output "type=local,dest=$$OCI_INITRAMFS_DIR" -f initrd.Dockerfile .
 	@test -f "$$INITRAMFS_PATH" || (printf 'ERROR: expected %s/%s artifact %s was not produced\n' "$$OCI_FLAVOR" "$$OCI_ARCH" "$$INITRAMFS_PATH"; exit 1)
 	@sha256sum "$$INITRAMFS_PATH" > "$${INITRAMFS_PATH}.sha256"

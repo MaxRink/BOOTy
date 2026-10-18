@@ -34,7 +34,7 @@ jobs:
           set -euo pipefail
           # Build BOOTy as a static binary for linux/amd64
           CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
-            go build -ldflags "-linkmode external -extldflags '-static' -s -w" -o booty
+            go build -ldflags "-linkmode external -extldflags '-static' -s -w -X github.com/telekom/BOOTy/pkg/buildinfo.commitTime=$(git log -1 --format=%cI)" -o booty
 
           # Create initramfs directory structure
           mkdir -p initramfs/{bin,sbin,dev,proc,run,sys,etc,tmp,usr/bin,lib/modules,mnt,home}

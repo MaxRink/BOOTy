@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/telekom/BOOTy/pkg/config"
+	"github.com/telekom/BOOTy/pkg/disk"
 	"github.com/telekom/BOOTy/pkg/ipmi"
 	"github.com/telekom/BOOTy/pkg/oob"
 	"github.com/telekom/BOOTy/pkg/provision"
@@ -114,6 +115,12 @@ func loadWatchdogModules() {
 		}
 		pending = failed
 	}
+}
+
+// newDiskCommander runs the disk commands of the run through
+// watchdog.ProgressRunner: a finished wipe or erase command is progress.
+func newDiskCommander() disk.Commander {
+	return watchdog.ProgressRunner{Inner: &disk.ExecCommander{}}
 }
 
 // watchdogStalled records the stalled step with BOOTY-WDT-001 out of band

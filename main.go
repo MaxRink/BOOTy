@@ -39,7 +39,6 @@ import (
 	"github.com/telekom/BOOTy/pkg/realm"
 	"github.com/telekom/BOOTy/pkg/runmode"
 	"github.com/telekom/BOOTy/pkg/ux"
-	"github.com/telekom/BOOTy/pkg/watchdog"
 )
 
 // Version and Build are set via -ldflags at build time.
@@ -575,7 +574,7 @@ func runCAPRF(ctx context.Context) {
 		return
 	}
 
-	diskMgr := disk.NewManager(watchdog.ProgressRunner{Inner: &disk.ExecCommander{}})
+	diskMgr := disk.NewManager(newDiskCommander())
 	diskMgr.SetLegacyCAPRFSelection(cfg.Provision.Disk.Selection == config.DiskSelectionLsblk)
 	if result, inspectErr := crash.InspectStartup(ctx, cfg, diskMgr, client, crash.InspectOptions{}); inspectErr != nil {
 		slog.Warn("startup crash artifact inspection failed", "error", inspectErr)

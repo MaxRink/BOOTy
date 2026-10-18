@@ -176,3 +176,31 @@ func TestWatchdogStallCodeMatchesCatalog(t *testing.T) {
 		t.Fatalf("provision.CodeStalled %q != watchdog.CodeStalled %q", provision.CodeStalled, watchdog.CodeStalled)
 	}
 }
+
+type progressRecorder struct{ progress int }
+
+func (r *progressRecorder) Step(string)        {}
+func (r *progressRecorder) Progress()          { r.progress++ }
+func (r *progressRecorder) Idle()              {}
+func (r *progressRecorder) Handoff(bool) error { return nil }
+
+// The disk manager of the run reports every finished command as watchdog
+// progress.
+func TestDiskCommanderReportsWatchdogProgress(t *testing.T) {
+	r := &progressRecorder{}
+	watchdog.Activate(r)
+	t.Cleanup(func() { watchdog.Activate(nil) })
+	cmd := newDiskCommander()
+	if _, ok := cmd.(watchdog.ProgressRunner); !ok {
+		t.Fatalf("disk commander %T is not a watchdog.ProgressRunner", cmd)
+	}
+	if _, err := cmd.Run(context.Background(), "true"); err != nil {
+		t.Fatalf("run true: %v", err)
+	}
+	if _, err := cmd.Run(context.Background(), "false"); err == nil {
+		t.Fatal("run false succeeded")
+	}
+	if r.progress != 2 {
+		t.Fatalf("progress reports = %d, want 2", r.progress)
+	}
+}

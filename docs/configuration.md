@@ -182,6 +182,17 @@ callbacks, the crash artifact upload and the image download.
   set it back by more than `TIME_MAX_SKEW_SEC` on the `Date` header alone; it
   logs an error and keeps the clock (`TIME_SYNC=require` fails). NTP may set
   it back.
+- What protects what: the backward-step refusal only guards against a stale
+  `Date` header (a caching proxy, a server with a wrong clock). It is not a
+  defense against an on-path attacker, who can also answer plain NTP. The
+  security boundary against an attacker who wants to move the clock back
+  (to make an expired or revoked certificate valid again) is the floor: no
+  source can set the clock before the commit time of the build. Where the
+  RTC is trusted (a working CMOS battery, the RTC written back by the last
+  run), use `TIME_SYNC=require` with a short `TIME_MAX_SKEW_SEC`, for example
+  `60`: NTP must then agree with the authenticated `Date` time within that
+  bound, and the run fails instead of setting a plausible clock back by more
+  than that on the `Date` header.
 - BOOTy steps the clock when the skew is larger than the resolution of the
   source (0.5 s for NTP, 2 s for `Date`), logs the skew (`skew_seconds`) and
   writes the RTC in UTC (`TIME_WRITE_RTC`), so the installed OS starts with

@@ -282,3 +282,30 @@ func TestSyncRefusesLargeDateBackwardStep(t *testing.T) {
 		t.Fatalf("require with a refused backward step: err = %v, want ErrNoTime", err)
 	}
 }
+
+// Without Options.MaxSkew the default of 300 s bounds both the NTP check
+// against the Date time and the Date backward step.
+func TestSyncDefaultMaxSkew(t *testing.T) {
+	tests := []struct {
+		name       string
+		now        time.Time
+		ntp, date  func(context.Context, string) (Sample, error)
+		wantSource string
+	}{
+		{"NTP 4 min from the Date time", realNow, source(ntpSample(4*time.Minute), nil), source(dateSample(0, true), nil), "ntp://192.0.2.1:123"},
+		{"NTP 6 min from the Date time", realNow, source(ntpSample(6*time.Minute), nil), source(dateSample(10*time.Second, true), nil), "caprf-date"},
+		{"Date sets back by 4 min", realNow, source(Sample{}, errDown), source(dateSample(-4*time.Minute, true), nil), "caprf-date"},
+		{"Date sets back by 6 min", realNow, source(Sample{}, errDown), source(dateSample(-6*time.Minute, true), nil), ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clock := &fakeClock{now: tt.now}
+			res, err := testSyncer(clock, tt.ntp, tt.date).Sync(context.Background(), Options{
+				NTPServers: []string{"x"}, DateURL: "https://caprf.example",
+			})
+			if err != nil || res.Source != tt.wantSource {
+				t.Fatalf("Sync = %+v, %v; want source %q", res, err, tt.wantSource)
+			}
+		})
+	}
+}

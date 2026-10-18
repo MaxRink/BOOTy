@@ -236,8 +236,8 @@ jobs:
             privileged: true
             # The default flavor and its Debian kernel, built from initrd.Dockerfile.
             setup: |
-              docker buildx build --platform linux/amd64 --output type=local,dest=out-flavor -f initrd.Dockerfile .
-              docker buildx build --platform linux/amd64 --target kernel-image --output type=local,dest=out-flavor -f initrd.Dockerfile .
+              docker buildx build --platform linux/amd64 --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" --output type=local,dest=out-flavor -f initrd.Dockerfile .
+              docker buildx build --platform linux/amd64 --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" --target kernel-image --output type=local,dest=out-flavor -f initrd.Dockerfile .
           # Boots the runner kernel (efivarfs built in). The BOOTy kernel with
           # efivarfs.ko is covered by flavor-storage-controllers under OVMF.
           - scenario: uefi-efi-entries
@@ -424,7 +424,7 @@ jobs:
         run: |
           set -euo pipefail
           CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
-            go build -ldflags "-linkmode external -extldflags '-static' -s -w" -o booty
+            go build -ldflags "-linkmode external -extldflags '-static' -s -w -X github.com/telekom/BOOTy/pkg/buildinfo.commitTime=$(git log -1 --format=%cI)" -o booty
 
           mkdir -p initramfs/{bin,sbin,dev,proc,run,sys,etc,tmp,usr/bin,lib/modules,mnt}
           sudo mknod initramfs/dev/console c 5 1

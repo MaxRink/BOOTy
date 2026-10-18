@@ -199,7 +199,7 @@ jobs:
           GOARCH: ${{ matrix.arch }}
           CGO_ENABLED: 1
           CC: gcc
-        run: go build -trimpath -ldflags "-s -w -linkmode external -extldflags '-static'" -o booty-${{ matrix.arch }}
+        run: go build -trimpath -ldflags "-s -w -linkmode external -extldflags '-static' -X github.com/telekom/BOOTy/pkg/buildinfo.commitTime=$(git log -1 --format=%cI)" -o booty-${{ matrix.arch }}
 
       - name: Vet for darwin (build tags)
         if: matrix.arch == 'amd64'
@@ -232,6 +232,7 @@ jobs:
       - name: Build slim initramfs
         run: |
           docker buildx build --platform linux/amd64 --target slim \
+            --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" \
             --output type=local,dest=out-slim -f initrd.Dockerfile .
           echo "Slim initramfs:"
           ls -lh out-slim/initramfs.cpio.zst
@@ -239,6 +240,7 @@ jobs:
       - name: Build micro initramfs
         run: |
           docker buildx build --platform linux/amd64 --target micro \
+            --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" \
             --output type=local,dest=out-micro -f initrd.Dockerfile .
           echo "Micro initramfs:"
           ls -lh out-micro/initramfs.cpio.gz
@@ -246,6 +248,7 @@ jobs:
       - name: Build gobgp initramfs
         run: |
           docker buildx build --platform linux/amd64 --target gobgp \
+            --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" \
             --output type=local,dest=out-gobgp -f initrd.Dockerfile .
           echo "GoBGP initramfs:"
           ls -lh out-gobgp/initramfs.cpio.zst
@@ -253,6 +256,7 @@ jobs:
       - name: Verify size ordering
         run: |
           docker buildx build --platform linux/amd64 \
+            --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" \
             --output type=local,dest=out-default -f initrd.Dockerfile .
 
           DEFAULT_SIZE=$(stat -c%s out-default/initramfs.cpio.zst)
@@ -517,7 +521,7 @@ jobs:
           set -euo pipefail
           # Build BOOTy as a static binary for linux/amd64
           CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
-            go build -trimpath -ldflags "-linkmode external -extldflags '-static' -s -w" -o booty
+            go build -trimpath -ldflags "-linkmode external -extldflags '-static' -s -w -X github.com/telekom/BOOTy/pkg/buildinfo.commitTime=$(git log -1 --format=%cI)" -o booty
 
           # Create initramfs directory structure
           mkdir -p initramfs/{bin,sbin,dev,proc,run,sys,etc,tmp,usr/bin,lib/modules,mnt,home}
@@ -955,7 +959,7 @@ jobs:
           set -euo pipefail
           # Build BOOTy as a static binary for linux/amd64
           CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
-            go build -trimpath -ldflags "-linkmode external -extldflags '-static' -s -w" -o booty
+            go build -trimpath -ldflags "-linkmode external -extldflags '-static' -s -w -X github.com/telekom/BOOTy/pkg/buildinfo.commitTime=$(git log -1 --format=%cI)" -o booty
 
           # Create initramfs directory structure
           mkdir -p initramfs/{bin,sbin,dev,proc,run,sys,etc,tmp,usr/bin,lib/modules,mnt,home}
