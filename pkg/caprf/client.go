@@ -375,6 +375,14 @@ func (c *Client) ReportHealthChecks(ctx context.Context, results []health.CheckR
 	return c.postJSONWithAuth(ctx, c.cfg.Health.ReportURL, data)
 }
 
+// ReportCheckResult sends the check result document (CHECK_RESULT_URL).
+func (c *Client) ReportCheckResult(ctx context.Context, data []byte) error {
+	if c.cfg.Check.ResultURL == "" {
+		return fmt.Errorf("no check result URL configured")
+	}
+	return c.postJSONWithAuth(ctx, c.cfg.Check.ResultURL, data)
+}
+
 // Heartbeat sends a keepalive to the CAPRF server.
 // Returns nil if no heartbeat URL is configured (non-standby mode).
 func (c *Client) Heartbeat(ctx context.Context) error {
@@ -1296,6 +1304,17 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 	return false
 }
 
+// splitVarList splits a comma-separated vars value.
+func splitVarList(value string) []string {
+	var out []string
+	for _, v := range strings.Split(value, ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
 // applyCheckStringVar handles the check mode keys.
 func applyCheckStringVar(cfg *config.MachineConfig, key, value string) bool {
 	switch key {
@@ -1303,6 +1322,12 @@ func applyCheckStringVar(cfg *config.MachineConfig, key, value string) bool {
 		cfg.Check.Hold = value
 	case "LLDP_NEIGHBOR_WAIT":
 		cfg.Check.LLDPNeighborWait = value
+	case "CHECK_PROFILES":
+		cfg.Check.Profiles = splitVarList(value)
+	case "CHECK_RESULT_SINKS":
+		cfg.Check.Sinks = splitVarList(value)
+	case "CHECK_RESULT_URL":
+		cfg.Check.ResultURL = value
 	default:
 		return false
 	}
@@ -1768,6 +1793,10 @@ func applyIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 		"BFD_PROFILES":        &cfg.Network.BGP.BFDProfiles,
 		"BGP_ROUTE_MAPS":      &cfg.Network.BGP.RouteMaps,
 		"BGP_COMMUNITY_LISTS": &cfg.Network.BGP.CommunityLists,
+		// The cable check inputs, like check.expectedCabling and
+		// check.thresholds in YAML.
+		"CHECK_EXPECTED_CABLING": &cfg.Check.ExpectedCabling,
+		"CHECK_THRESHOLDS":       &cfg.Check.Thresholds,
 	}[key]; ok {
 		// A JSON list, like network.bgp.sessions in YAML. An unknown field
 		// fails, like in the YAML config, so an unsupported statement is

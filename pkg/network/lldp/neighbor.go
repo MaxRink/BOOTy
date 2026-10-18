@@ -76,12 +76,17 @@ func sameNeighbor(a, b *Neighbor) bool {
 	return a.ChassisID == b.ChassisID && a.PortID == b.PortID && a.SystemName == b.SystemName
 }
 
-// SwitchPort returns the name of the neighbor's port: the port
-// description when the port ID is a number in a "local" port ID (the SNMP
-// ifIndex that Junos sends by default), else the port ID.
+// SwitchPort returns the name of the neighbor's port. A port ID that is
+// a name (ifname, interface alias, or a "local" ID that is not a number)
+// is the name. Otherwise, such as for the SNMP ifIndex that Junos sends as
+// "local" port ID by default or the MAC that lldpd sends, the port
+// description names the port when there is one.
 func (n *Neighbor) SwitchPort() string {
-	ifIndex := n.PortIDSubtype == "local" && n.PortID != "" && strings.Trim(n.PortID, "0123456789") == ""
-	if ifIndex && n.PortDescription != "" {
+	switch {
+	case n.PortIDSubtype == "ifname", n.PortIDSubtype == "interface-alias",
+		n.PortIDSubtype == "local" && strings.Trim(n.PortID, "0123456789") != "":
+		return n.PortID
+	case n.PortDescription != "":
 		return n.PortDescription
 	}
 	return n.PortID

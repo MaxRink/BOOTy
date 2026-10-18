@@ -29,6 +29,7 @@ shim and GRUB do not verify it.
 | `LLDP_PROFILE` | `bm4x-cablecheck` | Port ID = NIC MAC, system name `bare-minimal`, on every NIC with carrier ([identity profiles](networking.md#lldp-identity-profiles)). |
 | `CHECK_HOLD` | `until-poweroff` | Keep the links and LLDP up after the checks until bm4x powers the host off (`STOP_LLDP`). |
 | `LLDP_NEIGHBOR_WAIT` | `90s` | Before the checks, wait until every NIC with carrier has an LLDP neighbor. |
+| `CHECK_PROFILES` | `health,cabling` | Also run the host-side cabling checks; their result goes to the log (serial console). |
 
 BOOTy also stops the firmware LLDP agent of Intel NICs, as in every mode
 (`LLDP_DISABLE_FW_AGENT`, on by default), so the switch frames reach BOOTy
@@ -44,6 +45,108 @@ off and ejects the ISO. The kernel sends the first frame on each NIC within
 seconds of BOOTy starting and then one every 30 s (TTL 120 s), like
 systemd-networkd and lldpd. bm4x waits `redfish.image-boot` (60 s in
 production) after the boot.
+
+## Host-side checks
+
+With `CHECK_PROFILES=health,cabling` (set in the check ISO) BOOTy also
+checks the cabling from the host side, after `LLDP_NEIGHBOR_WAIT`:
+
+| Check | Fails when | Default action |
+|---|---|---|
+| `lldp-neighbor-present` | a NIC with carrier has no LLDP neighbor | warn |
+| `cabling-match` | a NIC is on another switch port than `CHECK_EXPECTED_CABLING` says, a NIC with a neighbor is not in it, or an expected NIC is missing (skipped without an expected cabling) | block |
+| `uplink-dual-homed` | all NICs with a neighbor reach the same switch (chassis ID) | warn |
+| `link-speed` | a NIC with carrier runs below `minSpeedMbps` or not at its expected `speedMbps` | warn |
+| `link-flaps` | a NIC lost carrier more than `maxFlaps` times (default 4: a boot bounce, the link setup and the firmware LLDP agent switch of ice and i40e each reset the port) since the driver loaded (`carrier_down_count`) | warn |
+| `link-errors` | a NIC has more than `maxErrors` (default 0) receive and transmit errors since the driver loaded | warn |
+| `fec` | a NIC has uncorrectable FEC blocks, or runs without FEC on lanes that need it: PAM4 lanes (50G and more per lane) always, 25G lanes (25G, 50G-R2, 100G-R4 such as SR4 and CR4) unless the module is a long-reach optic (LR, LR4, ER, ER4), a CA-N cable or a BER 1e-12 AOC/ACC (SFF-8024 compliance code). 10G lanes (10G, 40G) need no FEC | warn |
+| `pcie-link` | the PCIe link of a NIC runs below the speed or width that both the device and its slot (the upstream port) can (downtrained) | warn |
+| `optics-alarm` | a transceiver raised an alarm flag (temperature, supply voltage, Tx bias, Tx or Rx power, per lane) | block |
+| `optics-warning` | a transceiver raised a warning flag | warn |
+
+BOOTy reads the link state over ethtool netlink (`LINKMODES`, `LINKSTATE`,
+`FEC` with statistics), the error counters from the netdev statistics and
+the carrier losses and the PCIe link from sysfs. The lane count comes from
+the driver (`LINKMODES` lanes), else from the speed (40G, 100G and 200G
+have 4 lanes, 50G 2, 400G 8). Values that a driver does
+not report stay out of the document: virtio has no FEC, a veth no PCIe
+link. The counters are totals since the driver loaded, not rates.
+
+### Transceivers
+
+BOOTy reads the transceiver memory over ethtool netlink
+(`MODULE_EEPROM_GET`, page by page; it needs `CAP_NET_ADMIN`, which PID 1
+has) and decodes it itself (`pkg/network/sff`), so neither the `ethtool`
+binary nor a library is needed:
+
+| Spec | Modules | Read |
+|---|---|---|
+| SFF-8472 | SFP, SFP+, SFP28 | A0h (identity), A2h (diagnostics, thresholds, flags) |
+| SFF-8636 | QSFP+, QSFP28 | lower page, page 00h, page 03h (thresholds) unless the memory is flat |
+| CMIS 4/5 | QSFP-DD, OSFP, QSFP with CMIS | lower page, pages 00h, 01h, 02h, 11h unless the memory is flat |
+
+Each NIC with a module gets `module` in the result document: type,
+connector, vendor, OUI, part number, revision, serial number, date code,
+wavelength, and with diagnostics the temperature, supply voltage, per lane
+Tx bias, Tx and Rx power (dBm), the alarm and warning thresholds and the
+raised flags. The checks use the flags that the module computes itself;
+SFF-8636 and CMIS flags are latched, so they also show an event since the
+last read. Limits of the decoder: SFF-8472 modules with external
+calibration get a note instead of diagnostics, and the CMIS lane count
+comes from the form factor (8 for QSFP-DD and OSFP, 4 for QSFP with
+CMIS). The decoder is tested with memories built from the specifications;
+no real module dumps were available.
+
+The switch port of a neighbor is its port ID when that is a name (subtype
+`ifname`, `interface-alias`, or a `local` ID that is not a number);
+otherwise, such as for the Junos ifIndex or the lldpd MAC port ID, it is
+the port description. Switch names compare without case.
+
+### Thresholds
+
+`CHECK_THRESHOLDS` (YAML `check.thresholds`) sets the action of each check:
+`off` skips it, `warn` reports a failure as a warning, `block` as critical,
+which makes the run fail (status `error`).
+
+| Key | Check |
+|---|---|
+| `lldpMissing` | `lldp-neighbor-present` |
+| `cablingMismatch` | `cabling-match` |
+| `dualHoming` | `uplink-dual-homed` |
+| `linkSpeed`, `minSpeedMbps` | `link-speed` |
+| `linkFlaps`, `maxFlaps` | `link-flaps` |
+| `linkErrors`, `maxErrors` | `link-errors` |
+| `fec` | `fec` |
+| `pcie` | `pcie-link` |
+| `opticsAlarm` | `optics-alarm` |
+| `opticsWarning` | `optics-warning` |
+
+Example: `CHECK_THRESHOLDS='{"lldpMissing":"block","dualHoming":"off"}'`.
+
+### Result document and sinks
+
+One result document (`schema: booty.check/v1`) holds the host, the status
+(`pass`, `warn` or `fail`), every check result (health and cabling), every
+NIC with its LLDP neighbor and expected port, and the diff. The log always
+gets one line per check and a summary; `CHECK_RESULT_SINKS` adds `file`,
+`http`, `caprf` and `bm4x-report`. A failing sink is logged and the others
+still run.
+
+The `bm4x-report` sink writes the diff in the form of the bm4x
+`ConnectionReport`:
+
+```json
+{"diff":[{"a":{"hostname":"site1com5k01","interfaceName":"ens1f1np1"},
+  "bactual":{"hostname":"site1lsw5k11","interfaceName":"et-0/0/4"},
+  "bexpected":{"hostname":"site1lsw5k11","interfaceName":"et-0/0/3"}}]}
+```
+
+`a` is the host NIC, `bactual` the switch port that LLDP shows and
+`bexpected` the expected one. `deviceName` and `deviceStatus`, which only
+NetBox knows, are left out. The names `bactual` and `bexpected` are what
+Jackson writes for the Lombok getters `getBActual` and `getBExpected` of
+`ConnectionEntry`; verify them against a real bm4x job output before bm4x
+reads this report.
 
 ## Hold
 
@@ -72,4 +175,6 @@ checks:
   tests) and checks that the cable check still runs from the CD. The CI job
   `check-iso` builds the ISO with `make check-iso` and runs all four.
 - The containerlab lab `topology-cablecheck.clab.yml` shows what an lldpd
-  leaf reports for BOOTy (`TestCableCheckLLDP`).
+  leaf reports for BOOTy (`TestCableCheckLLDP`). Its vars are the ISO vars
+  plus an expected cabling with one wrong port; `TestCableCheckDiff` checks
+  the bm4x report and the result document.

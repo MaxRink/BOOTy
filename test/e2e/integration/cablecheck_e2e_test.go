@@ -9,7 +9,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -220,5 +222,104 @@ func TestCableCheckReceive(t *testing.T) {
 		if strings.Contains(line, `msg="LLDP neighbor"`) && strings.Contains(line, "systemName=bare-minimal") {
 			t.Errorf("BOOTy reports its own frame as neighbor: %s", line)
 		}
+	}
+}
+
+// The lab vars are the vars of the cable check ISO plus the expected
+// cabling and the sinks.
+func TestCableCheckLabVars(t *testing.T) {
+	iso, err := os.ReadFile("../../../hack/check-iso/vars")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lab, err := os.ReadFile("../clab/data/vars-cablecheck")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(iso), "\n") {
+		if line != "" && !strings.HasPrefix(line, "#") && !strings.Contains(string(lab), line+"\n") {
+			t.Errorf("lab vars miss %q of the check ISO", line)
+		}
+	}
+}
+
+// cablecheckFile waits for a file that BOOTy writes and returns it.
+func cablecheckFile(t *testing.T, path string) []byte {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	for {
+		out, err := exec.CommandContext(ctx, "docker", "exec", cablecheckBooty, "cat", path).Output()
+		if err == nil {
+			return out
+		}
+		if ctx.Err() != nil {
+			t.Fatalf("%s not written: %v", path, err)
+		}
+		time.Sleep(time.Second)
+	}
+}
+
+// The host side of the cable check: the bm4x report has one entry, eth2
+// on leaf01 eth2 instead of eth3, and the result document fails on the
+// cabling match (block) with the leaf as neighbor of eth1 and eth2.
+func TestCableCheckDiff(t *testing.T) {
+	cablecheckStartBooty(t)
+	host, err := cablecheckExec(context.Background(), cablecheckBooty, "hostname")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report struct {
+		Diff []map[string]map[string]string `json:"diff"`
+	}
+	b := cablecheckFile(t, "/run/booty/bm4x-connection-report.json")
+	if err := json.Unmarshal(b, &report); err != nil {
+		t.Fatalf("bm4x report %s: %v", b, err)
+	}
+	want := []map[string]map[string]string{{
+		"a":         {"hostname": strings.TrimSpace(host), "interfaceName": "eth2"},
+		"bactual":   {"hostname": "leaf01", "interfaceName": "eth2"},
+		"bexpected": {"hostname": "leaf01", "interfaceName": "eth3"},
+	}}
+	if !reflect.DeepEqual(report.Diff, want) {
+		t.Errorf("bm4x report = %s, want the eth2 entry only", b)
+	}
+
+	var doc struct {
+		Status string `json:"status"`
+		Checks []struct {
+			Name, Status, Severity string
+		} `json:"checks"`
+		Links []struct {
+			Ifname string `json:"ifname"`
+			LLDP   *struct {
+				SystemName string `json:"systemName"`
+			} `json:"lldp"`
+			State *struct {
+				SpeedMbps int    `json:"speedMbps"`
+				Duplex    string `json:"duplex"`
+			} `json:"link"`
+		} `json:"links"`
+	}
+	b = cablecheckFile(t, "/run/booty/check-result.json")
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatalf("result %s: %v", b, err)
+	}
+	failed := false
+	for _, c := range doc.Checks {
+		failed = failed || c.Name == "cabling-match" && c.Status == "fail" && c.Severity == "critical"
+	}
+	if doc.Status != "fail" || !failed {
+		t.Errorf("result status %s, cabling-match failed %v: %s", doc.Status, failed, b)
+	}
+	leaf := 0
+	for _, l := range doc.Links {
+		if (l.Ifname == "eth1" || l.Ifname == "eth2") && l.LLDP != nil && l.LLDP.SystemName == "leaf01" &&
+			l.State != nil && l.State.SpeedMbps == 10000 && l.State.Duplex == "full" { // veth over ethtool netlink
+			leaf++
+		}
+	}
+	if leaf != 2 {
+		t.Errorf("leaf01 at 10000 Mb/s full duplex on %d of eth1, eth2: %s", leaf, b)
 	}
 }

@@ -109,8 +109,13 @@ func TestDisableNICFirmwareLLDP(t *testing.T) {
 		{"", "", nil, true},
 		{"provision", "", &off, false},
 		{"provision", "", &on, true},
+		{"check", "cabling", nil, true},
+		{"check", "cabling", &off, false},
 	} {
 		c := &Config{Mode: tt.mode}
+		if tt.profile == "cabling" {
+			c.Check.Profiles, tt.profile = []string{"health", "cabling"}, ""
+		}
 		c.Network.LLDP.Profile = tt.profile
 		c.Network.LLDP.DisableFirmwareAgent = tt.value
 		if got := c.DisableNICFirmwareLLDP(); got != tt.want {
@@ -172,7 +177,45 @@ func TestCheckNeighborWait(t *testing.T) {
 	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "LLDP_NEIGHBOR_WAIT") {
 		t.Fatalf("Validate = %v, want an LLDP_NEIGHBOR_WAIT error", err)
 	}
-	if (CheckConfig{}).NeighborWait() != 0 {
+	if (&CheckConfig{}).NeighborWait() != 0 {
 		t.Fatal("no wait by default")
+	}
+}
+
+func TestValidateCablingCheck(t *testing.T) {
+	ok := CheckConfig{
+		Profiles: []string{"health", "cabling"}, Sinks: []string{"file", "bm4x-report", "http", "caprf"}, ResultURL: "https://x/r",
+		ExpectedCabling: []ExpectedLink{{MAC: "3c:fd:fe:00:00:01", Switch: "leaf01", Port: "Ethernet1/1"}, {Interface: "eno1", Switch: "s", Port: "p"}},
+		Thresholds:      CheckThresholds{LinkFlaps: "block", OpticsAlarm: "off"},
+	}
+	if err := (&Config{Check: ok}).Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	for _, tt := range []struct {
+		name string
+		set  func(*CheckConfig)
+		want string
+	}{
+		{"profile", func(c *CheckConfig) { c.Profiles = []string{"infra"} }, `check.profiles (CHECK_PROFILES) "infra"`},
+		{"sink", func(c *CheckConfig) { c.Sinks = []string{"kafka"} }, `check.sinks (CHECK_RESULT_SINKS) "kafka"`},
+		{"http without URL", func(c *CheckConfig) { c.ResultURL = "" }, "needs check.resultURL"},
+		{"action", func(c *CheckConfig) { c.Thresholds.FEC = "fail" }, `check.thresholds.fec (CHECK_THRESHOLDS) "fail"`},
+		{"negative flaps", func(c *CheckConfig) { c.Thresholds.MaxFlaps = new(-1) }, "must not be negative"},
+		{"mac and interface", func(c *CheckConfig) { c.ExpectedCabling[0].Interface = "eno1" }, "check.expectedCabling[0]"},
+		{"no port", func(c *CheckConfig) { c.ExpectedCabling[1].Port = "" }, "check.expectedCabling[1]"},
+		{"bad mac", func(c *CheckConfig) { c.ExpectedCabling[0].MAC = "3c:fd" }, `bad mac "3c:fd"`},
+	} {
+		c := ok
+		c.ExpectedCabling = append([]ExpectedLink(nil), ok.ExpectedCabling...)
+		tt.set(&c)
+		if err := (&Config{Check: c}).Validate(); err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("%s: Validate = %v, want %q", tt.name, err, tt.want)
+		}
+	}
+	if !(&CheckConfig{}).HasProfile("health") || (&CheckConfig{}).HasProfile("cabling") || ok.HasProfile("infra") {
+		t.Error("HasProfile")
+	}
+	if _, err := loadYAML(strings.NewReader("check:\n  expectedCabling:\n    - {mac: 3c:fd:fe:00:00:01, switch: s, port: p, vlan: 4}\n"), true); err == nil {
+		t.Error("unknown expectedCabling key accepted")
 	}
 }

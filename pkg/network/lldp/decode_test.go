@@ -122,7 +122,7 @@ func TestParseLLDPSwitchFrames(t *testing.T) {
 			MgmtAddresses: []string{"02:00:00:00:00:09"},
 			Inventory:     &Inventory{HardwareRevision: "1.2", SerialNumber: "SN123", Manufacturer: "Example Corp", Model: "X1"},
 			Interface:     "ens1f0np0", TTL: 120,
-		}, "02:00:00:00:00:0a"},
+		}, "eth1"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			got := parseLLDP(tt.frame, "ens1f0np0")

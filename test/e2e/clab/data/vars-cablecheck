@@ -1,0 +1,12 @@
+# Vars of the cable check lab: the vars of the cable check ISO
+# (hack/check-iso/vars; TestCableCheckLabVars keeps them in sync) plus an
+# expected cabling with one wrong port (eth2 is cabled to leaf01 eth2, not
+# eth3) and the file and bm4x-report sinks.
+MODE=check
+NETWORK_MODE=links
+LLDP_PROFILE=bm4x-cablecheck
+CHECK_HOLD=until-poweroff
+LLDP_NEIGHBOR_WAIT=90s
+CHECK_PROFILES=health,cabling
+CHECK_RESULT_SINKS=file,bm4x-report
+CHECK_EXPECTED_CABLING='[{"interface":"eth1","switch":"leaf01","port":"eth1"},{"interface":"eth2","switch":"leaf01","port":"eth3"}]'

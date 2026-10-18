@@ -11,3 +11,4 @@ NETWORK_MODE=links
 LLDP_PROFILE=bm4x-cablecheck
 CHECK_HOLD=until-poweroff
 LLDP_NEIGHBOR_WAIT=90s
+CHECK_PROFILES=health,cabling

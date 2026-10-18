@@ -44,3 +44,26 @@ func TestCableCheckVars(t *testing.T) {
 		t.Fatal("LLDP_EMIT_ALL=maybe accepted")
 	}
 }
+
+func TestCableCheckResultVars(t *testing.T) {
+	vars := strings.Join([]string{
+		"CHECK_PROFILES=health, cabling",
+		"CHECK_RESULT_SINKS=file,bm4x-report",
+		"CHECK_RESULT_URL=https://caprf.example/check",
+		`CHECK_EXPECTED_CABLING='[{"mac":"3c:fd:fe:00:00:01","switch":"leaf01","port":"Ethernet1/1","speedMbps":25000}]'`,
+		`CHECK_THRESHOLDS='{"lldpMissing":"block","maxFlaps":3}'`,
+	}, "\n")
+	cfg, err := ParseVars(strings.NewReader(vars))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := cfg.Check
+	if len(c.Profiles) != 2 || c.Profiles[1] != "cabling" || len(c.Sinks) != 2 || c.ResultURL == "" ||
+		len(c.ExpectedCabling) != 1 || c.ExpectedCabling[0].SpeedMbps != 25000 ||
+		c.Thresholds.LLDPMissing != "block" || c.Thresholds.MaxFlaps == nil || *c.Thresholds.MaxFlaps != 3 {
+		t.Fatalf("check = %+v", c)
+	}
+	if _, err := ParseVars(strings.NewReader(`CHECK_THRESHOLDS='{"crc":1}'` + "\n")); err == nil {
+		t.Fatal("unknown threshold accepted")
+	}
+}

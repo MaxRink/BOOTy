@@ -4,10 +4,13 @@ package runmode
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/telekom/BOOTy/pkg/config"
+	"github.com/telekom/BOOTy/pkg/linkcheck"
 )
 
 // statusProvider sends each reported status on a channel.
@@ -90,5 +93,23 @@ func TestCheckModeNoNeighborWaitWithoutReceive(t *testing.T) {
 	case <-done:
 	case <-time.After(30 * time.Second):
 		t.Fatal("check mode waited for LLDP neighbors although LLDP receive is off")
+	}
+}
+
+// Result sinks also get the result of a run without the cabling profile.
+func TestCheckModeSinksWithoutCablingProfile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "check-result.json")
+	orig := linkcheck.ResultPath
+	t.Cleanup(func() { linkcheck.ResultPath = orig })
+	linkcheck.ResultPath = path
+	off := false
+	cfg := &config.MachineConfig{Mode: "check", Check: config.CheckConfig{Profiles: []string{config.CheckProfileHealth}, Sinks: []string{config.CheckSinkFile}}}
+	cfg.Network.LLDPReceive = &off
+	cfg.Health.SkipChecks = "disk-presence,disk-ioerr,memory-ecc,minimum-memory,minimum-cpu,nic-link-state,thermal-state"
+	if err := (&CheckMode{deps: Deps{Cfg: cfg, Client: newStatusProvider()}}).Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("file sink not written: %v", err)
 	}
 }
