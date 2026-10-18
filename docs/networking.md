@@ -232,6 +232,20 @@ same resolution:
     time), the FSM goes to Idle for 5 s when the peer closes the incoming
     connection, instead of using its own completed connection
     ([osrg/gobgp#3741](https://github.com/osrg/gobgp/issues/3741)).
+- BFD Down while a BGP session starts. Like bgpd, a BFD Down in the
+  second the BGP session came up does not reset it: a route reflector with
+  `update-source` re-keys its BFD session when its side of the session
+  comes up (`bgp_peer_bfd_update_source`). Known deviation: BOOTy also does
+  not reset a session in OpenConfirm, or Established before GoBGP has set
+  its uptime. bgpd resets in that case (`bfd_session_status_update` resets
+  whenever `last_event > peer->uptime`), but its BFD Down arrives through
+  zebra, after the RR's KEEPALIVE, so the shadow node does not see it.
+  BOOTy's BFD is in the same process and can see the Down first. When the
+  session is Established, BOOTy checks again: if BFD is not Up within the
+  detection time at the slow 1 s rate (multiplier x 1 s, 3 s by default)
+  after the Down, it resets the session then, so a real failure is not
+  hidden until the hold timer expires. The RR's re-keyed session is Up
+  again after 1 s in the lab. Teardown stops these checks.
 - `bgp bestpath as-path multipath-relax` (native `network.bgp.multipathRelax`,
   `BGP_MULTIPATH_RELAX`) installs equal-cost paths with different AS paths
   of the same length as one multipath route.

@@ -17,6 +17,10 @@ type Timers struct {
 // 6.8.3: at least one second; FRR bfdd uses one second).
 const slowTx = time.Second
 
+// SlowTx is slowTx for the callers: the transmit interval while a session
+// is not Up.
+const SlowTx = slowTx
+
 // Session is the state machine of one BFD session (RFC 5880 6.8). It does
 // no I/O and takes the time as an argument, so it is tested without a
 // network. The caller serializes the calls.

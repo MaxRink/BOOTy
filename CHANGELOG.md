@@ -474,6 +474,14 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 ### Fixes
 
 - bfd: a detection time without packets forgets the remote discriminator in every state, and the peer's Demand mode stops the periodic packets (RFC 5880) (#749)
+- gobgp: a BFD Down in the second a BGP session came up does not reset it, like
+  bgpd; a route reflector with `update-source` re-keys BFD when its side comes
+  up, and BOOTy reset the RR session at every start (#738)
+- gobgp: a BFD Down while the BGP session is in OpenConfirm, or Established
+  without an uptime yet, does not reset it at once; once Established, BOOTy
+  resets the session if BFD is not Up again within the slow detection time
+  (multiplier x 1 s). This ends the
+  `TestProdTplRRSessionsNotResetAtStart` start flake (#761)
 - GoBGP mode: an L3VNI provision VNI without `provision_gateway` (bm4x IPv6
   provisioning network) selects Type-5 only, instead of failing with
   `provision gateway is required for GoBGP VXLAN data plane` (#662).

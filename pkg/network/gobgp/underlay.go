@@ -73,16 +73,16 @@ type UnderlayTier struct {
 	cfg          *Config
 	nics         []string
 	log          *slog.Logger
-	stopRA       chan struct{}                                   // signals the periodic RA goroutine to stop
-	stopFIB      context.CancelFunc                              // stops the FIB writer
-	fibDone      chan struct{}                                   // closed when the FIB writer has removed its routes
-	peerDevs     map[string]string                               // unnumbered peer address -> interface
-	discoverPeer func(context.Context, string) (string, error)   // overridable in tests; nil = discoverLinkLocalPeer
-	connected    func(netip.Addr, string) bool                   // overridable in tests; nil = connectedInVRF
-	resetBGP     func(context.Context, string, string)           // overridable in tests; nil = resetPeer
-	bgpUptime    func(context.Context, string) (time.Time, bool) // overridable in tests; nil = establishedAt
-	now          func() time.Time                                // overridable in tests; nil = time.Now
-	ifacePeers   map[string]string                               // interface -> unnumbered peer address as added
+	stopRA       chan struct{}                                                           // signals the periodic RA goroutine to stop
+	stopFIB      context.CancelFunc                                                      // stops the FIB writer
+	fibDone      chan struct{}                                                           // closed when the FIB writer has removed its routes
+	peerDevs     map[string]string                                                       // unnumbered peer address -> interface
+	discoverPeer func(context.Context, string) (string, error)                           // overridable in tests; nil = discoverLinkLocalPeer
+	connected    func(netip.Addr, string) bool                                           // overridable in tests; nil = connectedInVRF
+	resetBGP     func(context.Context, string, string)                                   // overridable in tests; nil = resetPeer
+	bgpSession   func(context.Context, string) (apipb.PeerState_SessionState, time.Time) // overridable in tests; nil = sessionState
+	now          func() time.Time                                                        // overridable in tests; nil = time.Now
+	ifacePeers   map[string]string                                                       // interface -> unnumbered peer address as added
 	// ifacePeerConfs are the GoBGP peers as added, by interface, to move
 	// to a new link-local address of the switch.
 	ifacePeerConfs map[string]*apipb.Peer
@@ -97,7 +97,15 @@ type UnderlayTier struct {
 	peerCountFn  func(ctx context.Context) int // overridable in tests; nil = use countEstablishedPeers
 	pollInterval time.Duration                 // overridable in tests; zero = use default (1s)
 	bfd          *bfd.Manager                  // BFD sessions of the peers
-	stopLLDP     func()                        // stops the LLDP senders and waits for them
+	bfdUp        sync.Map                      // BFD peer name -> bool, the session is Up
+	bfdUpGrace   time.Duration                 // overridable in tests; zero = bfdRecheckGrace
+	// checkCtx, canceled by Teardown, bounds the BFD rechecks of
+	// starting sessions (recheck); checkMu guards it and checks.Add.
+	checkMu    sync.Mutex
+	checkCtx   context.Context //nolint:containedctx // canceled by Teardown, like stopRelearn
+	stopChecks context.CancelFunc
+	checks     sync.WaitGroup
+	stopLLDP   func() // stops the LLDP senders and waits for them
 }
 
 const defaultUnderlayDummyName = "dummy.underlay"
@@ -258,6 +266,7 @@ func (u *UnderlayTier) Teardown(_ context.Context) error {
 		u.bfd.Close()
 		u.bfd = nil
 	}
+	u.stopRechecks() // no ResetPeer during the teardown, none waits on the stopped server
 	if u.stopLLDP != nil {
 		u.stopLLDP()
 		u.stopLLDP = nil
