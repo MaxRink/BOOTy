@@ -183,6 +183,28 @@ The `initrd.Dockerfile` supports multiple build targets via `--target`:
 | `slim` | ~30 MB | DHCP only | Provisioning basics, no LVM/FRR | Lightweight provisioning without BGP |
 | `micro` | ~10 MB | None (pure Go) | None | Minimal agent, custom network stack |
 | `kernel-image` | ~12 MB | n/a | n/a | The Debian `vmlinuz` that matches the shipped modules, for QEMU tests |
+| `split` | see below | as the default | as the default | The default ramdisk as a base archive plus one archive per optional payload |
+
+The `split` target writes `base.cpio.zst`, one archive per payload
+(`frr.cpio.zst`, `qemu-img.cpio.zst`, `ipmitool.cpio.zst`), the `vmlinuz`
+whose modules the base carries, and `SHA256SUMS` over all of them. The boot
+loader loads the base and, after it, only the payloads that the run needs.
+The kernel unpacks them over each other (ISOLINUX
+`initrd=/boot/base.cpio.zst,/boot/frr.cpio.zst`, GRUB
+`initrd /boot/base.cpio.zst /boot/frr.cpio.zst`).
+
+| Payload | Load it for |
+|---|---|
+| `frr` | FRR network mode (`asn_server` with `underlay_ip` or `underlay_subnet`, no `NETWORK_MODE=gobgp`) |
+| `qemu-img` | a qcow2 image |
+| `ipmitool` | `WATCHDOG_ENABLE` with `WATCHDOG_IPMI_FALLBACK` |
+
+Each payload archive carries `/etc/booty/payloads/<name>` with the build
+ID, and BOOTy refuses a payload of another build (`BOOTY-PAY-002`). A run
+that needs a payload the boot loader did not load fails with
+`BOOTY-PAY-001` ([docs/failure-codes.md](docs/failure-codes.md)). PR
+artifacts (`booty-pr-split`) and releases (`split-<arch>-<part>.cpio.zst`)
+publish the archives; the other targets are unchanged.
 
 The build stages use Debian 13 (trixie) packages. The kernel and its modules
 come from the Debian-signed `linux-image-amd64` (or `linux-image-arm64`) of

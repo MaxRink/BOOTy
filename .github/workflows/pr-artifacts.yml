@@ -79,6 +79,25 @@ jobs:
           build_iso full iso booty.iso 68
           build_iso gobgp gobgp-iso booty-gobgp.iso 63
 
+          # Split ramdisk: base plus one archive per payload (pkg/payload).
+          docker buildx build --platform linux/amd64 --target split \
+            --build-arg "BOOTY_VERSION=pr" \
+            --build-arg "BOOTY_BUILD=${HEAD_SHA}" \
+            --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" \
+            --build-arg "BOOTY_FLAVOR=full" \
+            --build-arg "SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}" \
+            --output "type=local,dest=out-split" -f initrd.Dockerfile .
+          (cd out-split && sha256sum -c --quiet SHA256SUMS)
+          {
+            echo "### Split ramdisk"
+            echo
+            echo "| Archive | Bytes |"
+            echo "|---|---:|"
+            for f in out-split/*.cpio.zst; do
+              echo "| $(basename "$f") | $(stat -c%s "$f") |"
+            done
+          } >> "${GITHUB_STEP_SUMMARY}"
+
           python3 - <<'PY'
           import datetime
           import hashlib
@@ -152,6 +171,21 @@ jobs:
             out-gobgp-iso/booty-gobgp.iso
             out-gobgp-iso/booty-gobgp.iso.sha256
             booty-pr-artifacts.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish split ramdisk artifact
+        if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: booty-pr-split
+          path: |
+            out-split/base.cpio.zst
+            out-split/frr.cpio.zst
+            out-split/qemu-img.cpio.zst
+            out-split/ipmitool.cpio.zst
+            out-split/vmlinuz
+            out-split/SHA256SUMS
           if-no-files-found: error
           retention-days: 14
 
