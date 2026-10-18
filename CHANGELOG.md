@@ -371,6 +371,16 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   documented (#665)
 - Standby: the `completed` ACK of a deprovision command names the disks in
   use that the wipe of all disks skipped, like the success status (#679)
+- Standby picks up commands faster (#716): the command poll is a long poll
+  (`GET COMMANDS_URL?wait=20`; CAPRF holds it until a command is queued, at
+  most 25 s), the next poll starts 10 s after the start of the previous one
+  (also after a failed poll, at once when the poll took longer), and after a
+  poll that returned commands after 1 s or the rest of the 10 s, whichever is
+  shorter. Heartbeats run in their own goroutine, so a long poll does not
+  delay them; they pause while a command runs. The disk settle wait is skipped when the set
+  of block devices did not change since the last settle in the same boot, the
+  2 s pause before the handoff (kexec, reboot, power off) is removed, and the
+  standby start logs `memTotalMiB` and `memAvailableMiB`.
 - Token renewal and expiry: `TOKEN_RENEW_MARGIN_SECONDS`,
   `TOKEN_RENEW_RETRIES` and `TOKEN_RENEW_BACKOFF_SECONDS` control the
   `TOKEN_URL` renewal; `TOKEN_EXPIRES_IN` and `TOKEN_EXPIRES_AT` name the expiry
@@ -542,6 +552,9 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   now fails the run (#636).
 - Hosts without an IPMI NIC get a different router MAC (#583, #592).
 - `EXTRA_KERNEL_PARAMS` now reaches the kernel command line (#594).
+- Standby long polls `COMMANDS_URL` for 20 s (#716). A proxy or load balancer
+  in front of CAPRF with an idle timeout under 20 s breaks standby at boot: the
+  first poll fails, and BOOTy ends the run.
 
 ## [0.2.0-rc.15] - 2026-10-07
 

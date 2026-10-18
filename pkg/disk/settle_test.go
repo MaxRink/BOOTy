@@ -36,6 +36,34 @@ func TestWaitForStableDisksWaitsForLateDisk(t *testing.T) {
 	}
 }
 
+// A second wait, for example of the next standby command on a copy of the
+// manager, returns at once while the device set did not change.
+func TestWaitForStableDisksOncePerDeviceSet(t *testing.T) {
+	sysfs := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(sysfs, "block", "nvme0n1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(newMockCommander())
+	m.SetSysfsRoot(sysfs)
+	stable := 200 * time.Millisecond
+	m.WaitForStableDisks(context.Background(), stable, 5*time.Millisecond, 5*time.Second)
+
+	start := time.Now()
+	m.WithQuickWipe(true).WaitForStableDisks(context.Background(), stable, 5*time.Millisecond, 5*time.Second)
+	if d := time.Since(start); d >= stable {
+		t.Fatalf("second wait took %v, want an immediate return", d)
+	}
+
+	if err := os.MkdirAll(filepath.Join(sysfs, "block", "sda"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	start = time.Now()
+	m.WaitForStableDisks(context.Background(), stable, 5*time.Millisecond, 5*time.Second)
+	if d := time.Since(start); d < stable {
+		t.Fatalf("wait after a new disk took %v, want a new stable window", d)
+	}
+}
+
 func TestWaitForStableDisksDisabledAndBounded(t *testing.T) {
 	m := NewManager(newMockCommander())
 	m.SetSysfsRoot(t.TempDir())

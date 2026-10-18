@@ -1067,12 +1067,16 @@ func TestClientFetchCommands(t *testing.T) {
 		if r.Method != http.MethodGet {
 			t.Errorf("expected GET, got %s", r.Method)
 		}
+		// The long poll wait is added, the query of COMMANDS_URL is kept.
+		if got := r.URL.RawQuery; got != "machine=m1&wait=20" {
+			t.Errorf("query = %q, want machine=m1&wait=20", got)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`[{"ID":"cmd-1","Type":"provision","Payload":null}]`))
 	}))
 	defer srv.Close()
 
-	client := NewFromConfig(&config.MachineConfig{Agent: config.AgentConfig{CommandsURL: srv.URL}})
+	client := NewFromConfig(&config.MachineConfig{Agent: config.AgentConfig{CommandsURL: srv.URL + "?machine=m1"}})
 	cmds, err := client.FetchCommands(context.Background())
 	if err != nil {
 		t.Fatal(err)

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -20,12 +21,19 @@ import (
 // a disk can appear after the first look at /sys/block. A timeout is only
 // logged: the caller works with the disks there are.
 // poll is the interval between two looks at /sys/block.
+// After the devices settled once, a later call (the next standby command,
+// on this manager or a copy of it) returns at once while the set is the
+// same: the devices have been stable since then.
 func (m *Manager) WaitForStableDisks(ctx context.Context, stable, poll, maxWait time.Duration) {
 	if maxWait <= 0 {
 		return
 	}
 	deadline := time.Now().Add(maxWait)
 	last := m.blockDevices()
+	if m.settled != nil && m.settled.same(last) {
+		slog.Info("block devices unchanged since they settled", "devices", last)
+		return
+	}
 	since := time.Now()
 	for time.Since(since) < stable {
 		if time.Now().After(deadline) {
@@ -43,6 +51,28 @@ func (m *Manager) WaitForStableDisks(ctx context.Context, stable, poll, maxWait 
 		}
 	}
 	slog.Info("block devices settled", "devices", last)
+	if m.settled != nil {
+		m.settled.set(last)
+	}
+}
+
+// settledDisks is the block device set that WaitForStableDisks saw settle.
+// Copies of a Manager share it.
+type settledDisks struct {
+	mu    sync.Mutex
+	names []string
+}
+
+func (s *settledDisks) same(names []string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.names != nil && slices.Equal(s.names, names)
+}
+
+func (s *settledDisks) set(names []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.names = slices.Clone(names)
 }
 
 func (m *Manager) blockDevices() []string {

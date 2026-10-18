@@ -128,7 +128,7 @@ func measureAgentCycle(t *testing.T, kernel, image string) (boot, agent cycleRun
 		t.Fatalf("acks = %+v, want d1 and p1 completed", acks)
 	}
 	for _, l := range vm.lines {
-		if strings.Contains(l.text, "standby memory") {
+		if strings.Contains(l.text, "memAvailableMiB") {
 			t.Logf("RAM footprint: %s", l.text)
 		}
 	}

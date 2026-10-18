@@ -385,6 +385,12 @@ func (c *Client) ReportFirmware(ctx context.Context, data []byte) error {
 	return c.postJSONWithAuth(ctx, c.cfg.Provision.Firmware.URL, data)
 }
 
+// CommandsWait is how long the CAPRF server may hold a command poll open
+// until a command arrives (long poll, query parameter wait in seconds). It
+// stays below the 30 second client timeout. A server that does not support
+// the parameter answers at once; standby then polls at its interval.
+const CommandsWait = 20 * time.Second
+
 // FetchCommands polls the CAPRF server for pending commands.
 // Returns nil if no commands URL is configured.
 func (c *Client) FetchCommands(ctx context.Context) ([]config.Command, error) {
@@ -395,7 +401,7 @@ func (c *Client) FetchCommands(ctx context.Context) ([]config.Command, error) {
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.cfg.Agent.CommandsURL, http.NoBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, longPollURL(c.cfg.Agent.CommandsURL), http.NoBody)
 	if err != nil {
 		redacted := redactedURL(c.cfg.Agent.CommandsURL)
 		return nil, fmt.Errorf("create commands request %s: %w", redacted, redactedURLError(c.cfg.Agent.CommandsURL, err))
@@ -423,6 +429,22 @@ func (c *Client) FetchCommands(ctx context.Context) ([]config.Command, error) {
 		return nil, fmt.Errorf("decode commands: %w", err)
 	}
 	return cmds, nil
+}
+
+// longPollURL adds wait=<CommandsWait seconds> to the commands URL. An
+// unparsable URL is returned as it is, so the request reports the error.
+func longPollURL(raw string) string {
+	u, err := neturl.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	q := u.Query()
+	q.Set("wait", strconv.Itoa(int(CommandsWait/time.Second)))
+	// q.Encode() sorts the keys and re-escapes the values, so a COMMANDS_URL
+	// with a signed query (a signature over the exact query string) no
+	// longer verifies. CAPRF URLs carry no query.
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // AcknowledgeCommand reports command execution result back to the CAPRF server.

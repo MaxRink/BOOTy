@@ -660,7 +660,8 @@ func runCAPRF(ctx context.Context) {
 		if !kexeced && provision.ShouldKeepTargetRootMountedForKexec(cfg, provisionErr.FirmwareChanged) {
 			cleanupFailedKexecTarget(diskMgr)
 		}
-		time.Sleep(2 * time.Second)
+		// No pause here: the handoff closes the CAPRF log handler, and
+		// that drains the queued log lines (at most 5 s) before it acts.
 		handleProvisionHandoff(ctx, cfg, client, provisionErr, kexeced, provisionHandoff)
 		return
 	}

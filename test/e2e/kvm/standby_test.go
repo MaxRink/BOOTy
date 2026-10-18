@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -42,10 +43,7 @@ func (f *fakeCAPRF) agentRoutes(mux *http.ServeMux) {
 		if !authorized(w, r) {
 			return
 		}
-		f.mu.Lock()
-		cmds := f.commands
-		f.commands = nil
-		f.mu.Unlock()
+		cmds := f.claimCommands(r)
 		if len(cmds) == 0 {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -76,6 +74,24 @@ func (f *fakeCAPRF) agentRoutes(mux *http.ServeMux) {
 		f.mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 	})
+}
+
+// claimCommands returns and removes the queued commands. With the query
+// wait=<seconds> (long poll) it waits up to that long for a command, like
+// the CAPRF agent endpoint.
+func (f *fakeCAPRF) claimCommands(r *http.Request) []agentCommand {
+	wait, _ := strconv.Atoi(r.URL.Query().Get("wait"))
+	deadline := time.Now().Add(time.Duration(wait) * time.Second)
+	for {
+		f.mu.Lock()
+		cmds := f.commands
+		f.commands = nil
+		f.mu.Unlock()
+		if len(cmds) > 0 || !time.Now().Before(deadline) || r.Context().Err() != nil {
+			return cmds
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 func (f *fakeCAPRF) queueCommand(cmd agentCommand) {

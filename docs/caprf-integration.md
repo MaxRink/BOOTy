@@ -95,7 +95,7 @@ changed.
 | `deprovision`, `hard` | Wipes the disks and removes the EFI boot entries. Without a disk override it wipes every disk. |
 | `soft-deprovision`, `soft` | Renames `grub.cfg` to `grub.cfg.bak` in `/boot/grub` and `/boot/grub2` on the installed root. The disk is not wiped. An existing `grub.cfg.bak` counts as done, so a rerun succeeds. If no `grub.cfg` or `grub.cfg.bak` exists, or the root cannot be unmounted after the rename, BOOTy reports an error, not success. |
 | `decommission` | Wipes every disk and removes every EFI boot entry in `BootOrder`. Failures are logged and do not stop the run. CAPRF uses this mode for the `force-clean` annotation. |
-| `standby` | Sends a heartbeat to `HEARTBEAT_URL` every 30 seconds and polls `COMMANDS_URL` every 10 seconds. It runs the `provision`, `deprovision`, `reboot` and `health-check` commands. Both URLs are required. See [Agent mode contract](#agent-mode-contract). |
+| `standby` | Sends a heartbeat to `HEARTBEAT_URL` every 30 seconds and long polls `COMMANDS_URL` (`?wait=20`), at most every 10 seconds. It runs the `provision`, `deprovision`, `reboot` and `health-check` commands. Both URLs are required. See [Agent mode contract](#agent-mode-contract). |
 | `dry-run` | Runs read-only checks (configuration, image, disk, EFI, health) and reports the result. It does not set up the network and does not write to disks. `DRY_RUN=true` selects this mode. |
 | `check` | Runs the hardware health checks and reports the result. |
 
@@ -156,7 +156,7 @@ paths are the ones of the CAPRF agent endpoints
 | Method and path | BOOTy variable | Request | Response |
 |-----------------|----------------|---------|----------|
 | `POST /agent/heartbeat` | `HEARTBEAT_URL` | `text/plain` body `heartbeat` | `2xx`. BOOTy logs a failure and sends the next heartbeat 30 seconds later. |
-| `GET /agent/commands` | `COMMANDS_URL` | No body | `204`: no command. `200`: a JSON array of commands, at most 1 MiB. Other codes count as a failed poll; BOOTy logs it and polls again 10 seconds later. |
+| `GET /agent/commands` | `COMMANDS_URL` with `?wait=20` added | No body | A long poll: the server may hold the request until a command is queued or the wait ends. `204`: no command. `200`: a JSON array of commands, at most 1 MiB. Other codes count as a failed poll; BOOTy logs it. The next poll starts 10 seconds after the start of the previous one (at once when the poll took longer, also after a failed poll), and after a poll that returned commands, after 1 second or the rest of the 10 seconds, whichever is shorter. |
 | `POST /agent/commands/ack` | `COMMANDS_URL` + `/ack` | JSON `{"id": "...", "status": "completed" or "failed", "message": "..."}` | `2xx`. BOOTy logs a failed ACK and does not send it again. |
 
 Rules:
@@ -171,11 +171,18 @@ Rules:
   command once and sends one ACK for it.
 - `payload` is optional. It is base64 in JSON, like a Go `[]byte`. The
   decoded payload has lines in the [vars file format](configuration.md#vars-file-format).
-- BOOTy sends no heartbeat while a `provision` or `deprovision` command
-  runs. CAPRF must not mark the agent unhealthy before the command ACK.
+- Heartbeats pause while a command runs; a heartbeat that already started
+  may still arrive. CAPRF must not mark the agent unhealthy before the
+  command ACK.
 
 At start, standby sends `standby` to `INIT_URL`, one heartbeat and one
-command poll. If one of them fails, the run fails. Then it loops.
+command poll. If one of them fails, the run fails. Then it loops. The
+heartbeats run in their own goroutine, so a long poll does not delay them.
+At start BOOTy logs `memTotalMiB` and `memAvailableMiB`.
+
+A proxy or load balancer between BOOTy and CAPRF must not close an idle
+request before 20 seconds: with a shorter idle timeout the first long poll
+fails and standby ends at boot.
 
 ### Command payload
 

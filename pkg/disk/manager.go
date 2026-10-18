@@ -57,6 +57,8 @@ type Manager struct {
 	// eraseFallbacks are the disks that got the plain wipe instead of the
 	// secure erase.
 	eraseFallbacks []string
+	// settled is shared by the copies. See WaitForStableDisks.
+	settled *settledDisks
 }
 
 // SetLegacyCAPRFSelection makes DetectDisk select the target disk like
@@ -72,7 +74,7 @@ func NewManager(cmd Commander) *Manager {
 	if cmd == nil {
 		cmd = &ExecCommander{}
 	}
-	return &Manager{cmd: cmd, sysfsRoot: "/sys"}
+	return &Manager{cmd: cmd, sysfsRoot: "/sys", settled: &settledDisks{}}
 }
 
 // SetSysfsRoot changes the sysfs root that disk discovery reads, "/sys" by
@@ -97,7 +99,7 @@ func newManagerWithSysfs(cmd Commander, sysfsRoot string) *Manager {
 	if cmd == nil {
 		cmd = &ExecCommander{}
 	}
-	return &Manager{cmd: cmd, sysfsRoot: sysfsRoot}
+	return &Manager{cmd: cmd, sysfsRoot: sysfsRoot, settled: &settledDisks{}}
 }
 
 // Partition represents a single disk partition from sfdisk output.
