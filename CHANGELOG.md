@@ -463,6 +463,7 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 
 ### Fixes
 
+- bfd: a detection time without packets forgets the remote discriminator in every state, and the peer's Demand mode stops the periodic packets (RFC 5880) (#749)
 - GoBGP mode: an L3VNI provision VNI without `provision_gateway` (bm4x IPv6
   provisioning network) selects Type-5 only, instead of failing with
   `provision gateway is required for GoBGP VXLAN data plane` (#662).

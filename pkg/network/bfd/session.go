@@ -31,6 +31,9 @@ type Session struct {
 	remoteMinRx      time.Duration
 	remoteDesiredTx  time.Duration
 	remoteDetectMult uint8
+	// remoteDemand is the Demand (D) bit of the last received packet
+	// (bfd.RemoteDemandMode).
+	remoteDemand bool
 
 	// desiredTx is the advertised DesiredMinTxInterval: slowTx until Up.
 	desiredTx time.Duration
@@ -78,6 +81,7 @@ func (s *Session) Receive(p *Packet, now time.Time) bool {
 	s.remoteMinRx = us(p.RequiredMinRxUS)
 	s.remoteDesiredTx = us(p.DesiredMinTxUS)
 	s.remoteDetectMult = p.DetectMult
+	s.remoteDemand = p.Demand
 	if p.Final && s.polling {
 		s.polling = false
 		s.curRx = s.timers.RequiredMinRx
@@ -139,25 +143,33 @@ func (s *Session) DetectionTime() time.Duration {
 }
 
 // CheckTimeout moves an Init or Up session to Down when no packet arrived
-// within the detection time, and reports a state change.
+// within the detection time, and reports a state change. In every state,
+// a detection time without packets also forgets the remote session: the
+// remote discriminator (RFC 5880 6.8.1, bfd.RemoteDiscr: MUST be zero) and
+// the remote Required Min RX (6.8.18: SHOULD be reset to 1 microsecond).
 func (s *Session) CheckTimeout(now time.Time) bool {
-	if (s.state != StateInit && s.state != StateUp) || s.lastRx.IsZero() {
+	if s.lastRx.IsZero() || now.Sub(s.lastRx) <= s.DetectionTime() {
 		return false
 	}
-	if now.Sub(s.lastRx) <= s.DetectionTime() {
+	s.remoteDiscr = 0
+	s.remoteMinRx = time.Microsecond
+	s.remoteDemand = false
+	if s.state != StateInit && s.state != StateUp {
 		return false
 	}
 	s.down(DiagTimeExpired)
-	// Without packets the remote discriminator is no longer known
-	// (RFC 5880 6.8.1, bfd.RemoteDiscr).
-	s.remoteDiscr = 0
 	return true
 }
 
 // TxInterval is the interval between periodic packets before jitter
-// (RFC 5880 6.8.7). It is 0 when the peer asked for no packets.
+// (RFC 5880 6.8.7). It is 0 when the peer asked for no packets: its
+// Required Min RX is zero, or Demand mode is active on the peer (both
+// sides Up) and no Poll Sequence is running.
 func (s *Session) TxInterval() time.Duration {
 	if s.remoteMinRx == 0 {
+		return 0
+	}
+	if s.remoteDemand && s.state == StateUp && s.remoteState == StateUp && !s.polling {
 		return 0
 	}
 	return max(s.desiredTx, s.remoteMinRx)

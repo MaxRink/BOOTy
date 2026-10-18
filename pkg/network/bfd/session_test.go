@@ -189,3 +189,58 @@ func TestJitter(t *testing.T) {
 		}
 	}
 }
+
+// RFC 5880 6.8.1 and 6.8.18: a detection time without packets forgets the
+// remote session in every state, also in Down, so the next packet goes out
+// with Your Discriminator 0 and the slow interval. Before, a session that
+// went Down by a remote Down kept the old discriminator of a peer that
+// then restarted.
+func TestSessionForgetsRemoteAfterDetectionTime(t *testing.T) {
+	now := time.Unix(100, 0)
+	s := NewSession(fabric, 11)
+	s.Receive(remote(StateDown, 0), now) // Init
+	bye := remote(StateAdminDown, 11)
+	bye.RequiredMinRxUS = 2000000
+	s.Receive(bye, now) // Down, diag 3; the peer then goes silent
+	if s.State() != StateDown || s.RemoteDiscriminator() != 77 || s.TxInterval() != 2*time.Second {
+		t.Fatalf("setup: %s discr %d interval %s", s.State(), s.RemoteDiscriminator(), s.TxInterval())
+	}
+	if s.CheckTimeout(now.Add(s.DetectionTime())) || s.RemoteDiscriminator() != 77 {
+		t.Fatal("remote session forgotten before the detection time")
+	}
+	if s.CheckTimeout(now.Add(s.DetectionTime() + time.Millisecond)) {
+		t.Error("a Down session reported a state change")
+	}
+	if s.RemoteDiscriminator() != 0 {
+		t.Errorf("remote discriminator %d after the detection time, want 0", s.RemoteDiscriminator())
+	}
+	if s.TxInterval() != time.Second {
+		t.Errorf("interval %s after the detection time, want 1 s (remote Required Min RX reset)", s.TxInterval())
+	}
+	if p := s.Packet(); p.YourDiscriminator != 0 {
+		t.Errorf("Your Discriminator %d, want 0", p.YourDiscriminator)
+	}
+}
+
+// RFC 5880 6.8.7: no periodic packets while Demand mode is active on the
+// peer (D bit, both Up), except during a Poll Sequence.
+func TestSessionNoPeriodicPacketsInRemoteDemandMode(t *testing.T) {
+	now := time.Now()
+	s := NewSession(fabric, 11)
+	s.Receive(remote(StateInit, 11), now) // Up, our Poll Sequence runs
+	demand := remote(StateUp, 11)
+	demand.Demand = true
+	s.Receive(demand, now)
+	if s.TxInterval() == 0 {
+		t.Fatal("periodic packets stopped during our Poll Sequence")
+	}
+	demand.Final = true
+	s.Receive(demand, now)
+	if s.TxInterval() != 0 {
+		t.Fatalf("interval %s in remote Demand mode, want 0", s.TxInterval())
+	}
+	s.Receive(remote(StateUp, 11), now)
+	if s.TxInterval() == 0 {
+		t.Fatal("periodic packets did not resume after the peer left Demand mode")
+	}
+}
