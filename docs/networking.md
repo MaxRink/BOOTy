@@ -35,6 +35,7 @@ BOOTy selects one stack. The first match wins:
 
 | Order | Stack | Condition | Setup failure |
 |---|---|---|---|
+| 0 | Links | `NETWORK_MODE=links` (case-insensitive) | Fatal. No DHCP fallback. |
 | 1 | GoBGP | `NETWORK_MODE=gobgp` (case-insensitive), or netplan with an ASN and a VXLAN VNI | Fatal. No DHCP fallback. |
 | 2 | FRR | `asn_server` > 0 and `underlay_ip` or `underlay_subnet` is set | Fall back to DHCP |
 | 3 | Static | `STATIC_IP` is set | Tear down, then fall back to DHCP |
@@ -42,8 +43,9 @@ BOOTy selects one stack. The first match wins:
 
 Notes:
 
-- `NETWORK_MODE` accepts `gobgp`, `frr`, `static` and `dhcp`. Config
-  validation rejects other values. Only `gobgp` changes the selection. The
+- `NETWORK_MODE` accepts `gobgp`, `frr`, `static`, `dhcp` and `links`.
+  Config validation rejects other values. Only `links` and `gobgp` change
+  the selection. The
   values `frr`, `static` and `dhcp` do not force a stack. For example,
   `NETWORK_MODE=dhcp` with `asn_server` and `underlay_ip` still selects FRR.
 - Bond and VLAN are not stacks. They are link layers below the stack (see
@@ -957,6 +959,25 @@ Because `bond*` names are not physical NICs, DHCP does not run on `bond0`.
 
 Planned (#608): handle DHCP leases without a subnet mask and leases on
 retry.
+
+## Links mode
+
+`NETWORK_MODE=links` (YAML `network.mode: links`) is for checks that only
+need the link layer, such as the LLDP cable check. It is never selected
+automatically. It sets every physical NIC up with its IPv6 link-local
+address only: BOOTy writes `accept_ra=0` and `autoconf=0` first and reads
+them back, so no router advertisement adds an address or a route; a failed
+write fails the setup (a NIC with IPv6 off needs none). It runs no DHCP,
+adds no address or route and starts no BGP. A DHCP client would hang on fabric
+ports, which have no DHCP server. Links mode does not wait for
+connectivity (it logs that there is no routed network), so the CAPRF status
+and report URLs are not reachable in this mode. BOOTy still parses and
+validates the netplan files and `frr.conf` (a strict parse error fails),
+applies the netplan `set-name` renames, the predictable NIC names and the
+bonds and VLANs, and parses `VLANS`. It does not use the addressing keys:
+BGP, static addresses, EVPN and DHCP. `TestLinksModeLLDPQEMU`
+checks that the NICs send no IPv4 or ARP frame and no IPv6 frame from a
+non link-local address.
 
 ## Static mode
 

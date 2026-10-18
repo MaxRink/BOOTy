@@ -235,6 +235,12 @@ jobs:
             test_regex: "^TestPredictableNICNamesQEMU$"
             privileged: true
             setup: ""
+          - scenario: links-mode-lldp
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestLinksModeLLDPQEMU$"
+            privileged: true
+            setup: ""
           - scenario: flavor-storage-controllers
             qemu_extra: ""
             test_tag: e2e

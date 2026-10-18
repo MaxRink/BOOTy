@@ -121,3 +121,11 @@ func TestDisableNICFirmwareLLDP(t *testing.T) {
 		t.Fatalf("YAML network.lldp.disableFirmwareAgent false: %v", err)
 	}
 }
+
+func TestValidateLinksMode(t *testing.T) {
+	c := &Config{}
+	c.Network.Mode = "links"
+	if err := c.Validate(); err != nil {
+		t.Fatalf("network.mode links: %v", err)
+	}
+}

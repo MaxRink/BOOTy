@@ -541,6 +541,11 @@ func splitVLANEntry(entry string) ([]string, error) {
 	return fields, nil
 }
 
+// IsLinksMode returns true if links mode (link-local only) is requested.
+func (c *Config) IsLinksMode() bool {
+	return strings.EqualFold(c.NetworkMode, "links")
+}
+
 // IsGoBGPMode returns true if GoBGP mode is explicitly requested.
 func (c *Config) IsGoBGPMode() bool {
 	return strings.EqualFold(c.NetworkMode, "gobgp")

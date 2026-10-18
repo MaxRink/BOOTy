@@ -33,7 +33,8 @@ const (
 //   - Bond/VLAN/VRF sections: read regardless of mode (layered on top)
 type NetworkConfig struct {
 	// Mode selects the network stack implementation.
-	// Valid values: "gobgp", "frr", "static", "dhcp"
+	// Valid values: "gobgp", "frr", "static", "dhcp", "links" (all physical
+	// NICs up with IPv6 link-local only, no DHCP, no BGP)
 	// Default: "" (auto-detect: GoBGP > FRR > Static > DHCP based on which fields are set)
 	Mode string `yaml:"mode" json:"mode"`
 

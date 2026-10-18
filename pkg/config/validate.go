@@ -38,7 +38,7 @@ import (
 //   - Provision.FailureDomain and Provision.Region: valid Kubernetes label values
 //   - Provision.Disk.RAID[*]: valid level, unique non-empty name without /dev/ prefix,
 //     minimum device count per RAID level
-//   - Network.Mode: "gobgp", "frr", "static", "dhcp"
+//   - Network.Mode: "gobgp", "frr", "static", "dhcp", "links"
 //   - Network.BGP.PeerMode: "unnumbered", "dual", "numbered"
 //   - Network.BGP.UnderlayAF: "ipv4"
 //   - Network.BGP.OverlayType: "evpn-vxlan", "l3vpn", "none"
@@ -148,7 +148,7 @@ func (c *Config) validatePrimaryEnums() []string {
 			return validateEnum(c.Provision.Image.Mode, "provision.image.mode", ImageModeWholeDisk, ImageModePartition, ImageModeAB)
 		},
 		func() string {
-			return validateEnumLower(c.Network.Mode, "network.mode", "gobgp", "frr", "static", "dhcp")
+			return validateEnumLower(c.Network.Mode, "network.mode", "gobgp", "frr", "static", "dhcp", "links")
 		},
 		func() string {
 			return validateEnum(c.Network.LLDP.Profile, "network.lldp.profile (LLDP_PROFILE)", lldp.ProfileNetworkd, lldp.ProfileBM4XCableCheck)
