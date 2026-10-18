@@ -518,6 +518,11 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   --long` and with the files grouped by kind (modules, libraries,
   executables): default 0.98 MB, gobgp 0.52 MB, slim 0.21 MB smaller, at the
   same decompression speed (#757).
+- Lower size budgets: initramfs default 48, gobgp 43, slim 31, micro 11 MiB
+  (were 140, 100, 70, 20), PR ISOs default 68 and gobgp 63 MiB (were 180 and
+  140). `docs/size-optimization.md` has a boot time model (virtual media
+  throughput, decompression, module and network phases) and the list of
+  size and boot time candidates (#764).
 - Release and PR ISOs are reproducible per commit and get distinct volume,
   GPT and FAT IDs per commit (`SOURCE_DATE_EPOCH` = commit time); the MBR has
   an active entry for older BIOSes (#742).

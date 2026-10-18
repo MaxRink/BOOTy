@@ -1,5 +1,157 @@
 # Binary & Image Size Optimization
 
+## Boot time
+
+Boot time is the time from the BMC virtual media insert to "network
+ready": the BMC streams the boot loader, the kernel and the initramfs,
+the kernel decompresses itself and unpacks the initramfs, and BOOTy loads
+the kernel modules and brings up the network. The size work below serves
+this goal; CPU use may grow, build time does not matter, and no function
+may be lost.
+
+### Model
+
+```
+T(B) = S / B + D + M + N
+```
+
+- `S`: bytes that the firmware reads from the virtual media: the boot
+  loader, the kernel and the initramfs. UEFI reads shim (1,036,152
+  bytes) and GRUB (2,684,352) from the ESP; BIOS reads ISOLINUX
+  (157,636). The ESP does not hold the kernel or the initramfs, so
+  nothing is read twice.
+- `B`: virtual media throughput. **Assumption, not measured:** 2 to
+  10 MB/s, lower on BMCs with a 100 Mbit/s port (iDRAC up to 13G) or
+  with encrypted virtual media. No BMC in this repository's tests was
+  measured; verify per BMC model before using the absolute numbers below.
+
+**Assumption, not measured:** the model above holds for BMCs that map the
+image from a network share (HTTP, NFS or CIFS) and fetch only the blocks
+that the firmware reads, so other ISO files and padding do not count.
+It is false for BMCs that first copy the whole ISO, for example Lenovo
+XCC "mount from web" (the browser uploads the image to the BMC). For
+those:
+
+```
+T_upload(B_up) = I / B_up + S / B_local + D + M + N
+```
+
+- `I`: the whole ISO (default PR ISO about 64 MiB), uploaded at `B_up`
+  before the firmware can read anything. Every ISO byte counts, the BIOS
+  path, the ESP copy and padding included.
+- `B_local`: the read from the BMC's own storage, much faster than `B_up`
+  (not measured).
+
+With an upload the ISO size, not only `S`, sets the boot time: the
+initramfs savings below count in both models, a smaller boot loader only
+in the first.
+- `D`: in-kernel decompression of the initramfs, single-threaded.
+- `M`: module phase, `Run /init` to `starting BOOTy`.
+- `N`: network phase, `starting BOOTy` to `network connectivity
+  established`.
+
+Firmware POST and the kernel's own init do not depend on BOOTy and are
+left out. The Debian kernel is signed for Secure Boot, so its image
+(12,154,816 bytes, zstd inside the bzImage) stays as it is.
+
+### Codec measurements
+
+The default tree (188.5 MB raw amd64, 171.7 MB arm64). Sizes from the
+amd64 tree; in-kernel unpack time from the arm64 tree on the Debian 6.12
+kernel under QEMU with HVF on an Apple M2 (3 boots each, median). A
+server core is about half as fast. All codecs are built into the kernel
+(`CONFIG_RD_*=y`, `CONFIG_XZ_DEC_X86=y`).
+
+| Codec | default initramfs | in-kernel unpack (M2) |
+|---|---:|---:|
+| zstd -19 --long (before #757) | 47,639,831 | 0.256 s |
+| zstd --ultra -22 --long, files grouped (#757) | 46,663,569 | 0.264 s |
+| xz -9e, x86 BCJ, 64 MiB dictionary | 42,429,236 | 2.51 s |
+| xz -9e | 43,363,472 | 2.39 s |
+| gzip -9 | 61,560,557 | 0.50 s |
+| lz4 -l -12 | 74,938,002 | 0.11 s |
+
+xz saves 5.2 MB but costs about 4.5 s more on a server core: it is
+faster only below about 1.2 MB/s. zstd stays. `--long=28` would save
+another 0.36 MB but needs a 256 MiB window in early boot; not done.
+
+### Measured runtime phases
+
+arm64 default flavor of `main`, QEMU `virt` with HVF, 4 vCPUs, one
+virtio NIC, static network vars:
+
+| Phase | before | after | PR |
+|---|---:|---:|---|
+| `M` module phase | 2.48 s | 0.91 s | #758 |
+| console output during `M` | 48,804 bytes | 5,699 bytes | #758 |
+| `N` network phase (one NIC) | 3.15 s | 0.12 s | #760 |
+| disk settle in `detect-disk` / `select-deprovision-disk` | 2.03 s | 0.004 s | #762 |
+
+x86 KVM in CI (GitHub runners), same changes:
+
+| Measurement | main | with the PR | PR |
+|---|---:|---:|---|
+| `agent-cycle-timing` `network-bring-up`, agent boot | 3.50 s | 0.75 s | #760 |
+| `agent-cycle-timing` `detect-disk` and `select-deprovision-disk` | 2.01 s each | 2.01 s each (automatic selection and wipe of all disks keep the full window) | #762 |
+
+Whole CI test times are not used: they vary from 44 to 60 s across PRs
+that do not touch the measured code.
+
+The disk settle credit of #762 applies only when the selection waits for
+a named disk (`DISK_DEVICE`, `DISK_SERIAL_NUMBER`): an HBA with an
+asynchronous SCSI scan can present disks late, so the wipe of all disks,
+automatic selection and mirroring keep the full 2 s window. The arm64 row
+above names its disk.
+
+QEMU does not rate-limit its UART. A BMC serial-over-LAN UART at 115200
+baud takes about 87 us per byte. #758 removes about 27.5 KB of console
+output in `M` on x86 (43 KB on arm64), so it saves about 2.4 s more on an
+x86 server.
+
+### End to end
+
+Default flavor, UEFI, `S` = shim + GRUB + kernel + initramfs, `D + M + N`
+as measured above (VM, one NIC; 5.89 s before, 1.29 s after):
+
+| | S | 2 MB/s | 5 MB/s | 10 MB/s |
+|---|---:|---:|---:|---:|
+| before | 63,515,151 | 37.7 s | 18.6 s | 12.2 s |
+| after #757, #758, #759, #760 | 60,515,139 | 31.6 s | 13.4 s | 7.3 s |
+| saved | 3,000,012 | 6.1 s (16%) | 5.2 s (28%) | 4.9 s (40%) |
+
+The absolute numbers rest on the assumed `B` and on a BMC that reads
+only the blocks the firmware needs (see Model). On x86 hardware add about
+2.4 s for the console output. The disk settle saves up to 2 s per
+provision or deprovision that names its disk, after "network ready".
+
+### Candidates
+
+| Candidate | Tried | Gain | Decision |
+|---|---|---|---|
+| lldpd without the SNMP subagent | yes | default 2.28 MB, gobgp 2.09 MB | done, #759 |
+| zstd --ultra -22 --long, files grouped by kind | yes | default 0.98 MB, gobgp 0.52 MB, slim 0.21 MB | done, #757 |
+| Module load in dependency order, in parallel, one log line | yes | 1.6 s, 27.5 KB console on x86 (43 KB arm64) | done, #758 |
+| LLDP receive NIC detection in the background | yes | 3.0 s on single-NIC hosts | done, #760 |
+| Disk settle window counted from boot | yes | up to 2 s per run that names its disk | done, #762 (only for a named disk) |
+| xz or lz4 instead of zstd | measured | see codecs | rejected: slower above 1.2 MB/s |
+| Recompress or trim the kernel | no | | rejected: the Debian signature covers the image (Secure Boot), and all ISOs boot with Secure Boot |
+| Strip or compress kernel modules (9.0 MB of the default ramdisk) | no | | rejected: the module signature covers the file; a compressed module inside the compressed ramdisk is larger |
+| Drop `lldpcli -f xml` (`libxml2`) | measured | 0.75 MB | rejected: loses a function |
+| ipmitool without FreeIPMI | measured | 1.15 MB | rejected: loses the `-I free` interface |
+| Drop `vtysh` | measured | 2.05 MB | rejected: FRR mode and its diagnostics use it |
+| Merge `booty-esp-sync` into `init` | measured | 0.62 MB | rejected: it is installed on the target as its own binary |
+| Duplicate files (`ipmi_msghandler`, `ipmi_devintf` in two module dirs) | measured | under 1 KB after compression | not worth it |
+| Kernel `quiet` or `loglevel=5` on the ISO | estimated | 2 to 8 s of console output on hardware | not done: hides kernel messages that operators and the ISO tests read (Secure Boot state) |
+| GRUB `timeout=0` (UEFI) | no | 1 s | not done: removes the chance to edit the kernel command line |
+| Faster first retries of the connectivity check (1 s ticker) | no | about 0.4 s on average when the route comes up late | open |
+| DHCP single-NIC settle (3 s, same NIC wait as #760) | no | 3 s for single-NIC DHCP hosts | open: the wait guards the containerlab fabric |
+| Optional payloads as a second initrd | no | FRR 4.2 MB, qemu-img 2.3 MB, ipmitool 1.3 MB | open, see proposal-artifact-size.md |
+
+The CI size budgets (`test/e2e/build_flavours_e2e_test.go`,
+`.github/workflows/pr-artifacts.yml`) are set about 5% above `main` so a
+regression fails early.
+
+
 ## Benchmark Results
 
 Measured on Go 1.26.1 / linux/amd64, UPX 4.2.2.  

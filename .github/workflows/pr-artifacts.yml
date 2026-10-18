@@ -75,8 +75,9 @@ jobs:
             sha256sum "${out_dir}/${output}" > "${out_dir}/${output}.sha256"
           }
 
-          build_iso full iso booty.iso 180
-          build_iso gobgp gobgp-iso booty-gobgp.iso 140
+          # Hard caps in MiB, about 5% above main (docs/size-optimization.md).
+          build_iso full iso booty.iso 68
+          build_iso gobgp gobgp-iso booty-gobgp.iso 63
 
           python3 - <<'PY'
           import datetime
