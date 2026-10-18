@@ -480,15 +480,11 @@ COPY --from=kernel /modules/ modules/
 # Drop the libraries that no shipped executable loads, then check in a chroot
 # that every dynamic executable resolves its libraries from the tree alone.
 # Nothing may change the tree between this step and cpio.
-COPY hack/prune-initramfs-libs.sh /usr/local/bin/
+COPY hack/prune-initramfs-libs.sh hack/pack-initramfs.sh /usr/local/bin/
 RUN prune-initramfs-libs.sh .
 
 # Package initramfs
-RUN find . -print0 > ../initramfs.files \
-    && cpio --null -ov --format=newc < ../initramfs.files > ../initramfs.cpio \
-    && rm ../initramfs.files \
-    && zstd -19 --long ../initramfs.cpio -o /initramfs.cpio.zst \
-    && rm ../initramfs.cpio
+RUN pack-initramfs.sh . /initramfs.cpio.zst
 
 # ── ISO build stage (optional, triggered by --target=iso) ──────────────────
 # UEFI boot image: Debian shim (Microsoft UEFI CA) + Debian-signed GRUB,
@@ -598,15 +594,11 @@ COPY --from=kernel /modules/ modules/
 # Drop the libraries of the tools that slim does not ship, then check in a
 # chroot that every dynamic executable resolves its libraries from the tree
 # alone. Nothing may change the tree between this step and cpio.
-COPY hack/prune-initramfs-libs.sh /usr/local/bin/
+COPY hack/prune-initramfs-libs.sh hack/pack-initramfs.sh /usr/local/bin/
 RUN prune-initramfs-libs.sh .
 
 # Package slim initramfs
-RUN find . -print0 > ../initramfs.files \
-    && cpio --null -ov --format=newc < ../initramfs.files > ../initramfs.cpio \
-    && rm ../initramfs.files \
-    && zstd -19 --long ../initramfs.cpio -o /initramfs.cpio.zst \
-    && rm ../initramfs.cpio
+RUN pack-initramfs.sh . /initramfs.cpio.zst
 
 FROM scratch AS slim
 COPY --from=slim-builder /initramfs.cpio.zst .
@@ -711,17 +703,12 @@ COPY --from=kernel /modules/ modules/
 # Drop the libraries that no shipped executable loads, then check in a chroot
 # that every dynamic executable resolves its libraries from the tree alone.
 # Nothing may change the tree between this step and cpio.
-COPY hack/prune-initramfs-libs.sh /usr/local/bin/
+COPY hack/prune-initramfs-libs.sh hack/pack-initramfs.sh /usr/local/bin/
 RUN prune-initramfs-libs.sh .
 
-# Package GoBGP initramfs with zstd compression (no FRR binaries — GoBGP runs in-process)
-# zstd -19 achieves ~10–20% better ratio than gzip with much faster decompression.
-# The Debian kernel has CONFIG_RD_ZSTD=y built-in.
-RUN find . -print0 > ../initramfs.files \
-    && cpio --null -ov --format=newc < ../initramfs.files > ../initramfs.cpio \
-    && rm ../initramfs.files \
-    && zstd -19 --long ../initramfs.cpio -o /initramfs.cpio.zst \
-    && rm ../initramfs.cpio
+# Package GoBGP initramfs (no FRR binaries, GoBGP runs in-process). The
+# Debian kernel has CONFIG_RD_ZSTD=y built-in.
+RUN pack-initramfs.sh . /initramfs.cpio.zst
 
 FROM scratch AS gobgp
 COPY --from=gobgp-builder /initramfs.cpio.zst .

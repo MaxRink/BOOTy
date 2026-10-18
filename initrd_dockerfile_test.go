@@ -498,7 +498,7 @@ func TestDockerfilePrunesUnusedLibsBeforePacking(t *testing.T) {
 			continue
 		}
 		rest := instructions[prune+1:]
-		if len(rest) != 1 || !strings.HasPrefix(rest[0], "RUN find . -print0 > ../initramfs.files") || !strings.Contains(rest[0], "cpio --null") {
+		if len(rest) != 1 || rest[0] != "RUN pack-initramfs.sh . /initramfs.cpio.zst" {
 			t.Errorf("stage %s: only the cpio packaging may follow prune-initramfs-libs.sh, got %q", stage, rest)
 		}
 	}

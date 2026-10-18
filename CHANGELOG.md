@@ -507,6 +507,10 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   The initramfs no longer carries net-snmp and `libperl`: default 2.28 MB,
   gobgp 2.09 MB smaller. `lldpd` and `lldpcli` (including `-f xml`) work as
   before (#759).
+- The default, gobgp and slim initramfs are packed with `zstd --ultra -22
+  --long` and with the files grouped by kind (modules, libraries,
+  executables): default 0.98 MB, gobgp 0.52 MB, slim 0.21 MB smaller, at the
+  same decompression speed (#757).
 - Release and PR ISOs are reproducible per commit and get distinct volume,
   GPT and FAT IDs per commit (`SOURCE_DATE_EPOCH` = commit time); the MBR has
   an active entry for older BIOSes (#742).
