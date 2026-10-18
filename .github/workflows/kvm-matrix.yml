@@ -242,6 +242,15 @@ jobs:
             setup: |
               docker buildx build --platform linux/amd64 --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" --output type=local,dest=out-flavor -f initrd.Dockerfile .
               docker buildx build --platform linux/amd64 --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" --target kernel-image --output type=local,dest=out-flavor -f initrd.Dockerfile .
+          # Rescue shell over SSH (dropbear) in the default flavor.
+          - scenario: rescue-ssh
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestRescueSSHLoginQEMU$"
+            privileged: false
+            setup: |
+              docker buildx build --platform linux/amd64 --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" --output type=local,dest=out-flavor -f initrd.Dockerfile .
+              docker buildx build --platform linux/amd64 --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" --target kernel-image --output type=local,dest=out-flavor -f initrd.Dockerfile .
           # The published ISO on BIOS, UEFI (CD and USB) and UEFI Secure Boot
           # with the Microsoft keys (shim -> Debian GRUB -> Debian kernel),
           # and a kernel without signature that Secure Boot must refuse.
