@@ -179,6 +179,7 @@
   "EVPNL2Enabled": false,
   "EVPNType5Only": true,
   "EVPNType5OnlySet": false,
+  "EVPNResolveOverlayIndex": false,
   "EVPNL3VNIs": [
     3000
   ],

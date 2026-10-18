@@ -588,6 +588,7 @@ func applyFRRParams(frr *FRRParams, cfg *network.Config) {
 // only Type-5 routes, like FRR (advertise-all-vni yields Type-2/Type-3
 // routes for L2VNIs only), and its "network" lines are originated.
 func applyEVPNMode(frr *FRRParams, cfg *network.Config) {
+	cfg.EVPNResolveOverlayIndex = frr.ResolveOverlayIndex
 	if cfg.ProvisionVNI != 0 && slices.Contains(frr.L3VNIs, cfg.ProvisionVNI) {
 		cfg.EVPNType5Only = true
 		cfg.Type5Networks = type5Networks(frr.Model, cfg.ProvisionVNI)

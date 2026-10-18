@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/frrconf"
 )
 
@@ -420,5 +421,22 @@ func TestL3VNIAutoRouteTarget4ByteASN(t *testing.T) {
 	imp, exp := l3vniRouteTargets(model, 3000)
 	if strings.Join(imp, " ") != "32913:3000" || strings.Join(exp, " ") != "32913:3000" {
 		t.Fatalf("auto route targets = %v / %v, want 32913:3000", imp, exp)
+	}
+}
+
+// "enable-resolve-overlay-index" turns on the Type-5 gateway IP resolution.
+func TestParseFRRConfigBytes_ResolveOverlayIndex(t *testing.T) {
+	conf := "router bgp 65101\n address-family l2vpn evpn\n  advertise-all-vni\n  enable-resolve-overlay-index\n exit-address-family\nexit\n"
+	params, err := ParseFRRConfigBytes([]byte(conf))
+	if err != nil {
+		t.Fatalf("ParseFRRConfigBytes: %v", err)
+	}
+	if !params.ResolveOverlayIndex {
+		t.Fatal("ResolveOverlayIndex = false, want true")
+	}
+	cfg := &network.Config{}
+	applyEVPNMode(params, cfg)
+	if !cfg.EVPNResolveOverlayIndex {
+		t.Fatal("EVPNResolveOverlayIndex = false after applyEVPNMode")
 	}
 }

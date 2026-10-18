@@ -39,7 +39,7 @@ func TestType5NetlinkFailoverKeepsRoute(t *testing.T) {
 	overlay := NewOverlayTier(cfg)
 	overlay.log = slog.Default()
 
-	routeA, routeB := type5E2ERoute(t, 1, "192.0.2.1"), type5E2ERoute(t, 2, "192.0.2.2")
+	routeA, routeB := type5E2ERoute(t, 1), type5E2ERoute(t, 2)
 	macA, macB := mustParseMAC(t, "02:00:00:00:00:a1"), mustParseMAC(t, "02:00:00:00:00:b2")
 
 	overlay.handleType5Route(routeA, "192.0.2.1", macA, false)
@@ -124,13 +124,15 @@ func setupType5E2ELinks(t *testing.T, cfg *Config) (bridge, vxlan netlink.Link) 
 	return bridge, vxlan
 }
 
-func type5E2ERoute(t *testing.T, rdAssigned uint32, gw string) *apipb.EVPNIPPrefixRoute {
+// type5E2ERoute is a default route without a gateway IP: the VTEP is the
+// gateway, like the routes FRR sends.
+func type5E2ERoute(t *testing.T, rdAssigned uint32) *apipb.EVPNIPPrefixRoute {
 	t.Helper()
 	rd, err := anypb.New(&apipb.RouteDistinguisherTwoOctetASN{Admin: 65000, Assigned: rdAssigned})
 	if err != nil {
 		t.Fatalf("anypb.New: %v", err)
 	}
-	return &apipb.EVPNIPPrefixRoute{Rd: rd, IpPrefix: "0.0.0.0", IpPrefixLen: 0, GwAddress: gw}
+	return &apipb.EVPNIPPrefixRoute{Rd: rd, IpPrefix: "0.0.0.0", IpPrefixLen: 0, GwAddress: "0.0.0.0"}
 }
 
 func type5E2EDefaultRoutes(t *testing.T) []netlink.Route {

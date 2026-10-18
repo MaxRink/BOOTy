@@ -723,6 +723,8 @@ func (p *parser) afStatement(f []string) error {
 		af.AdvertiseAllVNI = true
 	case is(f, "advertise-default-gw") && evpn:
 		af.AdvertiseDefaultGW = true
+	case is(f, "enable-resolve-overlay-index") && evpn:
+		af.ResolveOverlayIndex = true
 	case has(f, "vni") && len(f) == 2 && evpn:
 		vni, err := parseUint32(f[1], "VNI")
 		if err != nil {

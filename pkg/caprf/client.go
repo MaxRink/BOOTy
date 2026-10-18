@@ -1803,6 +1803,8 @@ func applyFeatureToggle(cfg *config.MachineConfig, key, value string) (bool, err
 		cfg.Rescue.AutoMountDisks = parseBoolVar(value)
 	case "EVPN_L2_ENABLED":
 		cfg.Network.EVPN.L2Enabled = parseBoolVar(value)
+	case "EVPN_RESOLVE_OVERLAY_INDEX":
+		cfg.Network.EVPN.ResolveOverlayIndex = parseBoolVar(value)
 	case "EVPN_TYPE5_ONLY":
 		v := parseBoolVar(value)
 		cfg.Network.EVPN.Type5Only = &v

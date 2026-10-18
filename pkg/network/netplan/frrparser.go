@@ -22,6 +22,8 @@ type FRRParams struct {
 	NumberedPeersV6 []string // IPv6 addresses from "neighbor X remote-as" lines.
 	EVPN            bool     // True if "address-family l2vpn evpn" found.
 	AdvertiseAllVNI bool     // True if "advertise-all-vni" found.
+	// ResolveOverlayIndex is true if "enable-resolve-overlay-index" found.
+	ResolveOverlayIndex bool
 	// L3VNIs lists VNIs mapped to a VRF ("vni N" at top level for the default
 	// VRF or inside a "vrf" block). FRR advertises only Type-5 routes for them;
 	// advertise-all-vni produces Type-2/Type-3 routes for L2VNIs only.
@@ -80,6 +82,7 @@ func ParseFRRConfigBytesWith(data []byte, name string, strict bool) (*FRRParams,
 			if af.SAFI == "evpn" {
 				params.EVPN = true
 				params.AdvertiseAllVNI = params.AdvertiseAllVNI || af.AdvertiseAllVNI
+				params.ResolveOverlayIndex = params.ResolveOverlayIndex || af.ResolveOverlayIndex
 			}
 		}
 	}

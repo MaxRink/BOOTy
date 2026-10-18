@@ -381,6 +381,12 @@ type EVPNConfig struct {
 	// Default: false
 	L2Enabled bool `yaml:"l2Enabled" json:"l2Enabled"`
 
+	// ResolveOverlayIndex installs Type-5 routes with a gateway IP overlay
+	// index once a Type-2 route resolves the gateway, like FRR
+	// "enable-resolve-overlay-index". Needs l2Enabled.
+	// Default: false
+	ResolveOverlayIndex bool `yaml:"resolveOverlayIndex" json:"resolveOverlayIndex"`
+
 	// Type5Only enables direct EVPN Type-5 routing without an L2 gateway.
 	// In this mode provisionGateway is optional; remote VTEPs are reached
 	// through underlay BGP routes learned from the fabric.

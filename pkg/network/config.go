@@ -159,6 +159,10 @@ type Config struct {
 	EVPNType5Only bool
 	// EVPNType5OnlySet is true when EVPN_TYPE5_ONLY was given explicitly.
 	EVPNType5OnlySet bool
+	// EVPNResolveOverlayIndex installs Type-5 routes with a gateway IP
+	// overlay index once a Type-2 route resolves the gateway, like FRR
+	// "enable-resolve-overlay-index" (off by default).
+	EVPNResolveOverlayIndex bool
 	// EVPNL3VNIs lists the VNIs that the provisioner FRR config maps to a VRF.
 	// Set from netplan input only; an L3VNI provision VNI keeps Type-5 only.
 	EVPNL3VNIs []uint32

@@ -135,8 +135,11 @@ type AddressFamily struct {
 	Neighbors             []AFNeighbor
 
 	// l2vpn evpn only.
-	AdvertiseAllVNI      bool
-	AdvertiseDefaultGW   bool
+	AdvertiseAllVNI    bool
+	AdvertiseDefaultGW bool
+	// ResolveOverlayIndex is "enable-resolve-overlay-index": a Type-5
+	// gateway IP is resolved through Type-2 routes (FRR default off).
+	ResolveOverlayIndex  bool
 	AdvertiseIPv4Unicast bool
 	AdvertiseIPv6Unicast bool
 	RouteTargetImport    []string

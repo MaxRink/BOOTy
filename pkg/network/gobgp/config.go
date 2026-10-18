@@ -70,8 +70,12 @@ type Config struct {
 	NeighborAddrs     []string         // Explicit numbered peer IPs (dual/numbered modes)
 	RemoteASN         uint32           // Remote ASN for numbered peers (0 = same ASN → iBGP)
 	EnableL2          bool             // Enable L2 EVPN overlay (gate Type-2/3 route handling)
-	Type5Only         bool             // Use direct Type-5 routing without an L2 gateway
-	AuthPassword      string           // Optional TCP-MD5 password for BGP peers (empty = no auth)
+	// ResolveOverlayIndex resolves a Type-5 gateway IP overlay index through
+	// Type-2 routes, like FRR "enable-resolve-overlay-index". Without it a
+	// Type-5 route with a gateway IP is not installed, as in FRR.
+	ResolveOverlayIndex bool
+	Type5Only           bool   // Use direct Type-5 routing without an L2 gateway
+	AuthPassword        string // Optional TCP-MD5 password for BGP peers (empty = no auth)
 	// UnderlayAF selects the BGP address family for underlay sessions.
 	// Machine config accepts only ipv4; other parsed values are unsupported.
 	UnderlayAF string
@@ -196,6 +200,7 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		NeighborAddrs:        parseNeighborAddrs(netCfg.BGPNeighbors),
 		RemoteASN:            netCfg.BGPRemoteASN,
 		EnableL2:             netCfg.EVPNL2Enabled,
+		ResolveOverlayIndex:  netCfg.EVPNResolveOverlayIndex,
 		Type5Only:            netCfg.EVPNType5Only,
 		AuthPassword:         netCfg.BGPAuthPassword,
 		UnderlayAF:           netCfg.BGPUnderlayAF,
