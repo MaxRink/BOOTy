@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -109,9 +110,15 @@ func TestFlavorInitrdStorageControllersQEMU(t *testing.T) {
 	}
 	t.Logf("flavor QEMU run exited (%v). tail:\n%s", err, tail(out, 3000))
 
+	// BOOTy logs one line for all modules: msg="loaded kernel modules" ... modules="a.ko b.ko".
+	m := regexp.MustCompile(`msg="loaded kernel modules" .*modules="([^"]*)"`).FindSubmatch(out)
+	if m == nil {
+		t.Fatal("no loaded kernel modules line in the console log")
+	}
+	loaded := strings.Fields(string(m[1]))
 	for _, ko := range []string{"nvme.ko", "ahci.ko", "megaraid_sas.ko", "md-mod.ko", "raid1.ko", "raid456.ko", "efivarfs.ko"} {
-		if !strings.Contains(string(out), `msg="loaded kernel module" module=`+ko) {
-			t.Errorf("kernel module %s was not loaded", ko)
+		if !slices.Contains(loaded, ko) {
+			t.Errorf("kernel module %s was not loaded (loaded: %v)", ko, loaded)
 		}
 	}
 	assertProvisionSucceeded(t, out)

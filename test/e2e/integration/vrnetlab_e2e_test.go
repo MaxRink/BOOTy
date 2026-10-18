@@ -12,6 +12,8 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -678,11 +680,15 @@ func TestVrnetlabModulesLoaded(t *testing.T) {
 			vmProvision, provisioningMarker, logs)
 	}
 
+	// loadModules logs one line: msg="loaded kernel modules" ... modules="a.ko b.ko".
+	m := regexp.MustCompile(`msg="loaded kernel modules" .*modules="([^"]*)"`).FindStringSubmatch(logs)
+	if m == nil {
+		t.Fatalf("serial log for %s has no loaded kernel modules line", vmProvision)
+	}
+	loaded := strings.Fields(m[1])
 	for _, mod := range vrnetlabRequiredModules {
-		// loadModules logs: "loaded kernel module" with a "module=<name>.ko*" field.
-		field := "module=" + mod + ".ko"
-		if !strings.Contains(logs, "loaded kernel module") || !strings.Contains(logs, field) {
-			t.Errorf("module %q not loaded according to serial log — expected log entry with 'loaded kernel module' and %q", mod, field)
+		if !slices.Contains(loaded, mod+".ko") {
+			t.Errorf("module %q not loaded according to serial log (loaded: %v)", mod, loaded)
 		}
 	}
 }

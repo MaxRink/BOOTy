@@ -21,8 +21,6 @@ import (
 	"syscall"
 	"time"
 
-	"golang.org/x/sys/unix"
-
 	"github.com/telekom/BOOTy/pkg/caprf"
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/crash"
@@ -394,85 +392,6 @@ func setupMountsAndDevicesWith(m earlyInitMountManager, d earlyInitDeviceManager
 	}
 	if err := m.MountAll(); err != nil {
 		return fmt.Errorf("mount early filesystems: %w", err)
-	}
-	return nil
-}
-
-// loadModules loads kernel modules from /modules/ for server NICs and storage controllers.
-// Uses the finit_module syscall directly instead of shelling out to insmod.
-// Errors are non-fatal: modules may already be built-in or not needed.
-//
-// Module dependencies are resolved by retrying: modules that fail on the
-// first pass (e.g. virtio_net depends on virtio_pci → virtio → virtio_ring)
-// succeed on subsequent passes once their dependencies have been loaded.
-func loadModules() {
-	entries, err := os.ReadDir(moduleDir)
-	if err != nil {
-		slog.Debug("no kernel modules directory, skipping", "path", moduleDir)
-		return
-	}
-
-	// Collect all module paths.
-	var pending []string
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		// efivarfs fails with ENODEV without EFI firmware; skip it on BIOS.
-		if strings.HasPrefix(entry.Name(), "efivarfs.ko") {
-			if _, err := os.Stat(efiFirmwareDir); err != nil {
-				slog.Info("no EFI firmware, skipping kernel module", "module", entry.Name())
-				continue
-			}
-		}
-		pending = append(pending, entry.Name())
-	}
-
-	// Retry up to 5 passes to resolve dependency ordering.
-	const maxPasses = 5
-	for pass := range maxPasses {
-		var failed []string
-		for _, name := range pending {
-			ko := filepath.Join(moduleDir, name)
-			if err := loadModuleFn(ko); err != nil {
-				failed = append(failed, name)
-				if pass == maxPasses-1 {
-					// Visible at the default level: a missing driver often
-					// shows up later as "no disk" or "DHCP failed".
-					slog.Warn("kernel module failed to load", "module", name, "error", err)
-				}
-				continue
-			}
-			slog.Info("loaded kernel module", "module", name)
-		}
-		if len(failed) == 0 {
-			break
-		}
-		pending = failed
-	}
-}
-
-// Test seams for loadModules.
-var (
-	efiFirmwareDir = "/sys/firmware/efi"
-	moduleDir      = "/modules"
-	loadModuleFn   = loadModule
-)
-
-// loadModule loads a single kernel module via the finit_module syscall.
-// Returns nil when the module is already loaded or built-in (EEXIST).
-func loadModule(path string) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return fmt.Errorf("open module %s: %w", path, err)
-	}
-	defer func() { _ = f.Close() }()
-
-	if err := unix.FinitModule(int(f.Fd()), "", 0); err != nil {
-		if errors.Is(err, unix.EEXIST) {
-			return nil
-		}
-		return fmt.Errorf("finit_module %s: %w", filepath.Base(path), err)
 	}
 	return nil
 }

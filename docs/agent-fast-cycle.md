@@ -84,7 +84,7 @@ inject fabric faults during the stream.
 | CAPRF prepare: connect, ISO build, eject, insert, reset | 2 to 3 | controller steps |
 | firmware and ISO load (sushy virtual media) | about 6 | `rebootSystem` to kernel banner |
 | kernel to `/init` | 3.3 | console (`Run /init`) |
-| BOOTy module load | 5 | console (`loaded kernel module`, retries on `Unknown symbol`) |
+| BOOTy module load | 5 | console (before #758: one `loaded kernel module` line per module and retries on `Unknown symbol`; since #758: one `loaded kernel modules` line) |
 | network: BGP established, then connectivity | 12 to 16 | console |
 | disk settle (`detect-disk`) | 2.2 | console |
 | disk wipe | 3.1 | console |
@@ -242,7 +242,7 @@ Savings per cycle; "KVM" and "kindmetal" are measured in the cases above,
 | 4.9 | Network: BGP connect retry and idle hold timers, BFD is already on | kindmetal 7 to 11 s to `BGP established`, once per boot | coordinate with the networking owners |
 | 4.10 | Image stream throughput | kindmetal 140 s of the 180 s provision | `proposal-image-delivery.md` (PR #700) |
 | 4.11 | Preload the next image while idle | up to the whole stream (140 s kindmetal) when CAPRF knows the image | proposed, below |
-| 4.12 | Module load in dependency order (no `Unknown symbol` retries) | about 5 s per boot | coordinate with the kernel and size work |
+| 4.12 | Module load in dependency order (no `Unknown symbol` retries) | about 5 s per boot; measured 2.5 s to 0.9 s on a 4-CPU VM, plus 43 KB less console output | done (#758) |
 | 4.13 | CAPRF power state polling every 1 s instead of 3 s | about 1 s per power transition, 4 to 6 per cold cycle | CAPRF planned |
 
 ### kexec (4.7)
