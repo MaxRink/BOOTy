@@ -10,9 +10,12 @@ import (
 )
 
 // idleHoldAfterReset is the time in seconds a peer waits in Idle after
-// ResetPeer (BFD down) before it connects again. FRR waits
-// BGP_INIT_START_TIMER (1 s) after a session with a NOTIFICATION ends
-// (bgpd/bgp_fsm.c bgp_stop_with_notify); the GoBGP default is 30 s.
+// ResetPeer (BFD down) before it connects again; the GoBGP default is
+// 30 s. For a BFD reset of an Established session the peer restarter
+// bypasses it: it deletes and adds the peer at once when the session has
+// ended (restart.go). FRR waits BGP_INIT_START_TIMER (1 s) after a TCP
+// close and 2 s after a NOTIFICATION, where v_start doubles (bgp_fsm.c,
+// bgp_packet.c).
 const idleHoldAfterReset = 1
 
 // bgpTimers returns the configured BGP keepalive/hold timers.

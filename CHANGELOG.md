@@ -205,6 +205,12 @@ behaviour.
   provisions over TLS without `SKIP_TLS_VERIFY`. `TIME_SYNC=off` keeps the old
   behaviour. A certificate that is not valid at the local clock now gives an
   error that names the skew (`BOOTY-TIM-002`) (#713).
+- GoBGP mode starts a BGP peer again at once when its session ends and
+  BOOTy did not stop it (the leaf ends the session, BFD down, hold timer).
+  GoBGP held the peer 5 s in Idle and refused the leaf's connections
+  (osrg/gobgp#3735); a `clear bgp` on the leaf took up to 36 s, now about
+  as long as with FRR. Peers whose graceful restart routes GoBGP keeps
+  stay as they are (#745).
 
 ### Behaviour behind `CAPRF_LEGACY_COMPAT=true`
 

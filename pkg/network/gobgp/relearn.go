@@ -168,16 +168,13 @@ func (u *UnderlayTier) replaceInterfacePeer(ctx context.Context, iface, old, add
 	if err := u.moveNeighborSets(ctx, old, addr, !shared); err != nil {
 		return err
 	}
-	if err := u.bgp.DeletePeer(ctx, &apipb.DeletePeerRequest{Address: old}); err != nil {
-		return fmt.Errorf("delete peer %s: %w", old, err)
-	}
 	peer, _ := proto.Clone(conf).(*apipb.Peer)
 	peer.Conf.NeighborAddress = addr
 	if peer.Transport != nil {
 		peer.Transport.RemoteAddress = addr
 	}
-	if err := u.bgp.AddPeer(ctx, &apipb.AddPeerRequest{Peer: peer}); err != nil {
-		return fmt.Errorf("add peer %s: %w", addr, err)
+	if err := u.movePeer(ctx, old, peer); err != nil {
+		return err
 	}
 	u.peerMu.Lock()
 	u.ifacePeerConfs[iface] = peer
@@ -197,6 +194,25 @@ func (u *UnderlayTier) replaceInterfacePeer(ctx context.Context, iface, old, add
 		}
 	}
 	u.log.Info("unnumbered peer moved to the new link-local address of the switch", "interface", iface, "old", old, "new", addr)
+	return nil
+}
+
+// movePeer replaces the GoBGP peer at old with peer.
+func (u *UnderlayTier) movePeer(ctx context.Context, old string, peer *apipb.Peer) error {
+	u.peerOps.Lock()
+	defer u.peerOps.Unlock()
+	if err := u.bgp.DeletePeer(ctx, &apipb.DeletePeerRequest{Address: old}); err != nil {
+		return fmt.Errorf("delete peer %s: %w", old, err)
+	}
+	delete(u.peerConfs, old)
+	addr := peer.GetConf().GetNeighborAddress()
+	if err := u.bgp.AddPeer(ctx, &apipb.AddPeerRequest{Peer: peer}); err != nil {
+		return fmt.Errorf("add peer %s: %w", addr, err)
+	}
+	if u.peerConfs == nil {
+		u.peerConfs = map[string]*apipb.Peer{}
+	}
+	u.peerConfs[addr] = peer
 	return nil
 }
 

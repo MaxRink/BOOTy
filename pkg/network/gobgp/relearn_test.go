@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
 	"net/netip"
 	"os"
 	"slices"
@@ -90,7 +91,7 @@ func TestReplaceInterfacePeer(t *testing.T) {
 		}
 		peer := buildInterfacePeer(cfg, "lo", "fe80::1%lo", ipv4Families())
 		u.ifacePeerConfs["lo"] = peer
-		if err := s.AddPeer(ctx, &apipb.AddPeerRequest{Peer: peer}); err != nil {
+		if err := u.addPeer(ctx, peer); err != nil {
 			t.Fatal(err)
 		}
 		for name, list := range map[string][]string{"rm-in": {"fe80::1/128", "fe80::9/128"}, "other": {"fe80::9/128"}} {
@@ -131,6 +132,9 @@ func TestReplaceInterfacePeer(t *testing.T) {
 		}
 		if u.ifacePeer("lo") != "fe80::2%lo" || u.peerDev("fe80::2") != "lo" || u.ifacePeerConfs["lo"].GetConf().GetNeighborAddress() != "fe80::2%lo" {
 			t.Fatalf("maps not moved: %v %v", u.ifacePeers, u.peerDevs)
+		}
+		if _, ok := u.peerConfs["fe80::1%lo"]; ok || u.peerConfs["fe80::2%lo"] == nil {
+			t.Fatalf("peer restarter configurations not moved: %v", slices.Sorted(maps.Keys(u.peerConfs)))
 		}
 		if old := u.peerDev("fe80::1"); old == "lo" || (old == "") == shared {
 			t.Fatalf("shared=%v: old address maps to %q", shared, old)

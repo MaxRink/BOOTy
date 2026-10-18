@@ -148,7 +148,8 @@ func pick(got, want map[string]bfdView) map[string]bfdView {
 }
 
 // maxRestore bounds the time from a working link to ECMP again. FRR
-// connects 1 s after BFD down (BGP_INIT_START_TIMER); the GoBGP default
+// connects 2 s after BFD down (it sends a NOTIFICATION, so v_start
+// doubles BGP_INIT_START_TIMER); the GoBGP default
 // idle hold time after a reset is 30 s. BOOTy takes 3.6 to 4.7 s in CI; the
 // bound leaves room for slow CI runners (one run took 10.02 s, with a BFD
 // session that went down again right after Up, fixed in #703).
@@ -258,6 +259,48 @@ func TestProdTplCarrierLossPastBFD(t *testing.T) {
 			est := time.Since(start)
 			d := waitRoutesWithin(t, node, prodtplRoutesVia(prodtplUplinks...), maxRestore)
 			t.Logf("%s: session Established %s, ECMP back %s after the carrier came back", node.name,
+				est.Round(10*time.Millisecond), (est + d).Round(10*time.Millisecond))
+		})
+	}
+}
+
+// The leaf resets the session ("clear bgp", Cease/Administrative Reset).
+// FRR on the leaf and on the server waits 2 s (after a NOTIFICATION
+// v_start doubles the 1 s start timer) and accepts the other side's
+// connection meanwhile, so the session is up again in about 2 s on
+// the shadow node. GoBGP alone holds the peer 5 s in Idle and closes the
+// leaf's connections in that time (osrg/gobgp#3735: 36 s seen); BOOTy
+// starts the peer again at once, so the leaf session is Established again
+// within maxSession.
+func TestProdTplLeafClear(t *testing.T) {
+	for _, node := range prodtplServers {
+		t.Run(node.name, func(t *testing.T) {
+			port := node.leafPorts[0]
+			waitRoutes(t, node, prodtplRoutesVia(prodtplUplinks...))
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			before, err := prodtplNeighbor(ctx, prodtplLeaf, port)
+			if err != nil {
+				t.Fatal(err)
+			}
+			start := time.Now()
+			if out, err := prodtplExec(ctx, prodtplLeaf, "vtysh", "-c", "clear bgp "+port); err != nil {
+				t.Fatalf("leaf clear bgp %s: %v\n%s", port, err, out)
+			}
+			for {
+				n, err := prodtplNeighbor(ctx, prodtplLeaf, port)
+				if err == nil && n["bgpState"] == "Established" && n["connectionsEstablished"] != before["connectionsEstablished"] {
+					break
+				}
+				if time.Since(start) > maxSession {
+					t.Fatalf("%s: leaf session on %s %v (%v) %s after clear bgp, want Established within %s",
+						node.name, port, n["bgpState"], err, time.Since(start), maxSession)
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+			est := time.Since(start)
+			d := waitRoutesWithin(t, node, prodtplRoutesVia(prodtplUplinks...), maxRestore)
+			t.Logf("%s: session Established %s, ECMP back %s after clear bgp on the leaf", node.name,
 				est.Round(10*time.Millisecond), (est + d).Round(10*time.Millisecond))
 		})
 	}
