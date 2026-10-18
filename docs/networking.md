@@ -756,7 +756,7 @@ routes whose next hop is its own router ID.
 |---|---|
 | Type-5 | Installs an on-link kernel route for the prefix through the route gateway on the provision bridge, in the overlay VRF table when one is set. A gateway of `0.0.0.0` or `::` means the VTEP (next hop). With a router MAC, BOOTy also installs a neighbor entry for the gateway and an FDB entry `router MAC -> VTEP`. A withdraw removes them. Like zebra, every Type-5 route has protocol `bgp` and metric 20. A connected route of the same prefix (metric 0) stays next to it, and the kernel prefers the connected route; the Type-5 route takes over when the address goes away. An IPv6 prefix over an IPv4 VTEP is installed like zebra: gateway `::ffff:<VTEP>` and the neighbor entry `extern_learn NOARP`. BOOTy does not install a route for the prefix of a blackhole route; the static route wins, as in zebra. A withdraw always removes the route BOOTy installed. |
 | Type-2 (L2 only) | Installs the FDB entry `MAC -> VTEP`. A withdraw removes it. |
-| Type-3 (L2 only) | Installs the BUM FDB entry `00:00:00:00:00:00 -> VTEP`. A withdraw removes it. |
+| Type-3 (L2 only) | Installs the BUM FDB entry `00:00:00:00:00:00 -> VTEP` (the originating router IP of the route, like FRR) when the PMSI Tunnel attribute has tunnel type ingress replication. A route without the attribute or with another tunnel type gets no entry, like FRR, which disables flooding to that VTEP. A withdraw removes the entry. |
 
 ### Kernel state per mode
 

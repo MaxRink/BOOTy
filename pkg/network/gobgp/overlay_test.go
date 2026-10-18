@@ -808,6 +808,7 @@ func TestProcessRouteUpdateGuardAndL2Branches(t *testing.T) {
 		path := mustAddRouteTarget(t, mustMarshalPath(t, &apipb.EVPNInclusiveMulticastEthernetTagRoute{
 			IpAddress: "10.0.0.1",
 		}, "10.0.0.1", false))
+		path.Pattrs = append(path.Pattrs, mustPMSI(t, pmsiTunnelTypeIngressReplication))
 
 		overlay.processRouteUpdate(path)
 
@@ -4268,5 +4269,51 @@ func TestHandleType5RouteZebraMetricAndWithdraw(t *testing.T) {
 		if r.Gw == nil {
 			t.Fatalf("the withdraw for a blackhole prefix deleted a route without gateway: %+v", r)
 		}
+	}
+}
+
+func mustPMSI(t *testing.T, tunnelType uint32) *anypb.Any {
+	t.Helper()
+	a, err := anypb.New(&apipb.PmsiTunnelAttribute{Type: tunnelType, Label: 100, Id: net.ParseIP("10.0.0.1").To4()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a
+}
+
+// TestProcessRouteUpdateType3TunnelType checks the receive side of the PMSI
+// Tunnel attribute like FRR (evpn_zebra_install): a BUM entry only for
+// ingress replication; a missing attribute or another tunnel type gets
+// none, and removes an entry that an earlier update of the route added.
+func TestProcessRouteUpdateType3TunnelType(t *testing.T) {
+	const pimSSM = 3
+	newOverlay := func() (*OverlayTier, *mockOverlayNetlinkOps) {
+		mock := &mockOverlayNetlinkOps{}
+		return &OverlayTier{
+			cfg:        &Config{RouterID: "10.0.0.99", ASN: 65000, ProvisionVNI: 4000, BridgeName: "br.provision", EnableL2: true},
+			log:        slog.Default(),
+			netlinkOps: mock,
+		}, mock
+	}
+	path := func(pmsi ...*anypb.Any) *apipb.Path {
+		p := mustAddRouteTarget(t, mustMarshalPath(t, &apipb.EVPNInclusiveMulticastEthernetTagRoute{IpAddress: "10.0.0.1"}, "10.0.0.1", false))
+		p.Pattrs = append(p.Pattrs, pmsi...)
+		return p
+	}
+	for name, p := range map[string]*apipb.Path{"no PMSI attribute": path(), "PIM-SSM": path(mustPMSI(t, pimSSM))} {
+		o, mock := newOverlay()
+		o.processRouteUpdate(p)
+		if len(mock.appends) != 0 {
+			t.Errorf("%s: BUM entries %v, want none", name, mock.appends)
+		}
+	}
+	o, mock := newOverlay()
+	o.processRouteUpdate(path(mustPMSI(t, pmsiTunnelTypeIngressReplication)))
+	if len(mock.appends) != 1 {
+		t.Fatalf("ingress replication: %d BUM entries, want 1", len(mock.appends))
+	}
+	o.processRouteUpdate(path(mustPMSI(t, pimSSM)))
+	if len(mock.dels) != 1 || !mock.dels[0].IP.Equal(net.ParseIP("10.0.0.1")) {
+		t.Fatalf("update to PIM-SSM: deletes %v, want the BUM entry to 10.0.0.1", mock.dels)
 	}
 }

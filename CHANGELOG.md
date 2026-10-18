@@ -479,6 +479,7 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 
 ### Fixes
 
+- gobgp: a Type-3 route adds a BUM entry only with PMSI tunnel type ingress replication, like FRR (RFC 8365)
 - bfd: a detection time without packets forgets the remote discriminator in every state, and the peer's Demand mode stops the periodic packets (RFC 5880) (#749)
 - gobgp: a BFD Down in the second a BGP session came up does not reset it, like
   bgpd; a route reflector with `update-source` re-keys BFD when its side comes

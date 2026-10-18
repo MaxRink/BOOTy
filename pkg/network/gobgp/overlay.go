@@ -868,6 +868,11 @@ func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 		}
 	case *apipb.EVPNInclusiveMulticastEthernetTagRoute:
 		if o.cfg.EnableL2 {
+			if !withdraw && !ingressReplication(p) {
+				// Like FRR: flooding only for ingress replication.
+				o.log.Debug("type-3 route without ingress replication, no BUM entry", "vtep", route.GetIpAddress())
+				withdraw = true
+			}
 			o.handleType3Route(route, vtep, withdraw)
 		}
 	default:
@@ -1547,6 +1552,25 @@ func (o *OverlayTier) handleType2Route(route *apipb.EVPNMACIPAdvertisementRoute,
 		o.log.Info("installed FDB entry from type-2 route", "mac", mac, "vtep", vtep)
 	}
 	o.macVTEP.Store(macStr, vtep)
+}
+
+// ingressReplication reports an IMET route whose PMSI Tunnel attribute has
+// tunnel type ingress replication. FRR 10.7.1 (bgp_evpn.c,
+// evpn_zebra_install) installs head-end replication only for that type;
+// for PIM-SM it sets up multicast flooding, which BOOTy does not support,
+// and for a missing attribute or any other type it disables flooding to
+// the VTEP (RFC 8365 section 9: the receiver uses the advertised tunnel).
+func ingressReplication(path *apipb.Path) bool {
+	for _, attr := range path.GetPattrs() {
+		msg, err := attr.UnmarshalNew()
+		if err != nil {
+			continue
+		}
+		if pmsi, ok := msg.(*apipb.PmsiTunnelAttribute); ok {
+			return pmsi.GetType() == pmsiTunnelTypeIngressReplication
+		}
+	}
+	return false
 }
 
 // handleType3Route installs or removes a BUM FDB entry for a remote VTEP
