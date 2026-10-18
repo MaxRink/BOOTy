@@ -334,7 +334,7 @@ needs no reboot fallback for targets that use `efibootmgr`.
 | Long poll, re-poll, disk settle once, no handoff sleep, RAM log | BOOTy standby | PR |
 | GRUB default entry for kexec (`DefaultEntry`, real fixtures) | BOOTy | PR #720 |
 | Handoff in the success message | BOOTy | PR #724 |
-| BGP Cease and BFD AdminDown before kexec and reboot | BOOTy | PR #723 |
+| BGP Cease and BFD AdminDown before kexec, reboot and power off | BOOTy | PR #723 |
 | KVM `kexec` scenario kexecs; EFI runtime after kexec verified | BOOTy | PR #725 |
 | Deploy archive payload (per-job files for the agent) | BOOTy | PR #730 |
 | Eject at `init`, skip power cycle for kexec and reboot | CAPRF | !296 |

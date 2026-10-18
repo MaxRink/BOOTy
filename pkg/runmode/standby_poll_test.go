@@ -211,7 +211,11 @@ func TestStandbyPausesHeartbeatsWhileACommandRuns(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() { done <- mode.Run(ctx) }()
-	<-deprov.started
+	select {
+	case <-deprov.started:
+	case err := <-done:
+		t.Fatalf("Run returned before the command started: %v", err)
+	}
 	before := provider.count.Load()
 	// Sixty heartbeat intervals.
 	time.Sleep(300 * time.Millisecond)

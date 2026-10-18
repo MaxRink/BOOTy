@@ -466,7 +466,7 @@ func TestTryKexecSkipsWhenSecureBootReEnableRequested(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Provision.SecureBoot.ReEnable = true
 
-	if tryKexec(cfg, false, func() (disk.ReleaseReport, error) { return disk.ReleaseReport{}, nil }) {
+	if tryKexec(cfg, false, func() (disk.ReleaseReport, error) { return disk.ReleaseReport{}, nil }, func() { t.Fatal("network stopped without kexec") }) {
 		t.Fatal("tryKexec returned true when secure boot re-enable requires hard reboot")
 	}
 }
@@ -669,9 +669,12 @@ func TestProvisionCompleteExitKeepsNetworkUntilHandoff(t *testing.T) {
 	if start < 0 {
 		t.Fatal("provision complete branch not found")
 	}
-	end := strings.Index(source[start:], "handleProvisionHandoff")
+	// The network stops only inside finishProvision, right before the
+	// kexec or the reboot (TestFinishProvisionStopsNetworkBeforeReboot); a
+	// power off keeps it (TestWithNetworkStopBeforeReboot).
+	end := strings.Index(source[start:], "finishProvision(")
 	if end < 0 {
-		t.Fatal("provision complete handoff call not found")
+		t.Fatal("provision complete branch does not call finishProvision")
 	}
 	branch := source[start : start+end]
 	if strings.Contains(branch, ".Teardown(") {

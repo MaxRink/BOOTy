@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -497,10 +498,23 @@ func shell() {
 	realm.Shell()
 }
 
-func doKexecExecute() error {
+// The kexec hooks and the installed root; tests replace them.
+var (
+	flushLogs    = flushObservability
+	kexecExecute = kexec.Execute
+	kexecLoad    = kexec.Load
+	kexecRoot    = installedRootPath
+)
+
+// doKexecExecute hands the watchdog over, ships the queued log lines,
+// stops the network, then kexecs. The order matters: the log handler needs
+// the network, and the switch should see the BGP Cease before the link
+// goes quiet.
+func doKexecExecute(stopNetwork func()) error {
 	watchdogHandoff(false)
-	flushObservability()
-	return kexec.Execute()
+	flushLogs()
+	stopNetwork()
+	return kexecExecute()
 }
 
 func runCAPRF(ctx context.Context) {
@@ -571,10 +585,15 @@ func runCAPRF(ctx context.Context) {
 	runCtx, stopRun := context.WithCancel(ctx)
 	defer stopRun()
 
-	netMode, err := setupNetworkAndTokenFlow(ctx, cfg, client, stopRun)
+	netMode, stopNetwork, err := setupNetworkAndTokenFlow(ctx, cfg, client, stopRun)
+	stopAndReboot := func() {
+		flushLogs()
+		stopNetwork()
+		rebootNow()
+	}
 	if err != nil {
 		code := provision.CodeOf(err)
-		failRun(ctx, cfg, client, "network-setup", code, fmt.Sprintf("network or token setup failed [%s]: %v", code, err), reboot)
+		failRun(ctx, cfg, client, "network-setup", code, fmt.Sprintf("network or token setup failed [%s]: %v", code, err), stopAndReboot)
 		return
 	}
 
@@ -598,12 +617,7 @@ func runCAPRF(ctx context.Context) {
 	})
 	if err != nil {
 		slog.Error("unknown operating mode", "mode", cfg.Mode, "error", err)
-		if netMode != nil {
-			if tearErr := netMode.Teardown(ctx); tearErr != nil {
-				slog.Warn("network teardown error", "error", tearErr)
-			}
-		}
-		reboot()
+		stopAndReboot()
 		return
 	}
 
@@ -617,11 +631,32 @@ func runCAPRF(ctx context.Context) {
 		stopTokenGraceReboot()
 	}
 	if runCtx.Err() != nil && ctx.Err() == nil && !isTerminalSuccess(modeErr) {
-		tokenShutdown(ctx, cfg, client, tokenStopMessage(), reboot)
+		tokenShutdown(ctx, cfg, client, tokenStopMessage(), stopAndReboot)
 		return
 	}
 
 	slog.Info("CAPRF run complete")
+	endRun(ctx, cfg, client, diskMgr, stopNetwork, mode.Name(), modeErr)
+}
+
+// rebootNow and endRunPause are reboot and the pause before the reboot of
+// a failed run; tests replace them.
+var (
+	rebootNow   = reboot
+	shellHook   = shell
+	endRunPause = 2 * time.Second
+)
+
+// endRun ends the run after the mode returned. Every path that leaves the
+// ramdisk ships the queued log lines, then stops the network (BGP Cease,
+// BFD AdminDown), then hands off; only the rescue shell keeps the network.
+func endRun(ctx context.Context, cfg *config.MachineConfig, client provisionStatusReporter,
+	diskMgr *disk.Manager, stopNetwork func(), modeName string, modeErr error) {
+	stopAndReboot := func() {
+		flushLogs()
+		stopNetwork()
+		rebootNow()
+	}
 
 	// Handle mode-specific exit behavior before network teardown,
 	// so rescue shell SSH access remains available.
@@ -633,23 +668,17 @@ func runCAPRF(ctx context.Context) {
 	case errors.As(modeErr, &rescueErr):
 		// Network teardown is intentionally skipped here so SSH access
 		// remains available in the rescue shell.
-		shell()
-		reboot()
+		shellHook()
+		rebootNow()
 		return
 	case errors.As(modeErr, &rebootErr):
-		if netMode != nil {
-			if err := netMode.Teardown(ctx); err != nil {
-				slog.Warn("network teardown error", "error", err)
-			}
-		}
-		reboot()
+		stopAndReboot()
 		return
 	case errors.As(modeErr, &powerOffErr):
-		// Keep the network up, like the provision handoff, so a failed power
-		// off can still be reported. Do not reboot when the power off fails:
-		// CAPRF has not ejected the ISO yet, so a reboot would run the task
-		// again.
-		requestProvisionHandoff(ctx, client, "power off", provisionHandoff.powerOff, provisionHandoff,
+		// Do not reboot when the power off fails: CAPRF has not ejected the
+		// ISO yet, so a reboot would run the task again.
+		ops := withNetworkStopBeforeHandoff(provisionHandoff, stopNetwork, func() { restoreNetwork(ctx, cfg) })
+		requestProvisionHandoff(ctx, client, "power off", ops.powerOff, ops,
 			"power off handoff failed after deprovisioning success")
 		return
 	case errors.As(modeErr, &provisionErr):
@@ -657,15 +686,7 @@ func runCAPRF(ctx context.Context) {
 			// A standby command ran with its own config (payload).
 			cfg = provisionErr.Cfg
 		}
-		kexeced := tryKexec(cfg, provisionErr.FirmwareChanged, func() (disk.ReleaseReport, error) {
-			return diskMgr.UnmountOrRemountReadOnly(installedRootPath)
-		})
-		if !kexeced && provision.ShouldKeepTargetRootMountedForKexec(cfg, provisionErr.FirmwareChanged) {
-			cleanupFailedKexecTarget(diskMgr)
-		}
-		// No pause here: the handoff closes the CAPRF log handler, and
-		// that drains the queued log lines (at most 5 s) before it acts.
-		handleProvisionHandoff(ctx, cfg, client, provisionErr, kexeced, provisionHandoff)
+		finishProvision(ctx, cfg, client, diskMgr, stopNetwork, provisionErr)
 		return
 	}
 
@@ -673,15 +694,102 @@ func runCAPRF(ctx context.Context) {
 	// Log other unexpected errors at error level.
 	var healthErr *runmode.HealthCheckError
 	if modeErr != nil && !errors.As(modeErr, &healthErr) {
-		slog.Error("mode exited with error", "mode", mode.Name(), "error", modeErr)
+		slog.Error("mode exited with error", "mode", modeName, "error", modeErr)
 	}
-	if netMode != nil {
-		if err := netMode.Teardown(ctx); err != nil {
-			slog.Warn("network teardown error", "error", err)
+	time.Sleep(endRunPause)
+	stopAndReboot()
+}
+
+// networkStopTimeout bounds the network teardown before a kexec or reboot;
+// tests shorten it.
+var networkStopTimeout = 5 * time.Second
+
+// stopNetworkOnce returns a function that tears the network mode down once
+// and waits at most networkStopTimeout. GoBGP sends a Cease NOTIFICATION to
+// every peer (StopBgp), which ends the session on the switch at once,
+// instead of after the BFD detection time or the BGP hold timer, so the next
+// OS can peer without waiting. BFD sends AdminDown (bfd.Manager.Close),
+// which only keeps the switch from taking the silence as a forwarding
+// failure (RFC 5882 3.2).
+func stopNetworkOnce(ctx context.Context, netMode network.Mode) func() {
+	return sync.OnceFunc(func() {
+		if netMode == nil {
+			return
+		}
+		done := make(chan error, 1)
+		go func() { done <- netMode.Teardown(context.WithoutCancel(ctx)) }()
+		select {
+		case err := <-done:
+			if err != nil {
+				slog.Warn("network teardown before the handoff failed", "error", err)
+				return
+			}
+			slog.Info("network stopped before the handoff")
+		case <-time.After(networkStopTimeout):
+			slog.Warn("network teardown before the handoff did not finish, going on", "timeout", networkStopTimeout)
+		}
+	})
+}
+
+// finishProvision starts the installed OS after a successful provision:
+// kexec, or the handoff (reboot or power off). BGP and BFD stop cleanly
+// before each of them, like the legacy `shutdown now` stops FRR before the
+// power off.
+func finishProvision(ctx context.Context, cfg *config.MachineConfig, client provisionStatusReporter,
+	diskMgr *disk.Manager, stopNetwork func(), provisionErr *runmode.ProvisionCompleteError) {
+	kexeced := tryKexec(cfg, provisionErr.FirmwareChanged, func() (disk.ReleaseReport, error) {
+		return diskMgr.UnmountOrRemountReadOnly(installedRootPath)
+	}, stopNetwork)
+	if !kexeced && provision.ShouldKeepTargetRootMountedForKexec(cfg, provisionErr.FirmwareChanged) {
+		cleanupFailedKexecTarget(diskMgr)
+	}
+	// No pause here: the handoff closes the CAPRF log handler, and that
+	// drains the queued log lines (at most 5 s) before it acts.
+	handleProvisionHandoff(ctx, cfg, client, provisionErr, kexeced,
+		withNetworkStopBeforeHandoff(provisionHandoff, stopNetwork, func() { restoreNetwork(ctx, cfg) }))
+}
+
+// withNetworkStopBeforeHandoff returns ops whose reboot and power off ship
+// the queued log lines, then stop the network, then hand off. When the
+// handoff fails, restore brings the network back, so that the failure can
+// be reported and the rescue shell is reachable.
+func withNetworkStopBeforeHandoff(ops provisionHandoffOps, stopNetwork, restore func()) provisionHandoffOps {
+	wrap := func(handoff func() error) func() error {
+		return func() error {
+			flushLogs()
+			stopNetwork()
+			err := handoff()
+			if err != nil {
+				restore()
+			}
+			return err
 		}
 	}
-	time.Sleep(2 * time.Second)
-	reboot()
+	ops.reboot = wrap(ops.reboot)
+	ops.powerOff = wrap(ops.powerOff)
+	return ops
+}
+
+// restoreNetwork sets the network up again after a failed handoff, so the
+// error report reaches CAPRF; tests replace it. The stopped mode is not
+// reused.
+var restoreNetwork = func(ctx context.Context, cfg *config.MachineConfig) {
+	slog.Warn("handoff failed after the network stop, setting the network up again")
+	netMode, err := setupNetworkMode(ctx, cfg)
+	if err != nil {
+		slog.Error("network setup after the failed handoff failed", "error", err)
+		return
+	}
+	target := cfg.Transport.ErrorURL
+	if target == "" {
+		target = cfg.Transport.InitURL
+	}
+	if target == "" {
+		return
+	}
+	if _, err := ensureNetworkConnectivity(ctx, cfg, netMode, target); err != nil {
+		slog.Error("no connectivity after the failed handoff", "error", err)
+	}
 }
 
 func handleProvisionHandoff(
@@ -736,17 +844,21 @@ func reportProvisionHandoffError(ctx context.Context, reporter provisionStatusRe
 	}
 }
 
-func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, client *caprf.Client, stopRun func()) (network.Mode, error) {
+// setupNetworkAndTokenFlow sets the network and the token up. It returns
+// the network mode and the function that stops it once (BGP Cease, BFD
+// AdminDown) before the run leaves the ramdisk; the stop is also valid
+// when a later setup step fails.
+func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, client *caprf.Client, stopRun func()) (network.Mode, func(), error) {
 	if cfg.Mode == "dry-run" {
 		slog.Info("dry-run mode: skipping active network setup and token renewal")
-		return noopNetworkMode{}, nil
+		return noopNetworkMode{}, func() {}, nil
 	}
 
 	// Set up networking with retry — if connectivity fails, teardown and
 	// rebuild the entire network stack before giving up.
 	netMode, err := setupNetworkMode(ctx, cfg)
 	if err != nil {
-		return nil, &provision.CodedError{Code: provision.CodeNetworkSetup, Err: err}
+		return nil, func() {}, &provision.CodedError{Code: provision.CodeNetworkSetup, Err: err}
 	}
 	if lldpReceiveEnabled(cfg) {
 		startLLDPReceive(ctx)
@@ -767,14 +879,15 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 	if connectivityTarget != "" {
 		activeMode, err := ensureNetworkConnectivity(ctx, cfg, netMode, connectivityTarget)
 		if err != nil {
-			return nil, &provision.CodedError{Code: provision.CodeConnectivity, Err: err}
+			return nil, stopNetworkOnce(ctx, activeMode), &provision.CodedError{Code: provision.CodeConnectivity, Err: err}
 		}
 		netMode = activeMode
 	}
+	stopNetwork := stopNetworkOnce(ctx, netMode)
 
 	if err := syncClock(ctx, cfg, connectivityTarget); err != nil {
 		provision.DumpDebugState("time-sync")
-		return nil, err
+		return nil, stopNetwork, err
 	}
 
 	// Acquire JWT after network is ready so the token endpoint is reachable.
@@ -782,21 +895,27 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 		slog.Error("failed to acquire jwt token", "error", err)
 		if cfg.Transport.TokenURL != "" {
 			provision.DumpDebugState("jwt-acquire")
-			return nil, &provision.CodedError{Code: provision.CodeAuth, Err: err}
+			return nil, stopNetwork, &provision.CodedError{Code: provision.CodeAuth, Err: err}
 		}
 	}
 
-	client.SetTokenRenewalFatalHandler(func(err error) { tokenRenewalFatal(cfg, err, reboot, stopRun) })
+	client.SetTokenRenewalFatalHandler(func(err error) {
+		tokenRenewalFatal(cfg, err, func() {
+			flushLogs()
+			stopNetwork()
+			rebootNow()
+		}, stopRun)
+	})
 
 	if err := client.StartTokenRenewal(ctx); err != nil {
 		slog.Error("failed to start token renewal", "error", err)
 		if cfg.Transport.TokenURL != "" {
 			provision.DumpDebugState("jwt-renewal-start")
-			return nil, &provision.CodedError{Code: provision.CodeAuth, Err: err}
+			return nil, stopNetwork, &provision.CodedError{Code: provision.CodeAuth, Err: err}
 		}
 	}
 
-	return netMode, nil
+	return netMode, stopNetwork, nil
 }
 
 // failRun ends a run that failed outside a mode in step with the failure
@@ -1810,7 +1929,10 @@ func detectIPMI(netCfg *network.Config) {
 // After the kernel and initramfs are loaded, releaseTarget unmounts the
 // target root (busy block device mounts are remounted read-only), so the
 // installed OS does not start with filesystems that need journal recovery.
-func tryKexec(cfg *config.MachineConfig, firmwareChanged bool, releaseTarget func() (disk.ReleaseReport, error)) bool {
+//
+// stopNetwork runs after the load, right before the kexec: a failed load
+// keeps the network for the reboot fallback and its error report.
+func tryKexec(cfg *config.MachineConfig, firmwareChanged bool, releaseTarget func() (disk.ReleaseReport, error), stopNetwork func()) bool {
 	if cfg.KexecDisabled() {
 		slog.Info("kexec disabled by configuration, skipping", "successAction", cfg.SuccessAction)
 		return false
@@ -1829,23 +1951,23 @@ func tryKexec(cfg *config.MachineConfig, firmwareChanged bool, releaseTarget fun
 	// The entry that GRUB would boot: default, grubenv, submenus. When only
 	// GRUB can tell (BLS, conditional kernel lines, variables set at boot),
 	// reboot through the firmware instead of guessing.
-	entry, err := kexec.DefaultEntry(installedRootPath)
+	entry, err := kexec.DefaultEntry(kexecRoot)
 	if err != nil {
 		slog.Warn("no kexec boot entry, rebooting instead", "error", err)
 		return false
 	}
 	slog.Info("kexec boot entry", "entry", entry.Name)
 
-	kernel := resolveKexecPath(installedRootPath, entry.Kernel)
-	initrd := resolveKexecPath(installedRootPath, entry.Initramfs)
+	kernel := resolveKexecPath(kexecRoot, entry.Kernel)
+	initrd := resolveKexecPath(kexecRoot, entry.Initramfs)
 	slog.Info("attempting kexec", "kernel", kernel, "initrd", initrd)
 
-	if err := kexec.Load(kernel, initrd, entry.KernelArgs); err != nil {
+	if err := kexecLoad(kernel, initrd, entry.KernelArgs); err != nil {
 		slog.Warn("kexec load failed, falling back to reboot", "error", err)
 		return false
 	}
 	releaseKexecTarget(cfg, releaseTarget)
-	if err := doKexecExecute(); err != nil {
+	if err := doKexecExecute(stopNetwork); err != nil {
 		slog.Warn("kexec execute failed, falling back to reboot", "error", err)
 		return false
 	}

@@ -36,6 +36,16 @@ behaviour.
   the probe twice and then stops before the wipe with `BOOTY-IMG-004`.
   Before, a qcow2 image on a ramdisk without `qemu-img` could wipe the
   disk and fail afterwards (#789).
+- BOOTy stops the network before it leaves the ramdisk (#723): after the log
+  lines are shipped, GoBGP sends a BGP Cease to every peer and BFD sends
+  AdminDown, bounded to 5 s, then BOOTy kexecs, reboots or powers off. This
+  covers the provision handoff, the power off after a deprovision (like the
+  legacy `shutdown now`, which stops FRR), a reboot command, a failed run,
+  an unknown mode and the token failure reboot. The switch ends the session
+  at once instead of after the BFD detection time or the hold timer. The
+  rescue shell keeps the network. When the reboot or power off fails after
+  the stop, BOOTy sets the network up again to report the error; a failed
+  `kexec -e` falls back to the reboot.
 - When a provision uses one named disk (`DISK_DEVICE` or
   `DISK_SERIAL_NUMBER`, without `WIPE_ALL_DISKS` or explicit RAID), the
   block device settle wait counts from boot: BOOTy watches `/sys/block`
