@@ -29,7 +29,8 @@ topology:
       # The test starts BOOTy once the leaf runs lldpd and the links exist.
       cmd: sleep infinity
       binds:
-        - data/vars-cablecheck:/deploy/vars:ro
+        # The vars of the cable check ISO (make check-iso).
+        - ../../../hack/check-iso/vars:/deploy/vars:ro
       env:
         BOOTY_NO_REBOOT: "1"
 

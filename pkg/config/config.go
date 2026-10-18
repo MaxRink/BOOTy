@@ -91,6 +91,7 @@ type Config struct {
 	Watchdog  WatchdogConfig  `yaml:"watchdog"  json:"watchdog"`
 	Transport TransportConfig `yaml:"transport" json:"transport"`
 	Health    HealthConfig    `yaml:"health"    json:"health"`
+	Check     CheckConfig     `yaml:"check"     json:"check"`
 	Telemetry TelemetryConfig `yaml:"telemetry" json:"telemetry"`
 	Rescue    RescueConfig    `yaml:"rescue"    json:"rescue"`
 	Time      TimeConfig      `yaml:"time"      json:"time"`

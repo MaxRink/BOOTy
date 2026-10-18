@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/health"
@@ -55,6 +56,7 @@ func (m *CheckMode) Run(ctx context.Context) error {
 	if critical {
 		msg := fmt.Sprintf("%d/%d health checks failed", failed, len(results))
 		_ = m.deps.Client.ReportStatus(ctx, config.StatusError, msg)
+		hold(ctx, cfg.Check.HoldDuration())
 		return &HealthCheckError{Failed: failed, Total: len(results)}
 	}
 	summary := fmt.Sprintf("%d/%d health checks passed", len(results)-failed-warned, len(results))
@@ -62,5 +64,25 @@ func (m *CheckMode) Run(ctx context.Context) error {
 		summary = fmt.Sprintf("%s (%d warnings)", summary, warned)
 	}
 	_ = m.deps.Client.ReportStatus(ctx, config.StatusSuccess, summary)
+	hold(ctx, cfg.Check.HoldDuration())
 	return nil
+}
+
+// hold keeps the run (links, LLDP) going after the checks (CHECK_HOLD):
+// for d, or until ctx ends when d is negative, which on a real machine
+// means until it is powered off.
+func hold(ctx context.Context, d time.Duration) {
+	switch {
+	case d == 0:
+		return
+	case d < 0:
+		slog.Info("checks done, holding until power off")
+		<-ctx.Done()
+	default:
+		slog.Info("checks done, holding", "duration", d)
+		select {
+		case <-ctx.Done():
+		case <-time.After(d):
+		}
+	}
 }

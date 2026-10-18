@@ -757,6 +757,31 @@ RUN make-iso.sh /iso /efiboot.img /booty-gobgp.iso "$ISO_VOLID"
 FROM scratch AS gobgp-iso
 COPY --from=gobgp-iso-builder /booty-gobgp.iso .
 
+# ── Cable check ISO target ────────────────────────────────────────────────
+# The GoBGP ISO with hack/check-iso/vars as /deploy/vars, in an
+# uncompressed cpio archive before the zstd initramfs (like early
+# microcode; an archive appended after the zstd one did not unpack in our
+# test). One generic ISO for every host: MODE=check, links mode, bm4x LLDP
+# identity and CHECK_HOLD=until-poweroff. make-iso.sh packs it like the
+# other ISOs: BIOS (ISOLINUX) and UEFI with Secure Boot (Debian shim, GRUB
+# and kernel).
+FROM gobgp-builder AS check-iso-vars
+COPY hack/check-iso/vars /deploy-root/deploy/vars
+RUN cd /deploy-root && find . | cpio -o -H newc > /deploy.cpio
+
+FROM iso-tools AS check-iso-builder
+ARG ISO_VOLID=BOOTY
+ARG SOURCE_DATE_EPOCH=315532800
+COPY --from=efi-boot /efi-manifest.txt /iso/boot/efi-manifest.txt
+COPY --from=check-iso-vars /deploy.cpio /deploy.cpio
+COPY --from=gobgp-builder /initramfs.cpio.zst /initramfs.cpio.zst
+COPY --from=kernel /vmlinuz /iso/boot/vmlinuz
+RUN cat /deploy.cpio /initramfs.cpio.zst > /iso/boot/initrd.img \
+    && make-iso.sh /iso /efiboot.img /booty-check.iso "$ISO_VOLID"
+
+FROM scratch AS check-iso
+COPY --from=check-iso-builder /booty-check.iso .
+
 # ── Micro target: pure-Go BOOTy only, no external binaries ────────────────
 FROM golang:1.27.2-trixie AS micro-dev
 ARG BOOTY_VERSION=dev

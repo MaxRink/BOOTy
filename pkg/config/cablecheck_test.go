@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // The bm4x-cablecheck profile sends on every NIC unless emitAll is set;
@@ -127,5 +128,37 @@ func TestValidateLinksMode(t *testing.T) {
 	c.Network.Mode = "links"
 	if err := c.Validate(); err != nil {
 		t.Fatalf("network.mode links: %v", err)
+	}
+}
+
+func TestCheckHold(t *testing.T) {
+	for _, tt := range []struct {
+		hold string
+		want time.Duration
+		err  bool
+	}{
+		{"", 0, false},
+		{"off", 0, false},
+		{"until-poweroff", -1, false},
+		{"10m", 10 * time.Minute, false},
+		{"0s", 0, true},
+		{"-1m", 0, true},
+		{"forever", 0, true},
+	} {
+		c := &Config{Check: CheckConfig{Hold: tt.hold}}
+		if got := c.Check.HoldDuration(); got != tt.want {
+			t.Errorf("%q: HoldDuration = %v, want %v", tt.hold, got, tt.want)
+		}
+		err := c.Validate()
+		if (err != nil) != tt.err || (err != nil && !strings.Contains(err.Error(), "check.hold (CHECK_HOLD)")) {
+			t.Errorf("%q: Validate = %v, want error %v", tt.hold, err, tt.err)
+		}
+	}
+	cfg, err := loadYAML(strings.NewReader("check:\n  hold: until-poweroff\n"), true)
+	if err != nil || cfg.Check.Hold != "until-poweroff" {
+		t.Fatalf("YAML check.hold: %+v, %v", cfg, err)
+	}
+	if _, err := loadYAML(strings.NewReader("check:\n  holdUntil: poweroff\n"), true); err == nil {
+		t.Fatal("unknown check key accepted")
 	}
 }

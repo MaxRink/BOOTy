@@ -1220,7 +1220,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 	if applySecureBootDigestVar(cfg, key, value) {
 		return true
 	}
-	if applyOCIPrePullStringVar(cfg, key, value) || applyAgentStringVar(cfg, key, value) {
+	if applyOCIPrePullStringVar(cfg, key, value) || applyAgentStringVar(cfg, key, value) || applyCheckStringVar(cfg, key, value) {
 		return true
 	}
 
@@ -1294,6 +1294,17 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		return true
 	}
 	return false
+}
+
+// applyCheckStringVar handles the check mode keys.
+func applyCheckStringVar(cfg *config.MachineConfig, key, value string) bool {
+	switch key {
+	case "CHECK_HOLD":
+		cfg.Check.Hold = value
+	default:
+		return false
+	}
+	return true
 }
 
 func applyAgentStringVar(cfg *config.MachineConfig, key, value string) bool {

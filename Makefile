@@ -31,6 +31,7 @@ CLEAN_FILES := \
 	$(COVERAGE_HTML) \
 	booty.iso \
 	booty-gobgp.iso \
+	booty-check.iso \
 	initramfs.cpio.gz \
 	initramfs.cpio.gz.sha256 \
 	initramfs.cpio.zst \
@@ -47,7 +48,7 @@ GOLANGCI_LINT ?= bin/golangci-lint-$(GOLANGCI_LINT_VERSION)-$(LINT_GOTOOLCHAIN)-
 
 CLAB_TEST_IMAGE ?= test/e2e/clab/images/test.img.gz
 
-.PHONY: all build build-all build-esp-sync clean install uninstall fmt fmt-check lint test docker dockerx86 iso slim micro gobgp gobgp-iso dockerx86slim dockerx86micro dockerx86gobgp arm64 arm64-slim arm64-gobgp test-iso getramdisk getramdisk-arm64 test-kvm test-e2e clab-test-image clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-test-image booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab booty-gobgp-test-image clab-gobgp-up clab-gobgp-down test-e2e-gobgp clab-gobgp-vrnetlab-up clab-gobgp-vrnetlab-down test-e2e-gobgp-vrnetlab clab-type5-up clab-type5-down test-e2e-type5 clab-prodtpl-up clab-prodtpl-down test-e2e-prodtpl clab-production-up clab-production-down test-e2e-production test-e2e-production-full booty-dhcpd-test-image clab-dhcp-up clab-dhcp-down test-e2e-dhcp clab-bond-up clab-bond-down test-e2e-bond clab-lacp-up clab-lacp-down test-e2e-lacp clab-static-up clab-static-down test-e2e-static clab-multi-nic-up clab-multi-nic-down test-e2e-multi-nic booty-lldpd-test-image clab-cablecheck-up clab-cablecheck-down test-e2e-cablecheck check check-build-vars check-docker-vars check-oci-vars oci-push oci-push-initramfs oci-push-binary changelog changelog-release
+.PHONY: all build build-all build-esp-sync clean install uninstall fmt fmt-check lint test docker dockerx86 iso slim micro gobgp gobgp-iso check-iso dockerx86slim dockerx86micro dockerx86gobgp arm64 arm64-slim arm64-gobgp test-iso getramdisk getramdisk-arm64 test-kvm test-e2e clab-test-image clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-test-image booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab booty-gobgp-test-image clab-gobgp-up clab-gobgp-down test-e2e-gobgp clab-gobgp-vrnetlab-up clab-gobgp-vrnetlab-down test-e2e-gobgp-vrnetlab clab-type5-up clab-type5-down test-e2e-type5 clab-prodtpl-up clab-prodtpl-down test-e2e-prodtpl clab-production-up clab-production-down test-e2e-production test-e2e-production-full booty-dhcpd-test-image clab-dhcp-up clab-dhcp-down test-e2e-dhcp clab-bond-up clab-bond-down test-e2e-bond clab-lacp-up clab-lacp-down test-e2e-lacp clab-static-up clab-static-down test-e2e-static clab-multi-nic-up clab-multi-nic-down test-e2e-multi-nic booty-lldpd-test-image clab-cablecheck-up clab-cablecheck-down test-e2e-cablecheck check check-build-vars check-docker-vars check-oci-vars oci-push oci-push-initramfs oci-push-binary changelog changelog-release
 
 export TARGET VERSION BUILD TARGETOS TARGETARCH DOCKERTAG REPOSITORY
 
@@ -201,6 +202,10 @@ gobgp:
 gobgp-iso:
 	@docker buildx build --build-arg "BOOTY_COMMIT_TIME=$(COMMIT_TIME)" --platform linux/amd64 --target gobgp-iso --output type=local,dest=. -f initrd.Dockerfile .
 	@echo GoBGP ISO built: booty-gobgp.iso
+
+check-iso:
+	@docker buildx build --build-arg "BOOTY_COMMIT_TIME=$(COMMIT_TIME)" --platform linux/amd64 --target check-iso --output type=local,dest=. -f initrd.Dockerfile .
+	@echo Cable check ISO built: booty-check.iso
 
 dockerx86slim: check-docker-vars
 	@docker buildx build --build-arg "BOOTY_COMMIT_TIME=$(COMMIT_TIME)" --platform linux/amd64 --target slim --load -t "$${REPOSITORY}:$${DOCKERTAG}-slim" -f initrd.Dockerfile .

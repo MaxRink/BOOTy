@@ -1,0 +1,12 @@
+# Vars of the generic cable check ISO (make check-iso). The ISO has no
+# host-specific data, so one ISO serves every host, like the bm4x LLDP ISO:
+# bm4x only points compute-app.image.lldp.url at it.
+#
+# BOOTy brings every NIC up with IPv6 link-local only, stops the Intel
+# firmware LLDP agent, sends LLDP with the identity that the bm4x connection
+# check matches (port ID = NIC MAC, system name bare-minimal) and keeps
+# sending until bm4x powers the host off (STOP_LLDP).
+MODE=check
+NETWORK_MODE=links
+LLDP_PROFILE=bm4x-cablecheck
+CHECK_HOLD=until-poweroff

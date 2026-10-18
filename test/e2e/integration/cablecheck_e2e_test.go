@@ -156,3 +156,24 @@ func TestCableCheckLLDP(t *testing.T) {
 		}
 	}
 }
+
+// With the vars of the cable check ISO, BOOTy keeps running after the
+// checks (CHECK_HOLD=until-poweroff) and keeps sending.
+func TestCableCheckHold(t *testing.T) {
+	cablecheckStartBooty(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	for {
+		out, err := exec.CommandContext(ctx, "docker", "logs", cablecheckBooty).CombinedOutput()
+		if err == nil && strings.Contains(string(out), "checks done, holding until power off") {
+			break
+		}
+		if ctx.Err() != nil {
+			t.Fatalf("BOOTy does not hold after the checks: %v", err)
+		}
+		time.Sleep(time.Second)
+	}
+	if _, err := cablecheckExec(ctx, cablecheckBooty, "pidof", "booty"); err != nil {
+		t.Fatalf("BOOTy is not running while it holds: %v", err)
+	}
+}

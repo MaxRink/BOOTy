@@ -241,6 +241,12 @@ jobs:
             test_regex: "^TestLinksModeLLDPQEMU$"
             privileged: true
             setup: ""
+          - scenario: check-iso-hold
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestCheckISOVarsHoldQEMU$"
+            privileged: true
+            setup: ""
           - scenario: flavor-storage-controllers
             qemu_extra: ""
             test_tag: e2e

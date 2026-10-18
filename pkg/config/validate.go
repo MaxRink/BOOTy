@@ -78,6 +78,7 @@ func (c *Config) Validate() error {
 	}
 	errs = append(errs, validateKubeletProvisionFields(&c.Provision)...)
 	errs = append(errs, c.validatePersistence()...)
+	errs = append(errs, c.Check.validate()...)
 
 	errs = append(errs, validateDiskSettle(&c.Provision.Disk)...)
 	if err := validateRAIDConfig(c.Provision.Disk.RAID); err != nil {
