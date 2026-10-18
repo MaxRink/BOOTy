@@ -31,15 +31,24 @@ mkdir -p "$root/isolinux" "$root/boot/grub" "$root/EFI/debian"
 cp /usr/lib/ISOLINUX/isolinux.bin /usr/lib/syslinux/modules/bios/ldlinux.c32 "$root/isolinux/"
 
 # SERIAL makes ISOLINUX usable on headless machines (serial console only).
+# Without PROMPT and TIMEOUT, ISOLINUX boots the DEFAULT entry at once.
 printf 'SERIAL 0 115200\nDEFAULT booty\nLABEL booty\n  KERNEL /boot/vmlinuz\n  APPEND initrd=/boot/initrd.img %s\n' \
 	"$cmdline" > "$root/isolinux/isolinux.cfg"
 
+# No menu and no wait: GRUB boots at once. Esc held while GRUB starts
+# (it checks once for a key) or Shift (keystatus, where the firmware
+# reports it) opens the menu, where e edits the kernel command line.
 cat > "$root/boot/grub/grub.cfg" <<GRUBCFG
-set timeout=1
 set default=0
+set timeout_style=hidden
+set timeout=0
 serial --unit=0 --speed=115200
 terminal_input console serial
 terminal_output console serial
+if keystatus --shift; then
+  set timeout_style=menu
+  set timeout=-1
+fi
 menuentry "BOOTy" {
   linux /boot/vmlinuz $cmdline
   initrd /boot/initrd.img

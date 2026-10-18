@@ -38,6 +38,12 @@ behaviour.
   up no longer cost another 2 s. Every other provision and every
   deprovision still observes the full 2 s window, because an HBA with an
   asynchronous SCSI scan can present disks late (#762).
+- GRUB on the UEFI ISO path no longer shows its menu for 1 s: it has
+  `timeout_style=hidden` and `timeout=0` and boots at once. This saves the
+  1 s wait and about 7.4 KB of menu drawing on the serial console (about
+  0.65 s at 115200 baud) per UEFI boot. Esc or Shift held while GRUB starts
+  opens the menu (README, "ISO boot paths"). ISOLINUX (BIOS) already
+  booted at once (#778).
 - The `ERROR_URL` body of a failed provision or deprovision step now carries a
   stable failure code: `step <name> failed [BOOTY-<AREA>-<NNN>]: <error>`.
   [docs/failure-codes.md](docs/failure-codes.md) lists the codes (#706).

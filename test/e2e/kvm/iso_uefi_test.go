@@ -3,6 +3,7 @@
 package kvm
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -101,6 +103,10 @@ func TestISOFirmwareUEFI(t *testing.T) {
 	out := runQEMUSmoke(t, isoQEMUArgs(t, "uefi", isoCDArgs(iso)), 4*time.Minute, "iso-uefi", true)
 	if !strings.Contains(string(out), "Secure boot disabled") {
 		t.Fatalf("kernel did not report UEFI boot without Secure Boot; tail:\n%s", tail(out, 1500))
+	}
+	// timeout_style=hidden: without a key GRUB draws no menu.
+	if strings.Contains(string(out), "GNU GRUB") {
+		t.Fatalf("GRUB drew its menu without a key press; tail:\n%s", tail(out, 1500))
 	}
 }
 
@@ -265,4 +271,61 @@ func stripAuthenticode(path string) error {
 	binary.LittleEndian.PutUint32(b[certEntry+4:], 0)
 	b = append(b[:off], b[off+size:]...)
 	return os.WriteFile(path, b, 0o644)
+}
+
+// TestISOFirmwareUEFIGRUBMenu checks the hidden GRUB menu: without a key
+// GRUB boots at once and draws no menu (TestISOFirmwareUEFI boots that
+// way), and Esc held while GRUB starts opens the menu, so the kernel
+// command line stays editable. QEMU passes the serial input to GRUB; a
+// BMC serial-over-LAN console may not.
+func TestISOFirmwareUEFIGRUBMenu(t *testing.T) {
+	qemuAvailable(t)
+	iso := bootyISO(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "qemu-system-x86_64", isoQEMUArgs(t, "uefi", isoCDArgs(iso))...)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out lockedBuffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+	// Hold Esc from the firmware handoff on: an Esc earlier would open the
+	// OVMF setup instead.
+	for ctx.Err() == nil {
+		s := out.String()
+		if strings.Contains(s, "GNU GRUB") {
+			return
+		}
+		if strings.Contains(s, "Linux version") || strings.Contains(s, bootyStartMarker) {
+			t.Fatalf("GRUB booted the kernel although Esc was held; tail:\n%s", tail([]byte(s), 2000))
+		}
+		if strings.Contains(s, "BdsDxe: starting") {
+			_, _ = stdin.Write([]byte{0x1b})
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("no GRUB menu within the timeout; tail:\n%s", tail([]byte(out.String()), 2000))
+}
+
+// lockedBuffer is a bytes.Buffer that QEMU writes and the test reads.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }

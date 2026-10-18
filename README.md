@@ -223,6 +223,15 @@ cable-check ISO, can reuse both, or the `efi-boot` and `iso-tools` stages. The
 kernel command line of an ISO boot is `console=tty0 console=ttyS0,115200n8`.
 The ISOs are amd64 only.
 
+Neither boot loader waits. ISOLINUX (BIOS) has no `PROMPT` or `TIMEOUT`, so
+it boots its only entry at once, as before. GRUB (UEFI) has
+`timeout_style=hidden` and `timeout=0`: it draws no menu and boots at once.
+To edit the kernel command line on UEFI, open the GRUB menu: hold Esc or
+Shift while GRUB starts, then press `e` on the `BOOTy` entry. On a BMC, use
+the virtual KVM (HTML5 or Java console) keyboard and hold the key from the
+firmware logo on; key presses on the serial-over-LAN console may arrive too
+late or not count, and Shift is not a key on a serial line at all.
+
 `SOURCE_DATE_EPOCH` fixes the timestamps, the ISO volume UUID, the GPT GUIDs
 and the FAT serial. The default is 315532800 (1980-01-01, the earliest FAT
 time); CI and the release workflows set it to the commit time, so rebuilds of
