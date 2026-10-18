@@ -30,6 +30,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/inventory"
 	"github.com/telekom/BOOTy/pkg/kexec"
+	"github.com/telekom/BOOTy/pkg/logging"
 	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/lldp"
 	networkpersist "github.com/telekom/BOOTy/pkg/network/persist"
@@ -1097,6 +1098,15 @@ func (o *Orchestrator) validateProvisionInputs(ctx context.Context) error {
 	return o.validateImageStreamingPrerequisites(ctx, imageSources)
 }
 
+// Image format probe before the wipe; tests replace the probe and the delay.
+var (
+	validateStreamingPrerequisites = image.ValidateStreamingPrerequisites
+	probeRetryDelay                = 2 * time.Second
+)
+
+// probeAttempts bounds the image format probe before the wipe.
+const probeAttempts = 3
+
 func (o *Orchestrator) validateImageStreamingPrerequisites(ctx context.Context, imageSources []string) error {
 	bestURL := o.bestImageURL
 	if bestURL == "" {
@@ -1110,13 +1120,33 @@ func (o *Orchestrator) validateImageStreamingPrerequisites(ctx context.Context, 
 	if image.IsOCIReference(bestURL) {
 		return nil
 	}
-	format, err := image.ValidateStreamingPrerequisites(ctx, bestURL)
-	if err != nil {
-		if image.IsTransientFormatProbeError(err) {
-			o.log.Warn("unable to probe image prerequisites before destructive storage",
-				"url", image.RedactURL(bestURL), "error", err)
-			return nil
+	// Fail closed: without a probe BOOTy does not know whether the image
+	// is qcow2 and needs qemu-img, and finding out after the wipe leaves
+	// the host without an OS. A transient probe error gets retries first.
+	var format image.Format
+	var err error
+	for attempt := 1; ; attempt++ {
+		format, err = validateStreamingPrerequisites(ctx, bestURL)
+		if err == nil || !image.IsTransientFormatProbeError(err) || attempt == probeAttempts {
+			break
 		}
+		o.log.Warn("image format probe failed, retrying before destructive storage",
+			"url", image.RedactURL(bestURL), "attempt", attempt, "error", err)
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("validating image prerequisites before destructive storage: %w", ctx.Err())
+		case <-time.After(time.Duration(attempt) * probeRetryDelay):
+		}
+	}
+	if err != nil && image.IsTransientFormatProbeError(err) {
+		// The format probe code, not the deadline code of the cause: a
+		// deadline of the parent context that ends the last attempt also
+		// reports BOOTY-IMG-004. The cause is text, redacted like a log
+		// line (credentials, signed URL parameters).
+		return fmt.Errorf("validating image prerequisites before destructive storage: %w after %d attempts, stopping before the disk wipe: %s",
+			image.ErrFormatProbe, probeAttempts, logging.RedactText(err.Error()))
+	}
+	if err != nil {
 		return fmt.Errorf("validating image prerequisites before destructive storage: %w", err)
 	}
 	o.log.Info("image prerequisites validated", "url", image.RedactURL(bestURL), "format", format)

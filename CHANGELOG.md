@@ -31,6 +31,11 @@ behaviour.
 
 ### Behaviour changes in all modes
 
+- An image whose format probe fails with a transient error (timeout,
+  connection refused) no longer goes on to the disk wipe: BOOTy retries
+  the probe twice and then stops before the wipe with `BOOTY-IMG-004`.
+  Before, a qcow2 image on a ramdisk without `qemu-img` could wipe the
+  disk and fail afterwards (#789).
 - When a provision uses one named disk (`DISK_DEVICE` or
   `DISK_SERIAL_NUMBER`, without `WIPE_ALL_DISKS` or explicit RAID), the
   block device settle wait counts from boot: BOOTy watches `/sys/block`
