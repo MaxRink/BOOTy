@@ -1350,6 +1350,8 @@ func applyNetworkStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"BOND_MODE":           &cfg.Network.Bond.Mode,
 		"VLANS":               &cfg.Network.VLAN.Config,
 		"NETWORK_MODE":        &cfg.Network.Mode,
+		"LLDP_PROFILE":        &cfg.Network.LLDP.Profile,
+		"LLDP_PORT_ID_FORMAT": &cfg.Network.LLDP.PortIDFormat,
 		"VRF_NAME":            &cfg.Network.VRF.Name,
 		"vrf_name":            &cfg.Network.VRF.Name,
 		"BGP_PEER_MODE":       &cfg.Network.BGP.PeerMode,
@@ -1769,6 +1771,7 @@ func applyOptionalBoolVar(cfg *config.MachineConfig, key, value string) (bool, e
 		"BGP_SOFTWARE_VERSION":       &cfg.Network.BGP.SoftwareVersion,
 		"LLDP_RECEIVE":               &cfg.Network.LLDPReceive,
 		"OOB_EFI_VAR":                &cfg.Telemetry.OOBEFIVar,
+		"LLDP_EMIT_ALL":              &cfg.Network.LLDP.EmitAll,
 	}[key]; ok {
 		// A typo must not silently pick a value, so only booleans parse.
 		v, err := strconv.ParseBool(value)

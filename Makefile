@@ -47,7 +47,7 @@ GOLANGCI_LINT ?= bin/golangci-lint-$(GOLANGCI_LINT_VERSION)-$(LINT_GOTOOLCHAIN)-
 
 CLAB_TEST_IMAGE ?= test/e2e/clab/images/test.img.gz
 
-.PHONY: all build build-all build-esp-sync clean install uninstall fmt fmt-check lint test docker dockerx86 iso slim micro gobgp gobgp-iso dockerx86slim dockerx86micro dockerx86gobgp arm64 arm64-slim arm64-gobgp test-iso getramdisk getramdisk-arm64 test-kvm test-e2e clab-test-image clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-test-image booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab booty-gobgp-test-image clab-gobgp-up clab-gobgp-down test-e2e-gobgp clab-gobgp-vrnetlab-up clab-gobgp-vrnetlab-down test-e2e-gobgp-vrnetlab clab-type5-up clab-type5-down test-e2e-type5 clab-prodtpl-up clab-prodtpl-down test-e2e-prodtpl clab-production-up clab-production-down test-e2e-production test-e2e-production-full booty-dhcpd-test-image clab-dhcp-up clab-dhcp-down test-e2e-dhcp clab-bond-up clab-bond-down test-e2e-bond clab-lacp-up clab-lacp-down test-e2e-lacp clab-static-up clab-static-down test-e2e-static clab-multi-nic-up clab-multi-nic-down test-e2e-multi-nic check check-build-vars check-docker-vars check-oci-vars oci-push oci-push-initramfs oci-push-binary
+.PHONY: all build build-all build-esp-sync clean install uninstall fmt fmt-check lint test docker dockerx86 iso slim micro gobgp gobgp-iso dockerx86slim dockerx86micro dockerx86gobgp arm64 arm64-slim arm64-gobgp test-iso getramdisk getramdisk-arm64 test-kvm test-e2e clab-test-image clab-up clab-down test-e2e-integration clab-boot-up clab-boot-down test-e2e-boot booty-test-image booty-vrnetlab-image clab-vrnetlab-up clab-vrnetlab-down test-e2e-vrnetlab booty-gobgp-test-image clab-gobgp-up clab-gobgp-down test-e2e-gobgp clab-gobgp-vrnetlab-up clab-gobgp-vrnetlab-down test-e2e-gobgp-vrnetlab clab-type5-up clab-type5-down test-e2e-type5 clab-prodtpl-up clab-prodtpl-down test-e2e-prodtpl clab-production-up clab-production-down test-e2e-production test-e2e-production-full booty-dhcpd-test-image clab-dhcp-up clab-dhcp-down test-e2e-dhcp clab-bond-up clab-bond-down test-e2e-bond clab-lacp-up clab-lacp-down test-e2e-lacp clab-static-up clab-static-down test-e2e-static clab-multi-nic-up clab-multi-nic-down test-e2e-multi-nic booty-lldpd-test-image clab-cablecheck-up clab-cablecheck-down test-e2e-cablecheck check check-build-vars check-docker-vars check-oci-vars oci-push oci-push-initramfs oci-push-binary
 
 export TARGET VERSION BUILD TARGETOS TARGETARCH DOCKERTAG REPOSITORY
 
@@ -427,6 +427,22 @@ clab-static-down:
 test-e2e-static:
 	@printf '%s\n' 'Running static IP E2E tests (requires clab-static-up)'
 	@BOOTY_TOPOLOGY=static go test -tags e2e_integration -race -v -timeout 120s ./test/e2e/integration/... -run TestContainerLabTopologySmoke
+
+# ── Cable check lab targets ───────────────────────────────────────────────
+
+booty-lldpd-test-image:
+	@docker build -t booty-lldpd-test:latest -f test/e2e/clab/lldpd-test.Dockerfile test/e2e/clab
+
+clab-cablecheck-up: booty-gobgp-test-image booty-lldpd-test-image
+	@printf '%s\n' 'Deploying the cable check topology (BOOTy and an lldpd leaf)'
+	@cd test/e2e/clab && sudo clab deploy --topo topology-cablecheck.clab.yml
+
+clab-cablecheck-down:
+	@cd test/e2e/clab && sudo clab destroy --topo topology-cablecheck.clab.yml --cleanup
+
+test-e2e-cablecheck:
+	@printf '%s\n' 'Running cable check E2E tests (requires clab-cablecheck-up)'
+	@go test -tags e2e_cablecheck -race -v -count=1 -timeout 10m ./test/e2e/integration/...
 
 # ── Multi-NIC lab targets ─────────────────────────────────────────────────
 

@@ -390,6 +390,7 @@ rule of every key:
 | `BGP_GRACEFUL_RESTART`, `BGP_GRACEFUL_RESTART_TIME`, `BGP_ADDPATH_RX`, `BGP_SOFTWARE_VERSION` | none: `frr.conf` graceful restart and capability statements are rejected | `network.bgp.gracefulRestart`, `gracefulRestartTime`, `addPathReceive`, `softwareVersion` | native only; unset is the FRR default (for `BGP_SOFTWARE_VERSION`, of the `frr defaults` profile) |
 | `BGP_HOSTNAME` | none: FRR ignores the `frr.conf` `hostname` line and sends the system host name | `network.bgp.hostname` | native only; unset keeps the system host name |
 | `LLDP_RECEIVE` | none: the legacy ramdisk does not receive LLDP | `network.lldpReceive` | native only; unset is on |
+| `LLDP_PROFILE`, `LLDP_PORT_ID_FORMAT`, `LLDP_EMIT_ALL` | none | `network.lldp.profile`, `network.lldp.portIDFormat`, `network.lldp.emitAll` | native only; unset is the networkd identity on the `LLDP_EMIT` NICs |
 | `IP_FORWARDING`, `IPV6_FORWARDING` | `frr.conf` `[no] ip[v6] forwarding` | `network.ipForwarding`, `network.ipv6Forwarding` | native wins |
 
 ### Strict input and the accepted grammar
@@ -667,6 +668,58 @@ RoCE and PFC in the installed OS may need, and some NVM versions keep
 the flag across reboots. An opt-in that turns it off for BOOTy's run and
 back on before the handoff comes with the cable check (one
 implementation in `pkg/firmware/nic`).
+
+### LLDP identity profiles
+
+`LLDP_PROFILE` (YAML `network.lldp.profile`) selects the identity of the
+sent frames. The default `networkd` sends the frames above, byte for byte
+(`TestFrameNetworkdGolden`).
+
+`bm4x-cablecheck` sends the identity that the bm4x connection check
+matches. The check runs on the switch side: bm4x-api asks NSO for the LLDP
+neighbor tables of the switches and treats a neighbor as a compute port when
+its system name is `bare-minimal` (or none, or `UNKNOWN_DEVICE`) and its
+port ID is a MAC address in the form `aa:bb:cc:dd:ee:ff`
+(`Connection.isToMacAddress`). It then looks the MAC up in NetBox. So the
+profile sends:
+
+| TLV | `networkd` | `bm4x-cablecheck` |
+|---|---|---|
+| Chassis ID | machine ID (subtype 7) | the same |
+| Port ID | interface name (subtype 5) | NIC MAC (subtype 3) |
+| TTL | 120 | the same |
+| Port description | none | interface name, like lldpd |
+| System name | hostname | `bare-minimal` |
+| System description | `PRETTY_HOSTNAME` when set | the same |
+| Capabilities | station, bridge, router; station enabled | the same |
+
+With this profile BOOTy sends on every physical NIC with carrier
+(`LLDP_EMIT_ALL`, YAML `network.lldp.emitAll`, defaults to on), in every
+network mode. `pkg/network/lldp/bm4x_match_test.go` ports the bm4x-api
+matching code to Go (the source lines are in the file) and runs it on
+BOOTy's frames; `TestCableCheckLLDP` (containerlab, an lldpd leaf) checks
+what a switch reports.
+
+#### Port ID format
+
+The bm4x pattern needs the MAC in the colon form `aa:bb:cc:dd:ee:ff`.
+bm4x-api and network-app pass the port ID string from NSO unchanged, so the
+switch decides the form: for a MAC port ID (subtype 3), lldpd and Junos show
+the colon form, NX-OS shows `aabb.ccdd.eeff`. A locally assigned port ID
+(subtype 7) is a string that the switch shows unchanged.
+`LLDP_PORT_ID_FORMAT` (YAML `network.lldp.portIDFormat`, only with
+`bm4x-cablecheck`) selects the port ID:
+
+| Format | Port ID | bm4x match on lldpd, Junos | bm4x match on NX-OS | Use |
+|---|---|---|---|---|
+| `mac` (default) | NIC MAC, subtype 3 | yes | no, unless NSO converts the form | Junos leaves; a switch or NSO that needs the MAC subtype |
+| `mac-string-colon` | `aa:bb:cc:dd:ee:ff`, subtype 7 | yes | yes | NX-OS leaves, or mixed fabrics |
+| `mac-string-dotted` | `aabb.ccdd.eeff`, subtype 7 | no | no | a consumer that expects the Cisco form |
+| `ifname` | interface name, subtype 5 | no | no | port ID as networkd sends it, with the other bm4x TLVs |
+
+`TestBM4XMatchesPortIDFormats` runs the bm4x matcher on each format, as
+both kinds of switch show it. The NX-OS column assumes that NX-OS shows a
+locally assigned port ID unchanged; check it on a leaf before relying on it.
 
 ## GoBGP peer modes
 

@@ -292,6 +292,15 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   neighbor and reports the current neighbors in the hardware inventory
   (`lldpNeighbors`). New key `LLDP_RECEIVE` (YAML `network.lldpReceive`, on by
   default); the legacy ramdisk only sends LLDP.
+- New LLDP identity profile `LLDP_PROFILE=bm4x-cablecheck` (YAML
+  `network.lldp.profile`): port ID = NIC MAC (subtype 3) and system name
+  `bare-minimal`, the identity that the bm4x connection check matches. It sends
+  on every physical NIC with carrier; `LLDP_EMIT_ALL` (YAML
+  `network.lldp.emitAll`) also does that for the default `networkd` identity.
+  `LLDP_PORT_ID_FORMAT` (YAML `network.lldp.portIDFormat`) selects its port
+  ID: `mac` (default, subtype 3), `mac-string-colon` or `mac-string-dotted`
+  (subtype 7 strings, for NX-OS leaves that show a MAC port ID as
+  `aabb.ccdd.eeff`) or `ifname`. The default frames do not change.
 - GoBGP mode applies the netplan device settings of the provision VXLAN device,
   the bridge and the NICs like systemd-networkd (MTU, MAC, learning, ARP proxy,
   hairpin, link-local, `accept-ra`), and `frr.conf` `[no] ip[v6] forwarding`.

@@ -1,0 +1,5 @@
+MODE=check
+NETWORK_MODE=static
+STATIC_IP=192.0.2.10/24
+STATIC_IFACE=eth1
+LLDP_PROFILE=bm4x-cablecheck

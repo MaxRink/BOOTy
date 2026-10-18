@@ -68,7 +68,7 @@ func TestOpenRXGroupsAndOwnFrames(t *testing.T) {
 	copy(addr.Addr[:], nearestBridge)
 	sendFrom := func(src net.HardwareAddr, chassis string) {
 		t.Helper()
-		frame, err := Frame("lldptstb", src, Info{MachineID: chassis, SystemName: chassis})
+		frame, err := Frame("lldptstb", src, &Info{MachineID: chassis, SystemName: chassis})
 		if err != nil {
 			t.Fatal(err)
 		}

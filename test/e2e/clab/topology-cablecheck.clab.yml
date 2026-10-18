@@ -1,0 +1,38 @@
+# Cable check lab: BOOTy sends LLDP with the bm4x-cablecheck identity and an
+# lldpd leaf shows what a switch reports to NSO for the bm4x connection
+# check (system name and port ID).
+#
+#   booty eth1/eth2 ── leaf01 eth1/eth2 (lldpd)
+name: booty-cablecheck-lab
+
+mgmt:
+  network: booty-cablecheck-mgmt
+  ipv4-subnet: 172.31.249.0/24
+
+topology:
+  nodes:
+    leaf01:
+      kind: linux
+      image: booty-lldpd-test:latest
+      # lldpd is the main process: started from an exec it stalled now and
+      # then. It picks up eth1 and eth2 when containerlab adds them; the
+      # system name is the container hostname, leaf01.
+      cmd: lldpd -d -I eth1,eth2
+      exec:
+        - ip link set eth1 up
+        - ip link set eth2 up
+
+    booty:
+      kind: linux
+      # CABLECHECK_BOOTY_IMAGE selects another BOOTy test image.
+      image: ${CABLECHECK_BOOTY_IMAGE:=booty-gobgp-test:latest}
+      # The test starts BOOTy once the leaf runs lldpd and the links exist.
+      cmd: sleep infinity
+      binds:
+        - data/vars-cablecheck:/deploy/vars:ro
+      env:
+        BOOTY_NO_REBOOT: "1"
+
+  links:
+    - endpoints: ["leaf01:eth1", "booty:eth1"]
+    - endpoints: ["leaf01:eth2", "booty:eth2"]

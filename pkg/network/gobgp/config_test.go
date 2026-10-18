@@ -1150,3 +1150,16 @@ func TestNativePeerOptions(t *testing.T) {
 		t.Fatal("numbered peer mode: VRF_NAME alone has no session in a VRF")
 	}
 }
+
+// With LLDP_EMIT_ALL the caller sends on every NIC, so the underlay sends
+// on none and no NIC gets two senders.
+func TestEmitLLDPWithEmitAll(t *testing.T) {
+	netCfg := &network.Config{EmitLLDP: []string{"ens1f0np0"}}
+	if got := emitLLDP(netCfg); len(got) != 1 || got[0] != "ens1f0np0" {
+		t.Fatalf("emitLLDP = %v, want the emit-lldp NICs", got)
+	}
+	netCfg.LLDPEmitAll = true
+	if got := emitLLDP(netCfg); got != nil {
+		t.Fatalf("emitLLDP with emit-all = %v, want none", got)
+	}
+}

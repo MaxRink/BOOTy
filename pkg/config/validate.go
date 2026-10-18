@@ -15,6 +15,7 @@ import (
 	imageutil "github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/frrconf"
+	"github.com/telekom/BOOTy/pkg/network/lldp"
 	"github.com/telekom/BOOTy/pkg/network/netplan"
 	"github.com/telekom/BOOTy/pkg/serialconsole"
 )
@@ -149,6 +150,10 @@ func (c *Config) validatePrimaryEnums() []string {
 		func() string {
 			return validateEnumLower(c.Network.Mode, "network.mode", "gobgp", "frr", "static", "dhcp")
 		},
+		func() string {
+			return validateEnum(c.Network.LLDP.Profile, "network.lldp.profile (LLDP_PROFILE)", lldp.ProfileNetworkd, lldp.ProfileBM4XCableCheck)
+		},
+		func() string { return validateLLDPPortIDFormat(&c.Network.LLDP) },
 		func() string {
 			return validateEnumLower(c.Network.WaitMode, "network.waitMode (NETWORK_WAIT_MODE)", NetworkWaitDefault, NetworkWaitRounds)
 		},
@@ -1319,4 +1324,19 @@ func (c *Config) validateSessions() []string {
 		}
 	}
 	return errs
+}
+
+// validateLLDPPortIDFormat: a known format, and only with the
+// bm4x-cablecheck profile (the networkd profile always sends the interface
+// name).
+func validateLLDPPortIDFormat(l *LLDPConfig) string {
+	const name = "network.lldp.portIDFormat (LLDP_PORT_ID_FORMAT)"
+	if msg := validateEnum(l.PortIDFormat, name,
+		lldp.PortIDMAC, lldp.PortIDMACStringColon, lldp.PortIDMACStringDotted, lldp.PortIDIfname); msg != "" {
+		return msg
+	}
+	if l.PortIDFormat != "" && l.Profile != lldp.ProfileBM4XCableCheck {
+		return fmt.Sprintf("%s %q needs network.lldp.profile (LLDP_PROFILE) %q", name, l.PortIDFormat, lldp.ProfileBM4XCableCheck)
+	}
+	return ""
 }

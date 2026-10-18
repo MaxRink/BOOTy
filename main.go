@@ -751,6 +751,9 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 	if lldpReceiveEnabled(cfg) {
 		startLLDPReceive(ctx)
 	}
+	if cfg.Network.LLDP.EmitAllNICs() {
+		startLLDPEmitAll(ctx, &cfg.Network.LLDP)
+	}
 	connectivityTarget := cfg.Transport.InitURL
 	if connectivityTarget == "" {
 		connectivityTarget = cfg.Transport.SuccessURL
@@ -991,7 +994,6 @@ func networkWait(cfg *config.MachineConfig) (int, time.Duration) {
 	return 1, time.Duration(rounds) * 20 * time.Second
 }
 
-// setupNetworkMode detects and configures the appropriate network mode.
 // lldpReceiveEnabled is LLDP_RECEIVE, on by default.
 func lldpReceiveEnabled(cfg *config.MachineConfig) bool {
 	return config.BoolOr(cfg.Network.LLDPReceive, true)
@@ -1008,6 +1010,21 @@ func startLLDPReceive(ctx context.Context) {
 	lldp.Receive(ctx, nics, slog.With("component", "lldp"))
 }
 
+// startLLDPEmitAll sends LLDP frames on every physical NIC with carrier for
+// the rest of the run (LLDP_EMIT_ALL), in every network mode.
+func startLLDPEmitAll(ctx context.Context, l *config.LLDPConfig) {
+	nics, err := network.DetectPhysicalNICsContext(ctx)
+	if err != nil || len(nics) == 0 {
+		slog.Warn("LLDP not sent: no physical NICs", "error", err)
+		return
+	}
+	info := lldp.SystemInfo()
+	info.Profile, info.PortIDFormat = l.Profile, l.PortIDFormat
+	info.CarrierOnly = true
+	lldp.Emit(ctx, nics, &info, slog.With("component", "lldp"))
+}
+
+// setupNetworkMode detects and configures the appropriate network mode.
 // defaultNICWaitSeconds is the wait for configured NICs without
 // NIC_WAIT_SECONDS.
 const defaultNICWaitSeconds = 30
@@ -1176,6 +1193,9 @@ func networkConfigFromMachineConfig(cfg *config.MachineConfig) *network.Config {
 		OverlayDevices:    cfg.Network.Overlay,
 		NoAcceptRA:        splitList(cfg.Network.NoAcceptRA),
 		EmitLLDP:          splitList(cfg.Network.EmitLLDP),
+		LLDPProfile:       cfg.Network.LLDP.Profile,
+		LLDPPortIDFormat:  cfg.Network.LLDP.PortIDFormat,
+		LLDPEmitAll:       cfg.Network.LLDP.EmitAllNICs(),
 		IPForwarding:      cfg.Network.IPForwarding,
 		IPv6Forwarding:    cfg.Network.IPv6Forwarding,
 		BGPRouteMaps:      cfg.Network.BGP.RouteMaps,

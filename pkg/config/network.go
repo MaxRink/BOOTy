@@ -6,6 +6,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/telekom/BOOTy/pkg/network"
+	"github.com/telekom/BOOTy/pkg/network/lldp"
 	"github.com/telekom/BOOTy/pkg/network/netplan"
 )
 
@@ -109,6 +110,9 @@ type NetworkConfig struct {
 	// neighbors and adds them to the inventory report. Unset (nil) means on.
 	LLDPReceive *bool `yaml:"lldpReceive,omitempty" json:"lldpReceive,omitempty"`
 
+	// LLDP selects what BOOTy sends in its LLDP frames and on which NICs.
+	LLDP LLDPConfig `yaml:"lldp,omitempty" json:"lldp,omitempty"`
+
 	// IPForwarding and IPv6Forwarding set the forwarding sysctls (GoBGP).
 	// Unset (nil) means the frr.conf "[no] ip[v6] forwarding", else IPv4 on
 	// and IPv6 off, like the legacy ramdisk.
@@ -140,6 +144,34 @@ type NetworkConfig struct {
 	VLAN   VLANConfig   `yaml:"vlan"   json:"vlan"`
 	VRF    VRFConfig    `yaml:"vrf"    json:"vrf"`
 	IPMI   IPMIConfig   `yaml:"ipmi"   json:"ipmi"`
+}
+
+// LLDPConfig selects the identity of the sent LLDP frames and the NICs that
+// send them.
+type LLDPConfig struct {
+	// Profile is the identity of the frames: "networkd" (port ID = interface
+	// name, system name = hostname, like systemd-networkd) or
+	// "bm4x-cablecheck" (port ID = NIC MAC, system name "bare-minimal", the
+	// identity that the bm4x connection check matches).
+	// Default: "" (networkd)
+	Profile string `yaml:"profile,omitempty" json:"profile,omitempty"`
+
+	// PortIDFormat is the port ID of the bm4x-cablecheck profile: "mac"
+	// (MAC port ID, subtype 3), "mac-string-colon" ("aa:bb:cc:dd:ee:ff",
+	// subtype 7), "mac-string-dotted" ("aabb.ccdd.eeff", subtype 7) or
+	// "ifname" (interface name, subtype 5). Only with that profile.
+	// Default: "" (mac)
+	PortIDFormat string `yaml:"portIDFormat,omitempty" json:"portIDFormat,omitempty"`
+
+	// EmitAll sends on every physical NIC with carrier, not only on the
+	// emitLLDP (netplan "emit-lldp: true") NICs, in every network mode.
+	// Default: nil (on with the bm4x-cablecheck profile, else off)
+	EmitAll *bool `yaml:"emitAll,omitempty" json:"emitAll,omitempty"`
+}
+
+// EmitAllNICs reports whether BOOTy sends LLDP on every physical NIC.
+func (l LLDPConfig) EmitAllNICs() bool {
+	return BoolOr(l.EmitAll, l.Profile == lldp.ProfileBM4XCableCheck)
 }
 
 // BGPConfig holds BGP peering and tuning parameters.

@@ -120,11 +120,13 @@ type Config struct {
 	ExportRTs []string
 	// OverlayDevices, NoAcceptRA and the forwarding settings come from
 	// netplan, frr.conf or the native options.
-	OverlayDevices network.OverlayDevices
-	NoAcceptRA     []string
-	EmitLLDP       []string
-	IPForwarding   *bool
-	IPv6Forwarding *bool
+	OverlayDevices   network.OverlayDevices
+	NoAcceptRA       []string
+	EmitLLDP         []string
+	LLDPProfile      string
+	LLDPPortIDFormat string
+	IPForwarding     *bool
+	IPv6Forwarding   *bool
 	// InstallRoutes runs the FIB writer, like zebra.
 	InstallRoutes bool
 	// FastExternalFailover stops unnumbered sessions on carrier loss.
@@ -211,7 +213,9 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		FastExternalFailover: fastExternalFailover(netCfg),
 		OverlayDevices:       netCfg.OverlayDevices,
 		NoAcceptRA:           netCfg.NoAcceptRA,
-		EmitLLDP:             netCfg.EmitLLDP,
+		EmitLLDP:             emitLLDP(netCfg),
+		LLDPProfile:          netCfg.LLDPProfile,
+		LLDPPortIDFormat:     netCfg.LLDPPortIDFormat,
 		IPForwarding:         netCfg.IPForwarding,
 		IPv6Forwarding:       netCfg.IPv6Forwarding,
 		RouteMaps:            netCfg.BGPRouteMaps,
@@ -532,4 +536,13 @@ func fastExternalFailover(n *network.Config) bool {
 		return *n.BGPFastExternalFailover
 	}
 	return len(n.BGPSessions) > 0
+}
+
+// emitLLDP lists the NICs that the underlay sends LLDP on: none when the
+// caller sends on every NIC (LLDPEmitAll).
+func emitLLDP(netCfg *network.Config) []string {
+	if netCfg.LLDPEmitAll {
+		return nil
+	}
+	return netCfg.EmitLLDP
 }

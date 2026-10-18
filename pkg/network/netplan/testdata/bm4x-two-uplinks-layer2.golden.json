@@ -313,6 +313,9 @@
     "ens1f0np0",
     "ens1f1np1"
   ],
+  "LLDPProfile": "",
+  "LLDPPortIDFormat": "",
+  "LLDPEmitAll": false,
   "IPForwarding": false,
   "IPv6Forwarding": null,
   "VLANs": null
