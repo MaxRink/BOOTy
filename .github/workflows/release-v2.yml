@@ -793,20 +793,25 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Generate changelog
-        uses: orhun/git-cliff-action@a9a95522b26fe6403f7bb24031f21fb573d0f5ff
-        with:
-          config: cliff.toml
-          args: --latest --strip header
+      # Keep the version in sync with GIT_CLIFF_VERSION in changelog.yml.
+      - name: Install git-cliff
+        run: pipx install "git-cliff==2.14.2"
+
+      # The section of the tag in CHANGELOG.md (written by the release commit,
+      # see CONTRIBUTING.md#releases), or generated when the tag has none.
+      - name: Generate release notes
+        shell: bash
         env:
-          OUTPUT: CHANGELOG.md
+          TAG: ${{ github.ref_name }}
+        run: python3 -B hack/changelog.py notes "$TAG" | tee release-notes.md
 
       - name: Upload changelog
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: changelog
-          path: CHANGELOG.md
+          path: release-notes.md
           if-no-files-found: error
 
   release:
@@ -832,7 +837,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64
         with:
-          body_path: artifacts/changelog/CHANGELOG.md
+          body_path: artifacts/changelog/release-notes.md
           files: release-files/*
           prerelease: ${{ needs.validate-tag.outputs.prerelease }}
           make_latest: ${{ needs.validate-tag.outputs.make_latest }}

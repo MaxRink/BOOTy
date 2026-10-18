@@ -29,6 +29,7 @@ Lightweight initramfs agent for bare-metal OS provisioning (not a K8s operator).
 - **Complexity**: Max 80 lines / 50 statements per function (strict `funlen` lint).
 - **Concurrency**: Prefer `atomic` operations over mutexes for simple state.
 - **E2E Tests**: Use specific build tags: `e2e_integration`, `e2e_gobgp`, `e2e_boot`, `e2e_vrnetlab`.
+- **Changelog**: Never edit `CHANGELOG.md` in a PR. The squash-merged PR title (Conventional Commit) becomes the changelog line; put upgrade, breaking or behaviour notes in a `changes/<PR>.md` fragment. See `CONTRIBUTING.md#changelog`.
 
 ## ANTI-PATTERNS
 - **No interactive prompts**: The agent runs unattended; all logic must be automated.
@@ -90,6 +91,7 @@ for evaluated candidates, retained policies and linked dependency constraints.
 | E2E Network | `make clab-up && make test-e2e-integration` |
 | E2E Boot | `make clab-boot-up && make test-e2e-boot` |
 | E2E QEMU/KVM | `make clab-vrnetlab-up && make test-e2e-vrnetlab` |
+| Changelog preview | `make changelog` (needs git-cliff) |
 
 ## NOTES
 - **PID 1**: BOOTy manages its own mounts/devices in early init. See `main.go:setupMountsAndDevices`.

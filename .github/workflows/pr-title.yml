@@ -1,0 +1,32 @@
+name: PR Title
+
+# A separate workflow, so that a title edit runs only this check and does not
+# cancel the jobs of the Changelog or CI workflows.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+concurrency:
+  group: pr-title-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pr-title:
+    name: PR Title
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # The squash merge uses the PR title as the commit title, and the
+      # changelog line comes from it. See CONTRIBUTING.md#pull-request-titles.
+      - name: Check that the PR title is a Conventional Commit
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          types='feat|fix|perf|docs|build|ci|test|refactor|chore|revert|style'
+          if ! printf '%s\n' "$TITLE" | grep -Eq "^(${types})(\([a-z0-9._/,-]+\))?!?: [^ ]"; then
+            echo "::error::PR title \"$TITLE\" is not '<type>(<scope>): <description>' with type one of ${types//|/, }"
+            exit 1
+          fi

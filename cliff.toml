@@ -1,26 +1,18 @@
 # git-cliff configuration for BOOTy
 # https://git-cliff.org/docs/configuration
+#
+# hack/changelog.py reads the commits that these parsers group (git-cliff
+# --context) and writes the release sections of CHANGELOG.md. The group names
+# are the section headings in CHANGELOG.md. The body template below is only
+# for a plain `git cliff` run.
 
 [changelog]
-header = """
-# Changelog
-
-All notable changes to BOOTy are documented here.
-
-"""
 body = """
-{% if version %}\
-    ## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
-{% else %}\
-    ## [Unreleased]
-{% endif %}\
 {% for group, commits in commits | group_by(attribute="group") %}
-    ### {{ group | striptags | trim | upper_first }}
-    {% for commit in commits %}
-        - {% if commit.scope %}**{{ commit.scope }}**: {% endif %}
-            {{ commit.message | upper_first }}
-            {% if commit.breaking %} (**BREAKING**){% endif %}
-    {% endfor %}
+### {{ group }}
+{% for commit in commits %}
+- {% if commit.scope %}{{ commit.scope }}: {% endif %}{{ commit.message }}
+{%- endfor %}
 {% endfor %}
 """
 trim = true
@@ -30,17 +22,17 @@ conventional_commits = true
 filter_unconventional = true
 split_commits = false
 commit_parsers = [
+    { message = "^[a-z]+(\\([^)]*\\))?!:", group = "Breaking changes" },
+    { message = "^[a-z]+\\(deps[^)]*\\)", group = "Dependencies" },
+    { message = "^(chore|style)", skip = true },
+    { message = "^revert", group = "Reverts" },
     { message = "^feat", group = "Features" },
-    { message = "^fix", group = "Bug Fixes" },
+    { message = "^fix", group = "Fixes" },
     { message = "^perf", group = "Performance" },
-    { message = "^refactor", group = "Refactoring" },
-    { message = "^docs", group = "Documentation" },
-    { message = "^test", group = "Testing" },
-    { message = "^ci", group = "CI/CD" },
-    { message = "^chore", group = "Miscellaneous" },
-    { message = "^build", group = "Build" },
-    { body = ".*security", group = "Security" },
+    { message = "^docs", group = "Docs" },
+    { message = "^(build|ci|test)", group = "CI, build and tests" },
+    { message = "^refactor", group = "Maintenance" },
 ]
-filter_commits = false
+filter_commits = true
 tag_pattern = "v[0-9].*"
-sort_commits = "newest"
+sort_commits = "oldest"

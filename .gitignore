@@ -30,3 +30,6 @@ test/e2e/clab/images/test.img.gz
 Thumbs.db
 .worktrees/
 findings.md
+
+# Python bytecode
+__pycache__/

@@ -93,6 +93,7 @@ CAPRF-compatible `/deploy/vars` file.
 | Go                   | 1.27+   | `GOOS=linux` for cross-compilation on macOS/Windows |
 | Docker / Buildx      | 20.10+  | Multi-arch builds (`linux/amd64`, `linux/arm64`) |
 | golangci-lint        | v2.12.2 | Installed into `bin/` by `make lint`, config in `.golangci.yml` |
+| git-cliff            | 2.14.2  | `make changelog` only, for example `pipx install git-cliff==2.14.2` |
 | GNU Make             | 4.0+    | Build automation |
 | ContainerLab         | 0.44+   | E2E tests only (Linux) |
 | KVM / QEMU           | —       | E2E boot tests only (Linux) |
@@ -1441,6 +1442,7 @@ make build       # Build the binary
 make test        # Unit tests with the race detector and the coverage gate
 make lint        # golangci-lint for the Linux build
 make fmt-check   # Check the formatting. "make fmt" rewrites the files.
+make changelog   # Print the next release section of CHANGELOG.md (needs git-cliff)
 
 # E2E tests without KVM (Linux). Some tests build the initramfs with Docker.
 make test-e2e
@@ -1537,7 +1539,8 @@ vrnetlab topologies and the test levels.
 | [docs/size-optimization.md](docs/size-optimization.md) | Initramfs size optimization |
 | [docs/library-adoption.md](docs/library-adoption.md) | Library adoption policy |
 | [docs/roadmap.md](docs/roadmap.md) | Feature roadmap (P0 to P4 priorities) and design proposals (`docs/proposal-*.md`) |
-| [CHANGELOG.md](CHANGELOG.md) | Changes in each release and in the unreleased `main` |
+| [CHANGELOG.md](CHANGELOG.md) | Changes in each release, generated from the pull request titles |
+| [changes/](changes/README.md) | Optional release notes of open changes (upgrade notes, breaking changes) |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Development setup, coding standards, PR process |
 | [.github/AGENTS.md](.github/AGENTS.md) | Copilot agents, review personas, prompts |
 | [.github/copilot-instructions.md](.github/copilot-instructions.md) | Project guidelines for Copilot |
