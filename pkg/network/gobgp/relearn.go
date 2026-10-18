@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	apipb "github.com/osrg/gobgp/v3/api"
+	apipb "github.com/osrg/gobgp/v4/api"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 	"google.golang.org/protobuf/proto"
@@ -116,7 +116,7 @@ func (u *UnderlayTier) startRelearn() {
 func (u *UnderlayTier) peerEstablished(ctx context.Context, addr string) bool {
 	up := false
 	_ = u.bgp.ListPeer(ctx, &apipb.ListPeerRequest{Address: addr}, func(p *apipb.Peer) {
-		up = p.GetState().GetSessionState() == apipb.PeerState_ESTABLISHED
+		up = p.GetState().GetSessionState() == apipb.PeerState_SESSION_STATE_ESTABLISHED
 	})
 	return up
 }
@@ -227,7 +227,7 @@ func (u *UnderlayTier) moveNeighborSets(ctx context.Context, old, addr string, d
 	}
 	from, to := hostPrefix(oldIP), hostPrefix(newIP)
 	var names []string
-	if err := u.bgp.ListDefinedSet(ctx, &apipb.ListDefinedSetRequest{DefinedType: apipb.DefinedType_NEIGHBOR},
+	if err := u.bgp.ListDefinedSet(ctx, &apipb.ListDefinedSetRequest{DefinedType: apipb.DefinedType_DEFINED_TYPE_NEIGHBOR},
 		func(d *apipb.DefinedSet) {
 			if slices.Contains(d.GetList(), from) {
 				names = append(names, d.GetName())
@@ -236,14 +236,14 @@ func (u *UnderlayTier) moveNeighborSets(ctx context.Context, old, addr string, d
 		return fmt.Errorf("list neighbor sets: %w", err)
 	}
 	for _, name := range names {
-		set := &apipb.DefinedSet{DefinedType: apipb.DefinedType_NEIGHBOR, Name: name, List: []string{to}}
+		set := &apipb.DefinedSet{DefinedType: apipb.DefinedType_DEFINED_TYPE_NEIGHBOR, Name: name, List: []string{to}}
 		if err := u.bgp.AddDefinedSet(ctx, &apipb.AddDefinedSetRequest{DefinedSet: set}); err != nil {
 			return fmt.Errorf("add %s to neighbor set %s: %w", to, name, err)
 		}
 		if !drop {
 			continue
 		}
-		set = &apipb.DefinedSet{DefinedType: apipb.DefinedType_NEIGHBOR, Name: name, List: []string{from}}
+		set = &apipb.DefinedSet{DefinedType: apipb.DefinedType_DEFINED_TYPE_NEIGHBOR, Name: name, List: []string{from}}
 		if err := u.bgp.DeleteDefinedSet(ctx, &apipb.DeleteDefinedSetRequest{DefinedSet: set}); err != nil {
 			return fmt.Errorf("remove %s from neighbor set %s: %w", from, name, err)
 		}

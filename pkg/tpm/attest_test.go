@@ -5,6 +5,8 @@ package tpm
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
@@ -437,5 +439,32 @@ func TestMakeCredentialRejectsNonTCGEK(t *testing.T) {
 				t.Fatalf("MakeCredential = %v, want ErrEKNotTCG", err)
 			}
 		})
+	}
+}
+
+// parseAK takes the P-256 point of the AK public area and rejects a point
+// that is not on the curve.
+func TestParseAKPoint(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := key.PublicKey.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	withPoint := func(x, y []byte) []byte {
+		pub := akTemplate
+		pub.Unique = tpm2.NewTPMUPublicID(tpm2.TPMAlgECC, &tpm2.TPMSECCPoint{
+			X: tpm2.TPM2BECCParameter{Buffer: x}, Y: tpm2.TPM2BECCParameter{Buffer: y},
+		})
+		return tpm2.Marshal(pub)
+	}
+	got, _, err := parseAK(withPoint(b[1:33], b[33:]))
+	if err != nil || !got.Equal(&key.PublicKey) {
+		t.Fatalf("parseAK = %v, %v; want the generated key", got, err)
+	}
+	if _, _, err := parseAK(withPoint(b[1:33], []byte{1})); err == nil {
+		t.Fatal("parseAK accepted a point off the curve")
 	}
 }

@@ -2633,7 +2633,7 @@ func TestParseVarsGRUBCmdlineMode(t *testing.T) {
 		"GRUB_CMDLINE_MODE=append\n":                             true,
 		"CAPRF_LEGACY_COMPAT=true\n":                             true,
 		"CAPRF_LEGACY_COMPAT=true\nGRUB_CMDLINE_MODE=resolved\n": false,
-		"HOSTNAME=x\n": false,
+		"HOSTNAME=x\n":                                           false,
 	} {
 		cfg, err := ParseVars(strings.NewReader(vars))
 		if err != nil {

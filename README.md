@@ -82,7 +82,7 @@ CAPRF-compatible `/deploy/vars` file.
 
 ## Prerequisites
 
-- Go **1.26+**
+- Go **1.27+**
 - Docker (for building the initramfs)
 - Redfish BMC with ISO virtual media or another boot path that supplies the BOOTy kernel, initramfs, and `/deploy/vars`
 
@@ -90,7 +90,7 @@ CAPRF-compatible `/deploy/vars` file.
 
 | Requirement          | Version | Notes |
 |----------------------|---------|-------|
-| Go                   | 1.26+   | `GOOS=linux` for cross-compilation on macOS/Windows |
+| Go                   | 1.27+   | `GOOS=linux` for cross-compilation on macOS/Windows |
 | Docker / Buildx      | 20.10+  | Multi-arch builds (`linux/amd64`, `linux/arm64`) |
 | golangci-lint        | v2.12.2 | Installed into `bin/` by `make lint`, config in `.golangci.yml` |
 | GNU Make             | 4.0+    | Build automation |

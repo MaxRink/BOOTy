@@ -12,8 +12,8 @@ import (
 	"syscall"
 	"testing"
 
-	apipb "github.com/osrg/gobgp/v3/api"
-	"github.com/osrg/gobgp/v3/pkg/server"
+	apipb "github.com/osrg/gobgp/v4/api"
+	"github.com/osrg/gobgp/v4/pkg/server"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 )
@@ -141,11 +141,8 @@ func TestAdvertiseType5NetworksImportCheck(t *testing.T) {
 		t.Fatalf("advertise: %v", err)
 	}
 	var got []string
-	err := bgp.ListPath(ctx, &apipb.ListPathRequest{
-		TableType: apipb.TableType_GLOBAL,
-		Family:    &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
-	}, func(dst *apipb.Destination) {
-		for _, p := range dst.GetPaths() {
+	for _, paths := range listPaths(t, bgp, &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN}) {
+		for _, p := range paths {
 			r := mustFindType5Route(t, p)
 			if r.GetGwAddress() != "::" || r.GetLabel() != 3000 || extractNextHop(p) != "192.0.2.17" ||
 				!matchesLocalRT(p, 65169, 3000) || mustFindRouterMAC(t, p) != "02:54:c0:00:02:11" {
@@ -153,9 +150,6 @@ func TestAdvertiseType5NetworksImportCheck(t *testing.T) {
 			}
 			got = append(got, fmt.Sprintf("%s/%d", r.GetIpPrefix(), r.GetIpPrefixLen()))
 		}
-	})
-	if err != nil {
-		t.Fatalf("list paths: %v", err)
 	}
 	slices.Sort(got)
 	want := []string{"2001:db8:40a:5481::/64", "2001:db8:40a:5481::17/128"}

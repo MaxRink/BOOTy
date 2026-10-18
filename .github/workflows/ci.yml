@@ -28,13 +28,13 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.6"
+          go-version: "1.27.2"
           cache: true
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
         with:
-          version: v2.12.2
+          version: v2.14.0
 
   test:
     name: Test
@@ -47,7 +47,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.6"
+          go-version: "1.27.2"
           cache: true
 
       - name: Install swtpm
@@ -115,7 +115,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.6"
+          go-version: "1.27.2"
           cache: true
 
       - name: Run govulncheck
@@ -132,7 +132,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.6"
+          go-version: "1.27.2"
           cache: true
 
       - name: Run E2E tests
@@ -190,7 +190,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.6"
+          go-version: "1.27.2"
           cache: true
 
       - name: Build
@@ -227,7 +227,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Build slim initramfs
         run: |
@@ -464,7 +464,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Build initramfs (${{ matrix.flavor }}/arm64)
         run: |
@@ -506,7 +506,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.6"
+          go-version: "1.27.2"
 
       - name: Install QEMU and dependencies
         run: |
@@ -686,7 +686,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.6"
+          go-version: "1.27.2"
 
       - name: Generate test disk image
         run: sudo test/e2e/clab/create-test-image.sh test/e2e/clab/images
@@ -816,7 +816,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.6"
+          go-version: "1.27.2"
 
       - name: Build BOOTy test container image
         run: test/e2e/clab/docker-build-retry.sh -t booty-test:latest -f test/e2e/clab/booty-test.Dockerfile .
@@ -942,7 +942,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.6"
+          go-version: "1.27.2"
 
       - name: Install UEFI and ISO dependencies
         run: |
@@ -1181,7 +1181,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.6"
+          go-version: "1.27.2"
 
       - name: Install disk utilities
         run: |
@@ -1287,7 +1287,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.6"
+          go-version: "1.27.2"
 
       - name: Build BOOTy test container image
         run: test/e2e/clab/docker-build-retry.sh -t booty-test:latest -f test/e2e/clab/booty-test.Dockerfile .
@@ -1409,7 +1409,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.6"
+          go-version: "1.27.2"
 
       - name: Build GoBGP test image
         run: test/e2e/clab/docker-build-retry.sh -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
@@ -1547,7 +1547,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.6"
+          go-version: "1.27.2"
 
       - name: Build GoBGP test image
         run: test/e2e/clab/docker-build-retry.sh -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
@@ -1696,7 +1696,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.6"
+          go-version: "1.27.2"
 
       - name: Build GoBGP test image
         run: test/e2e/clab/docker-build-retry.sh -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
@@ -1757,7 +1757,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.6"
+          go-version: "1.27.2"
 
       - name: Build GoBGP test image
         run: test/e2e/clab/docker-build-retry.sh -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
@@ -1865,7 +1865,7 @@ jobs:
       - name: Upload production template logs
         if: always()
         continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: prodtpl-logs
           path: |
@@ -1893,7 +1893,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.6"
+          go-version: "1.27.2"
 
       - name: Build GoBGP test image
         run: test/e2e/clab/docker-build-retry.sh -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
@@ -2001,7 +2001,7 @@ jobs:
       - name: Upload production template logs
         if: always()
         continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: prodtpl-logs-one-uplink
           path: |
@@ -2030,7 +2030,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.6"
+          go-version: "1.27.2"
 
       - name: Build GoBGP test image
         run: test/e2e/clab/docker-build-retry.sh -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
@@ -2138,7 +2138,7 @@ jobs:
       - name: Upload production template logs
         if: always()
         continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: prodtpl-logs-native-model
           path: |
@@ -2166,7 +2166,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.6"
+          go-version: "1.27.2"
 
       - name: Build BOOTy vrnetlab VM image
         run: test/e2e/clab/docker-build-retry.sh -t booty-vrnetlab:latest -f test/e2e/clab/vrnetlab/Dockerfile .
@@ -2338,7 +2338,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.6"
+          go-version: "1.27.2"
 
       - name: Build BOOTy vrnetlab VM image
         run: test/e2e/clab/docker-build-retry.sh -t booty-vrnetlab:latest -f test/e2e/clab/vrnetlab/Dockerfile .

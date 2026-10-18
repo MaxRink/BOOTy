@@ -10,10 +10,9 @@ import (
 	"syscall"
 	"testing"
 
-	apipb "github.com/osrg/gobgp/v3/api"
+	apipb "github.com/osrg/gobgp/v4/api"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
-	"google.golang.org/protobuf/types/known/anypb"
 )
 
 const type5E2ETable = 4242
@@ -128,10 +127,7 @@ func setupType5E2ELinks(t *testing.T, cfg *Config) (bridge, vxlan netlink.Link) 
 // gateway, like the routes FRR sends.
 func type5E2ERoute(t *testing.T, rdAssigned uint32) *apipb.EVPNIPPrefixRoute {
 	t.Helper()
-	rd, err := anypb.New(&apipb.RouteDistinguisherTwoOctetASN{Admin: 65000, Assigned: rdAssigned})
-	if err != nil {
-		t.Fatalf("anypb.New: %v", err)
-	}
+	rd := &apipb.RouteDistinguisher{Rd: &apipb.RouteDistinguisher_TwoOctetAsn{TwoOctetAsn: &apipb.RouteDistinguisherTwoOctetASN{Admin: 65000, Assigned: rdAssigned}}}
 	return &apipb.EVPNIPPrefixRoute{Rd: rd, IpPrefix: "0.0.0.0", IpPrefixLen: 0, GwAddress: "0.0.0.0"}
 }
 

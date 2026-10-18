@@ -19,7 +19,7 @@ from typing import Any
 GOVULNCHECK = [
     "go",
     "run",
-    "golang.org/x/vuln/cmd/govulncheck@v1.4.0",
+    "golang.org/x/vuln/cmd/govulncheck@v1.8.0",
     "-format=json",
     "./...",
 ]
@@ -37,12 +37,15 @@ class AllowlistedVulnerability:
 
 
 ALLOWLIST = {
-    # GoBGP v3.37.0 is the latest published v3 module and the Go vulnerability
-    # database currently reports no fixed version. Keep this narrow so the gate
-    # still fails on any other reachable advisory or module.
+    # CVE-2026-30405 (NEXT_HOP denial of service). The fix, osrg/gobgp commit
+    # 583080a7 "server: fix malformed nexthop attribute crash", is in v4.4.0
+    # and later, but the Go vulnerability database reports no fixed version for
+    # any GoBGP module. Keep the exception to the exact version in go.mod, so a
+    # GoBGP change has to check this again.
     "GO-2026-4736": AllowlistedVulnerability(
-        module="github.com/osrg/gobgp/v3",
-        reason="latest upstream module, no fixed version reported",
+        module="github.com/osrg/gobgp/v4",
+        reason="fixed by 583080a7 since v4.4.0; the Go vuln DB lists no fixed version",
+        versions=frozenset({"4.10.0"}),
     ),
     # Stable gRPC v1.84.0 contains the backported fix for GHSA-2v4p-qf9q-27wj.
     # Keep this exact-version exception narrow while the Go vulnerability

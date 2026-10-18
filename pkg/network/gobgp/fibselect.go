@@ -8,9 +8,8 @@ import (
 	"slices"
 	"strings"
 
-	apipb "github.com/osrg/gobgp/v3/api"
-	"github.com/osrg/gobgp/v3/pkg/apiutil"
-	"github.com/osrg/gobgp/v3/pkg/packet/bgp"
+	"github.com/osrg/gobgp/v4/pkg/apiutil"
+	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
 )
 
 // fibRoute is a kernel route that the FIB writer installs: the best path
@@ -45,6 +44,12 @@ type pathInfo struct {
 	nexthop   fibNexthop
 }
 
+// fibDest is one destination of a ListPath result.
+type fibDest struct {
+	prefix bgp.NLRI
+	paths  []*apiutil.Path
+}
+
 // fibSelector holds what route selection needs to know about the
 // sessions. localAS returns the effective local AS of the session of a
 // neighbor (its local-as, else the router AS), table its routing table
@@ -63,7 +68,7 @@ type fibSelector struct {
 // multipath rule (see equalCost). Paths that BOOTy originated itself are
 // skipped. A path that can not be installed is skipped and reported in the
 // error; the other routes are still returned.
-func (s *fibSelector) selectRoutes(dests []*apipb.Destination) ([]fibRoute, error) {
+func (s *fibSelector) selectRoutes(dests []fibDest) ([]fibRoute, error) {
 	var out []fibRoute
 	var errs []error
 	for _, d := range dests {
@@ -77,10 +82,10 @@ func (s *fibSelector) selectRoutes(dests []*apipb.Destination) ([]fibRoute, erro
 }
 
 // selectDestination returns the routes of one destination, one per table.
-func (s *fibSelector) selectDestination(d *apipb.Destination) ([]fibRoute, error) {
-	prefix, err := netip.ParsePrefix(d.GetPrefix())
+func (s *fibSelector) selectDestination(d fibDest) ([]fibRoute, error) {
+	prefix, err := netip.ParsePrefix(d.prefix.String())
 	if err != nil {
-		return nil, fmt.Errorf("destination %q: %w", d.GetPrefix(), err)
+		return nil, fmt.Errorf("destination %q: %w", d.prefix, err)
 	}
 	byTable, err := s.pathsByTable(d, prefix)
 	tables := make([]int, 0, len(byTable))
@@ -116,11 +121,11 @@ func (s *fibSelector) selectDestination(d *apipb.Destination) ([]fibRoute, error
 // pathsByTable groups the learned paths of a destination by the table of
 // their session. A destination with a path of BOOTy itself (its own
 // prefix) gets no kernel route, like a local route wins in FRR.
-func (s *fibSelector) pathsByTable(d *apipb.Destination, prefix netip.Prefix) (map[int][]*pathInfo, error) {
+func (s *fibSelector) pathsByTable(d fibDest, prefix netip.Prefix) (map[int][]*pathInfo, error) {
 	byTable := map[int][]*pathInfo{}
 	var errs []error
-	for _, p := range d.GetPaths() {
-		if p.GetFiltered() || p.GetIsWithdraw() {
+	for _, p := range d.paths {
+		if p.Filtered || p.Withdrawal {
 			continue
 		}
 		if !learned(p) {
@@ -138,13 +143,8 @@ func (s *fibSelector) pathsByTable(d *apipb.Destination, prefix netip.Prefix) (m
 
 // learned reports whether a path came from a peer. Paths that BOOTy
 // added itself have no neighbor address.
-func learned(p *apipb.Path) bool {
-	n := p.GetNeighborIp()
-	if n == "" || n == "<nil>" {
-		return false
-	}
-	addr, err := netip.ParseAddr(n)
-	return err == nil && !addr.IsUnspecified()
+func learned(p *apiutil.Path) bool {
+	return p.PeerAddress.IsValid() && !p.PeerAddress.IsUnspecified()
 }
 
 // equalCost is the multipath rule of FRR 10.3 (bgpd/bgp_route.c
@@ -207,10 +207,10 @@ func (info *pathInfo) read(attrs []bgp.PathAttributeInterface) (nh, ll netip.Add
 				info.asLen += seg.ASLen()
 			}
 		case *bgp.PathAttributeNextHop:
-			nh, _ = netip.AddrFromSlice(a.Value)
+			nh = a.Value
 		case *bgp.PathAttributeMpReachNLRI:
-			nh, _ = netip.AddrFromSlice(a.Nexthop)
-			ll, _ = netip.AddrFromSlice(a.LinkLocalNexthop)
+			nh = a.Nexthop
+			ll = a.LinkLocalNexthop
 		}
 	}
 	if len(info.asPath) > 0 {
@@ -219,23 +219,19 @@ func (info *pathInfo) read(attrs []bgp.PathAttributeInterface) (nh, ll netip.Add
 	return nh, ll
 }
 
-func (s *fibSelector) describePath(p *apipb.Path) (*pathInfo, error) {
-	attrs, err := apiutil.GetNativePathAttributes(p)
-	if err != nil {
-		return nil, fmt.Errorf("decode path attributes: %w", err)
-	}
-	neighbor := p.GetNeighborIp()
+func (s *fibSelector) describePath(p *apiutil.Path) (*pathInfo, error) {
+	neighbor := p.PeerAddress.String()
 	info := &pathInfo{
 		localPref: 100,
-		peerAS:    p.GetSourceAsn(),
+		peerAS:    p.PeerASN,
 		neighbor:  neighbor,
-		best:      p.GetBest(),
+		best:      p.Best,
 		table:     s.table(neighbor),
 	}
 	// iBGP is a peer in the session's effective local AS (FRR 10.3
 	// peer_calc_sort uses the local-as).
 	info.internal = info.peerAS == s.localAS(neighbor)
-	nh, ll := info.read(attrs)
+	nh, ll := info.read(p.Attrs)
 	// A link-local next hop is preferred, like zebra does for a directly
 	// connected peer that sends a global and a link-local address.
 	if ll.IsValid() && ll.IsLinkLocalUnicast() {

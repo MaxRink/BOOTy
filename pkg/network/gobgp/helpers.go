@@ -6,6 +6,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"time"
+
+	apipb "github.com/osrg/gobgp/v4/api"
+	"github.com/osrg/gobgp/v4/pkg/apiutil"
+	"github.com/osrg/gobgp/v4/pkg/server"
 )
 
 // procSysNet is the sysctl tree of the network settings; tests point it
@@ -50,4 +55,36 @@ func enableForwarding(log *slog.Logger, ipv4, ipv6 *bool) error {
 		}
 	}
 	return nil
+}
+
+// addPath originates a path built with the GoBGP API types. GoBGP v4
+// BgpServer.AddPath takes the native types (pkg/server/server.go:2589), so
+// the path is converted the way the gRPC server does it.
+func addPath(s *server.BgpServer, p *apipb.Path) error {
+	nlri, err := apiutil.GetNativeNlri(p)
+	if err != nil {
+		return fmt.Errorf("convert NLRI: %w", err)
+	}
+	attrs, err := apiutil.GetNativePathAttributes(p)
+	if err != nil {
+		return fmt.Errorf("convert path attributes: %w", err)
+	}
+	if _, err := s.AddPath(apiutil.AddPathRequest{Paths: []*apiutil.Path{{
+		Family: apiutil.ToFamily(p.GetFamily()),
+		Nlri:   nlri,
+		Attrs:  attrs,
+	}}}); err != nil {
+		return fmt.Errorf("add path %s: %w", nlri, err)
+	}
+	return nil
+}
+
+// apiPath converts a native path of a GoBGP v4 watch event into the API
+// type the overlay handlers use.
+func apiPath(p *apiutil.Path) (*apipb.Path, error) {
+	out, err := apiutil.NewPath(p.Family, p.Nlri, p.Withdrawal, p.Attrs, time.Unix(p.Age, 0))
+	if err != nil {
+		return nil, fmt.Errorf("convert path %s: %w", p.Nlri, err)
+	}
+	return out, nil
 }

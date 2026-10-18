@@ -34,10 +34,14 @@ Use the established dependency set:
 
 ```go
 "github.com/vishvananda/netlink"          // Link, Addr, Route operations
-"github.com/osrg/gobgp/v3/pkg/server"    // BgpServer
-apipb "github.com/osrg/gobgp/v3/api"     // Protobuf API (always aliased as apipb)
+"github.com/osrg/gobgp/v4/pkg/server"    // BgpServer
+apipb "github.com/osrg/gobgp/v4/api"     // Protobuf API (always aliased as apipb)
 "golang.org/x/net/ipv6"                   // Multicast, hop limits
 ```
+
+GoBGP v4 `BgpServer.AddPath`, `ListPath` and `WatchEvent` take and return the
+native `apiutil`/`bgp` types. Paths built with `apipb` go through `addPath`, and
+watch events reach the overlay handlers through `apiPath` (`gobgp/helpers.go`).
 
 ## Testing
 

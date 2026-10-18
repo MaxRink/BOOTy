@@ -60,7 +60,7 @@ RUN ./autogen.sh && ./configure --enable-static-programs=sfdisk && make
 RUN strip --strip-all sfdisk.static
 
 # Build BOOTy as an init
-FROM golang:1.27.1-alpine AS dev
+FROM golang:1.27.2-alpine AS dev
 ARG BOOTY_VERSION=dev
 ARG BOOTY_BUILD=unknown
 ARG BOOTY_COMMIT_TIME=
@@ -742,7 +742,7 @@ FROM scratch AS gobgp-iso
 COPY --from=gobgp-iso-builder /booty-gobgp.iso .
 
 # ── Micro target: pure-Go BOOTy only, no external binaries ────────────────
-FROM golang:1.27.1-trixie AS micro-dev
+FROM golang:1.27.2-trixie AS micro-dev
 ARG BOOTY_VERSION=dev
 ARG BOOTY_BUILD=unknown
 ARG BOOTY_COMMIT_TIME=

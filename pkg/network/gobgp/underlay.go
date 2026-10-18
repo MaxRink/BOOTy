@@ -18,12 +18,11 @@ import (
 	"syscall"
 	"time"
 
-	apipb "github.com/osrg/gobgp/v3/api"
-	"github.com/osrg/gobgp/v3/pkg/server"
+	apipb "github.com/osrg/gobgp/v4/api"
+	"github.com/osrg/gobgp/v4/pkg/server"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/net/ipv6"
 	"golang.org/x/sys/unix"
-	"google.golang.org/protobuf/types/known/anypb"
 
 	exec "github.com/telekom/BOOTy/pkg/executil"
 	"github.com/telekom/BOOTy/pkg/network"
@@ -502,7 +501,9 @@ func (u *UnderlayTier) setNICMTU() {
 }
 
 func (u *UnderlayTier) startBgpServer(ctx context.Context) error {
-	u.bgp = server.NewBgpServer()
+	// GoBGP v4 logs nothing without a logger (v3 logged at info to
+	// stderr), so it logs through BOOTy's handler.
+	u.bgp = server.NewBgpServer(server.LoggerOption(u.log.With("component", "gobgp"), nil))
 	go u.bgp.Serve()
 
 	global := &apipb.Global{
@@ -987,7 +988,7 @@ func (u *UnderlayTier) countEstablishedPeers(ctx context.Context) int {
 	var count int
 
 	fn := func(p *apipb.Peer) {
-		if p.GetState().GetSessionState() == apipb.PeerState_ESTABLISHED {
+		if p.GetState().GetSessionState() == apipb.PeerState_SESSION_STATE_ESTABLISHED {
 			count++
 		}
 	}
@@ -1008,41 +1009,18 @@ func (u *UnderlayTier) announceUnderlayRoute(ctx context.Context) error {
 		return fmt.Errorf("invalid router ID %q", u.cfg.RouterID)
 	}
 
-	nlri, err := anypb.New(&apipb.IPAddressPrefix{
-		PrefixLen: 32,
-		Prefix:    u.cfg.RouterID,
-	})
-	if err != nil {
-		return fmt.Errorf("build NLRI: %w", err)
-	}
-
-	origin, err := anypb.New(&apipb.OriginAttribute{Origin: 0}) // IGP
-	if err != nil {
-		return fmt.Errorf("build origin attr: %w", err)
-	}
-
 	// Use 0.0.0.0 as next-hop so GoBGP replaces it with the session's
 	// local address for each peer. For numbered peers this resolves to the
 	// interface IPv4 address; for unnumbered peers GoBGP detects the IPv6
 	// link-local local address and uses RFC 5549 extended next-hop encoding
 	// (MP_REACH_NLRI with IPv6 next-hop for IPv4 unicast).
-	nexthop, err := anypb.New(&apipb.NextHopAttribute{NextHop: "0.0.0.0"})
-	if err != nil {
-		return fmt.Errorf("build nexthop attr: %w", err)
-	}
-
-	aspath, err := anypb.New(&apipb.AsPathAttribute{
-		Segments: []*apipb.AsSegment{},
-	})
-	if err != nil {
-		return fmt.Errorf("build as-path attr: %w", err)
-	}
-
-	_, err = u.bgp.AddPath(ctx, &apipb.AddPathRequest{
-		Path: &apipb.Path{
-			Family: &apipb.Family{Afi: apipb.Family_AFI_IP, Safi: apipb.Family_SAFI_UNICAST},
-			Nlri:   nlri,
-			Pattrs: []*anypb.Any{origin, nexthop, aspath},
+	err := addPath(u.bgp, &apipb.Path{
+		Family: &apipb.Family{Afi: apipb.Family_AFI_IP, Safi: apipb.Family_SAFI_UNICAST},
+		Nlri:   &apipb.NLRI{Nlri: &apipb.NLRI_Prefix{Prefix: &apipb.IPAddressPrefix{PrefixLen: 32, Prefix: u.cfg.RouterID}}},
+		Pattrs: []*apipb.Attribute{
+			{Attr: &apipb.Attribute_Origin{Origin: &apipb.OriginAttribute{Origin: 0}}}, // IGP
+			{Attr: &apipb.Attribute_NextHop{NextHop: &apipb.NextHopAttribute{NextHop: "0.0.0.0"}}},
+			{Attr: &apipb.Attribute_AsPath{AsPath: &apipb.AsPathAttribute{}}},
 		},
 	})
 	if err != nil {

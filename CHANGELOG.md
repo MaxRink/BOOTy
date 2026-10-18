@@ -229,6 +229,21 @@ behaviour.
   (osrg/gobgp#3735); a `clear bgp` on the leaf took up to 36 s, now about
   as long as with FRR. Peers whose graceful restart routes GoBGP keeps
   stay as they are (#745).
+- GoBGP mode runs GoBGP 4.10.0 (was 3.37.0). GoBGP 3.37.0 panicked on a
+  truncated EVPN NLRI from any peer, also on an IPv4-only session, and that
+  ended BOOTy (PID 1); 4.10.0 rejects the UPDATE (RFC 7606), and a test pins
+  that for every EVPN route type. GoBGP sends the
+  Extended Message capability (RFC 8654) like FRR, and its peer events appear
+  in the BOOTy log (component `gobgp`). It retries a connection after 0.75 to 1
+  times the connect retry timer and at least 2 s (was 1 to 2 times, at least
+  1 s). A `local-as` session still rejects paths with the router AS, now
+  through the BOOTy import policy. GoBGP comes from the fork tag
+  `github.com/MaxRink/gobgp/v4` v4.10.0-booty.2: v4.10.0 with eight fixes,
+  among them a session that lost carrier comes back after 1 s of Idle, not
+  5 s (osrg/gobgp#3740), a connection collision no longer waits 5 s in Idle
+  (osrg/gobgp#3741), and FRR's MAC/IP routes with the EVPN ARP/ND community
+  are kept instead of being treated as withdrawn. `docs/networking.md` lists the fixes and when to
+  drop the fork (#699).
 
 ### Behaviour behind `CAPRF_LEGACY_COMPAT=true`
 
@@ -605,6 +620,9 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 - `github.com/pierrec/lz4/v4` 4.1.31 to 4.1.33 (#578)
 - `anchore/sbom-action` 0.24.2 to 0.24.3 (#579)
 - `oras-project/setup-oras` 2.0.1 to 2.0.2 (#580)
+- GoBGP 3.37.0 to 4.10.0 (fork tag v4.10.0-booty.2), Go 1.26.6 to 1.27.2, golangci-lint 2.12.2 to 2.14.0,
+  govulncheck 1.4.0 to 1.8.0, `docker/setup-buildx-action` 4.4.1,
+  `actions/upload-artifact` 7.0.2 everywhere, and indirect modules (#699)
 
 ### Upgrade notes for CAPRF
 

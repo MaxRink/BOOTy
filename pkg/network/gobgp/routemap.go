@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"strings"
 
-	apipb "github.com/osrg/gobgp/v3/api"
-	"github.com/osrg/gobgp/v3/pkg/server"
+	apipb "github.com/osrg/gobgp/v4/api"
+	"github.com/osrg/gobgp/v4/pkg/server"
 
 	"github.com/telekom/BOOTy/pkg/network"
 )
@@ -24,6 +24,7 @@ type policyPeer struct {
 	addr      netip.Addr // may carry a zone
 	routeMaps []network.SessionRouteMaps
 	localAS   uint32
+	routerAS  uint32
 	allowASIn int
 	// requirePolicy is "bgp ebgp-requires-policy" for an eBGP peer;
 	// families are its activated address families.
@@ -85,7 +86,7 @@ func buildPolicy(peers []policyPeer, maps []network.RouteMap, lists []network.Co
 			return nil, fmt.Errorf("route-map %q is not defined", k.rm)
 		}
 		nset := fmt.Sprintf("rm-%s-%s-%s", k.dir, k.rm, k.fam)
-		p.sets = append(p.sets, &apipb.DefinedSet{DefinedType: apipb.DefinedType_NEIGHBOR, Name: nset, List: members[k]})
+		p.sets = append(p.sets, &apipb.DefinedSet{DefinedType: apipb.DefinedType_DEFINED_TYPE_NEIGHBOR, Name: nset, List: members[k]})
 		stmts, err := p.routeMapStatements(&maps[i], nset, k.fam, lists)
 		if err != nil {
 			return nil, err
@@ -107,7 +108,7 @@ func (p *bgpPolicy) routeMapStatements(rm *network.RouteMap, nset, fam string, l
 	family := familyOf(fam)
 	base := func() *apipb.Conditions {
 		return &apipb.Conditions{
-			NeighborSet: &apipb.MatchSet{Type: apipb.MatchSet_ANY, Name: nset},
+			NeighborSet: &apipb.MatchSet{Type: apipb.MatchSet_TYPE_ANY, Name: nset},
 			AfiSafiIn:   []*apipb.Family{family},
 		}
 	}
@@ -125,27 +126,27 @@ func (p *bgpPolicy) routeMapStatements(rm *network.RouteMap, nset, fam string, l
 		}
 		for j, set := range sets {
 			c := base()
-			c.CommunitySet = &apipb.MatchSet{Type: apipb.MatchSet_ALL, Name: set}
+			c.CommunitySet = &apipb.MatchSet{Type: apipb.MatchSet_TYPE_ALL, Name: set}
 			out = append(out, &apipb.Statement{Name: fmt.Sprintf("%s-%d", name, j), Conditions: c, Actions: actions})
 		}
 	}
 	// Implicit deny at the end of a route-map.
-	out = append(out, &apipb.Statement{Name: nset + "-deny", Conditions: base(), Actions: &apipb.Actions{RouteAction: apipb.RouteAction_REJECT}})
+	out = append(out, &apipb.Statement{Name: nset + "-deny", Conditions: base(), Actions: &apipb.Actions{RouteAction: apipb.RouteAction_ROUTE_ACTION_REJECT}})
 	return out, nil
 }
 
 func entryActions(e *network.RouteMapEntry) *apipb.Actions {
 	if e.Deny {
-		return &apipb.Actions{RouteAction: apipb.RouteAction_REJECT}
+		return &apipb.Actions{RouteAction: apipb.RouteAction_ROUTE_ACTION_REJECT}
 	}
-	a := &apipb.Actions{RouteAction: apipb.RouteAction_ACCEPT}
+	a := &apipb.Actions{RouteAction: apipb.RouteAction_ROUTE_ACTION_ACCEPT}
 	if e.SetLocalPreference != nil {
 		a.LocalPref = &apipb.LocalPrefAction{Value: *e.SetLocalPreference}
 	}
 	if len(e.SetCommunities) > 0 {
-		typ := apipb.CommunityAction_REPLACE
+		typ := apipb.CommunityAction_TYPE_REPLACE
 		if e.SetCommunityAdditive {
-			typ = apipb.CommunityAction_ADD
+			typ = apipb.CommunityAction_TYPE_ADD
 		}
 		a.Community = &apipb.CommunityAction{Type: typ, Communities: e.SetCommunities}
 	}
@@ -167,7 +168,7 @@ func (p *bgpPolicy) communitySets(name string, lists []network.CommunityList) ([
 		}
 		set := fmt.Sprintf("cl-%s-%d", name, j)
 		if !slices.ContainsFunc(p.sets, func(s *apipb.DefinedSet) bool { return s.Name == set }) {
-			p.sets = append(p.sets, &apipb.DefinedSet{DefinedType: apipb.DefinedType_COMMUNITY, Name: set, List: e.Communities})
+			p.sets = append(p.sets, &apipb.DefinedSet{DefinedType: apipb.DefinedType_DEFINED_TYPE_COMMUNITY, Name: set, List: e.Communities})
 		}
 		names = append(names, set)
 	}
@@ -205,14 +206,14 @@ func (p *bgpPolicy) requirePolicy(peers []policyPeer) {
 	slices.SortFunc(keys, func(a, b key) int { return strings.Compare(a.dir+a.fam, b.dir+b.fam) })
 	for _, k := range keys {
 		name := fmt.Sprintf("ebgp-requires-policy-%s-%s", k.dir, k.fam)
-		p.sets = append(p.sets, &apipb.DefinedSet{DefinedType: apipb.DefinedType_NEIGHBOR, Name: name, List: members[k]})
+		p.sets = append(p.sets, &apipb.DefinedSet{DefinedType: apipb.DefinedType_DEFINED_TYPE_NEIGHBOR, Name: name, List: members[k]})
 		st := &apipb.Statement{
 			Name: name,
 			Conditions: &apipb.Conditions{
-				NeighborSet: &apipb.MatchSet{Type: apipb.MatchSet_ANY, Name: name},
+				NeighborSet: &apipb.MatchSet{Type: apipb.MatchSet_TYPE_ANY, Name: name},
 				AfiSafiIn:   []*apipb.Family{familyOf(k.fam)},
 			},
-			Actions: &apipb.Actions{RouteAction: apipb.RouteAction_REJECT},
+			Actions: &apipb.Actions{RouteAction: apipb.RouteAction_ROUTE_ACTION_REJECT},
 		}
 		if k.dir == "in" {
 			p.im = append(p.im, st)
@@ -222,14 +223,12 @@ func (p *bgpPolicy) requirePolicy(peers []policyPeer) {
 	}
 }
 
-// localASChecks rejects paths that carry the local-as more often than
-// allowas-in permits. FRR checks both the router AS and the local-as of
-// "local-as N no-prepend replace-as" (bgpd/bgp_route.c, aspath_loop_check
-// on bgp->as and on change_local_as). GoBGP 3.37, which BOOTy uses, checks
-// only the router AS: peer.go passes peerInfo.LocalAS, which NewPeerInfo
-// sets to the global AS. GoBGP master checks only the per-peer local AS
-// (conf.Config.LocalAs) instead; after an upgrade to it the router AS check
-// would be the one to add here.
+// localASChecks rejects paths from a peer with "local-as N no-prepend
+// replace-as" that carry the router AS more often than allowas-in permits.
+// FRR checks both the router AS and the local-as (bgpd/bgp_route.c,
+// aspath_loop_check on bgp->as and change_local_as). GoBGP v4 checks only
+// the session's local AS (pkg/server/peer.go:719), which is the local-as
+// here and the router AS for the other peers.
 func (p *bgpPolicy) localASChecks(peers []policyPeer) {
 	type key struct {
 		as    uint32
@@ -237,8 +236,8 @@ func (p *bgpPolicy) localASChecks(peers []policyPeer) {
 	}
 	groups := map[key][]string{}
 	for _, peer := range peers {
-		if peer.localAS != 0 {
-			k := key{peer.localAS, peer.allowASIn}
+		if peer.localAS != 0 && peer.localAS != peer.routerAS {
+			k := key{peer.routerAS, peer.allowASIn}
 			groups[k] = append(groups[k], hostPrefix(peer.addr))
 		}
 	}
@@ -248,17 +247,17 @@ func (p *bgpPolicy) localASChecks(peers []policyPeer) {
 	}
 	slices.SortFunc(keys, func(a, b key) int { return cmp.Or(cmp.Compare(a.as, b.as), cmp.Compare(a.count, b.count)) })
 	for _, k := range keys {
-		name := fmt.Sprintf("local-as-%d-%d", k.as, k.count)
+		name := fmt.Sprintf("router-as-%d-%d", k.as, k.count)
 		p.sets = append(p.sets,
-			&apipb.DefinedSet{DefinedType: apipb.DefinedType_NEIGHBOR, Name: name, List: groups[k]},
-			&apipb.DefinedSet{DefinedType: apipb.DefinedType_AS_PATH, Name: name, List: []string{asOccurrences(k.as, k.count+1)}})
+			&apipb.DefinedSet{DefinedType: apipb.DefinedType_DEFINED_TYPE_NEIGHBOR, Name: name, List: groups[k]},
+			&apipb.DefinedSet{DefinedType: apipb.DefinedType_DEFINED_TYPE_AS_PATH, Name: name, List: []string{asOccurrences(k.as, k.count+1)}})
 		p.im = append(p.im, &apipb.Statement{
 			Name: name,
 			Conditions: &apipb.Conditions{
-				NeighborSet: &apipb.MatchSet{Type: apipb.MatchSet_ANY, Name: name},
-				AsPathSet:   &apipb.MatchSet{Type: apipb.MatchSet_ANY, Name: name},
+				NeighborSet: &apipb.MatchSet{Type: apipb.MatchSet_TYPE_ANY, Name: name},
+				AsPathSet:   &apipb.MatchSet{Type: apipb.MatchSet_TYPE_ANY, Name: name},
 			},
-			Actions: &apipb.Actions{RouteAction: apipb.RouteAction_REJECT},
+			Actions: &apipb.Actions{RouteAction: apipb.RouteAction_ROUTE_ACTION_REJECT},
 		})
 	}
 }
@@ -302,7 +301,7 @@ func (p *bgpPolicy) install(ctx context.Context, s *server.BgpServer) error {
 		name  string
 		dir   apipb.PolicyDirection
 		stmts []*apipb.Statement
-	}{{importPolicy, apipb.PolicyDirection_IMPORT, p.im}, {exportPolicy, apipb.PolicyDirection_EXPORT, p.ex}} {
+	}{{importPolicy, apipb.PolicyDirection_POLICY_DIRECTION_IMPORT, p.im}, {exportPolicy, apipb.PolicyDirection_POLICY_DIRECTION_EXPORT, p.ex}} {
 		if len(pol.stmts) == 0 {
 			continue
 		}
@@ -313,7 +312,7 @@ func (p *bgpPolicy) install(ctx context.Context, s *server.BgpServer) error {
 			Name:          "global",
 			Direction:     pol.dir,
 			Policies:      []*apipb.Policy{{Name: pol.name}},
-			DefaultAction: apipb.RouteAction_ACCEPT,
+			DefaultAction: apipb.RouteAction_ROUTE_ACTION_ACCEPT,
 		}}); err != nil {
 			return fmt.Errorf("assign policy %s: %w", pol.name, err)
 		}
@@ -337,7 +336,7 @@ func (u *UnderlayTier) installPolicies(ctx context.Context) error {
 		return err
 	}
 	for _, peer := range peers {
-		_ = u.bgp.ResetPeer(ctx, &apipb.ResetPeerRequest{Address: peer.name, Soft: true, Direction: apipb.ResetPeerRequest_BOTH})
+		_ = u.bgp.ResetPeer(ctx, &apipb.ResetPeerRequest{Address: peer.name, Soft: true, Direction: apipb.ResetPeerRequest_DIRECTION_BOTH})
 	}
 	for _, r := range p.rejected {
 		u.log.Warn("eBGP peer has no route-map, routes rejected like FRR bgp ebgp-requires-policy",
@@ -366,7 +365,7 @@ func (u *UnderlayTier) policyPeers() []policyPeer {
 				name = u.ifacePeers[s.Name]
 			}
 			add(policyPeer{
-				name: name, routeMaps: s.RouteMaps, localAS: s.LocalASN, allowASIn: s.AllowASIn,
+				name: name, routeMaps: s.RouteMaps, localAS: s.LocalASN, routerAS: u.cfg.ASN, allowASIn: s.AllowASIn,
 				requirePolicy: s.EBGPRequiresPolicy && !s.Internal, families: sessionFamilyNames(s),
 			})
 		}
@@ -381,7 +380,7 @@ func (u *UnderlayTier) policyPeers() []policyPeer {
 	all := []string{"ipv4-unicast", "ipv6-unicast", "l2vpn-evpn"}
 	for _, name := range u.ifacePeers {
 		add(policyPeer{
-			name: name, routeMaps: maps, localAS: u.cfg.LocalAS, allowASIn: int(u.cfg.AllowASIn),
+			name: name, routeMaps: maps, localAS: u.cfg.LocalAS, routerAS: u.cfg.ASN, allowASIn: int(u.cfg.AllowASIn),
 			requirePolicy: u.cfg.EBGPRequiresPolicy, families: all,
 		})
 	}

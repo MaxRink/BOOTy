@@ -3,6 +3,7 @@ package gobgp
 import (
 	"testing"
 
+	apipb "github.com/osrg/gobgp/v4/api"
 	"github.com/telekom/BOOTy/pkg/network"
 )
 
@@ -344,4 +345,23 @@ func TestBGPAuthInterfacePeer(t *testing.T) {
 			t.Errorf("AuthPassword = %q, want empty", peer.Conf.AuthPassword)
 		}
 	})
+}
+
+// GoBGP v4.6.0 added native single-hop BFD, which a peer turns on with
+// Peer.Bfd. BOOTy runs its own BFD (pkg/network/bfd: multihop, the GTSM
+// receive check, VRF-aware lookup), so the peers must leave the GoBGP BFD
+// off, also with BFD configured, or both would run on one session.
+func TestPeersLeaveGoBGPBFDOff(t *testing.T) {
+	cfg := &Config{ASN: 65000, BFDTransmitMS: 300, BFDReceiveMS: 300, BFDDetectMult: 3}
+	s := &network.BGPSession{Name: "eth1", Interface: true, RemoteASN: 65100, IPv4Unicast: true,
+		BFD: true, BFDTransmitMS: 300, BFDReceiveMS: 300, BFDDetectMult: 3}
+	for _, p := range []*apipb.Peer{
+		buildNumberedPeer(cfg, "192.0.2.1", ipv4Families()),
+		buildInterfacePeer(cfg, "eth1", "fe80::1", ipv4Families()),
+		buildSessionPeer(cfg, s, "fe80::1"),
+	} {
+		if p.GetBfd() != nil {
+			t.Errorf("peer %s sets the GoBGP BFD config %v", p.GetConf().GetNeighborAddress(), p.GetBfd())
+		}
+	}
 }

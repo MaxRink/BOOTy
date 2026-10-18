@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"strings"
@@ -15,12 +16,14 @@ import (
 	"testing"
 	"time"
 
-	apipb "github.com/osrg/gobgp/v3/api"
-	"github.com/osrg/gobgp/v3/pkg/server"
+	apipb "github.com/osrg/gobgp/v4/api"
+	"github.com/osrg/gobgp/v4/pkg/apiutil"
+	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
+	"github.com/osrg/gobgp/v4/pkg/server"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
-	"google.golang.org/protobuf/types/known/anypb"
 )
 
 // mockOverlayNetlinkOps records overlay netlink operations for assertion in unit tests.
@@ -280,18 +283,9 @@ func TestBuildRouteDistinguisher(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rd, err := buildRouteDistinguisher(tt.asn, tt.vni)
-			if tt.wantErr {
-				if err == nil {
-					t.Fatal("expected error")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+			rd := buildRouteDistinguisher(tt.asn, tt.vni)
 
-			msg, err := rd.UnmarshalNew()
+			msg, err := oneof(rd)
 			if err != nil {
 				t.Fatalf("unmarshal RD: %v", err)
 			}
@@ -342,10 +336,7 @@ func TestBuildRouteTarget(t *testing.T) {
 }
 
 func TestBuildEVPNType5NLRI(t *testing.T) {
-	rd, err := buildRouteDistinguisher(65000, 4000)
-	if err != nil {
-		t.Fatalf("build RD: %v", err)
-	}
+	rd := buildRouteDistinguisher(65000, 4000)
 
 	// Passing a /32 host route (as advertiseType5 now does).
 	nlri, err := buildEVPNType5NLRI(rd, "10.100.0.20/32", "10.0.0.1", 4000)
@@ -357,7 +348,7 @@ func TestBuildEVPNType5NLRI(t *testing.T) {
 	}
 
 	// Unmarshal and verify fields.
-	msg, err := nlri.UnmarshalNew()
+	msg, err := oneof(nlri)
 	if err != nil {
 		t.Fatalf("unmarshal NLRI: %v", err)
 	}
@@ -377,10 +368,7 @@ func TestBuildEVPNType5NLRI(t *testing.T) {
 }
 
 func TestBuildType5PathAttrs(t *testing.T) {
-	rd, err := buildRouteDistinguisher(65000, 4000)
-	if err != nil {
-		t.Fatalf("build RD: %v", err)
-	}
+	rd := buildRouteDistinguisher(65000, 4000)
 
 	nlri, err := buildEVPNType5NLRI(rd, "10.100.0.20/32", "10.0.0.1", 4000)
 	if err != nil {
@@ -411,10 +399,7 @@ func TestBuildType5PathAttrs(t *testing.T) {
 }
 
 func TestBuildType5PathAttrsUsesExplicitVPNRT(t *testing.T) {
-	rd, err := buildRouteDistinguisher(65100, 1000)
-	if err != nil {
-		t.Fatalf("build RD: %v", err)
-	}
+	rd := buildRouteDistinguisher(65100, 1000)
 	nlri, err := buildEVPNType5NLRI(rd, "10.200.0.10/32", "192.168.4.10", 1000)
 	if err != nil {
 		t.Fatalf("build NLRI: %v", err)
@@ -443,10 +428,7 @@ func TestBuildType5PathAttrsUsesExplicitVPNRT(t *testing.T) {
 }
 
 func TestBuildType5PathAttrsOmitsRouterMACWhenUnset(t *testing.T) {
-	rd, err := buildRouteDistinguisher(65000, 4000)
-	if err != nil {
-		t.Fatalf("build RD: %v", err)
-	}
+	rd := buildRouteDistinguisher(65000, 4000)
 	nlri, err := buildEVPNType5NLRI(rd, "10.100.0.20/32", "10.0.0.1", 4000)
 	if err != nil {
 		t.Fatalf("build NLRI: %v", err)
@@ -469,10 +451,7 @@ func TestBuildType5PathAttrsOmitsRouterMACWhenUnset(t *testing.T) {
 }
 
 func TestBuildType5PathAttrsRejectsInvalidRouterMAC(t *testing.T) {
-	rd, err := buildRouteDistinguisher(65000, 4000)
-	if err != nil {
-		t.Fatalf("build RD: %v", err)
-	}
+	rd := buildRouteDistinguisher(65000, 4000)
 	nlri, err := buildEVPNType5NLRI(rd, "10.100.0.20/32", "10.0.0.1", 4000)
 	if err != nil {
 		t.Fatalf("build NLRI: %v", err)
@@ -485,10 +464,7 @@ func TestBuildType5PathAttrsRejectsInvalidRouterMAC(t *testing.T) {
 }
 
 func TestBuildType5PathAttrsRejectsEUI64RouterMAC(t *testing.T) {
-	rd, err := buildRouteDistinguisher(65000, 4000)
-	if err != nil {
-		t.Fatalf("build RD: %v", err)
-	}
+	rd := buildRouteDistinguisher(65000, 4000)
 	nlri, err := buildEVPNType5NLRI(rd, "10.100.0.20/32", "10.0.0.1", 4000)
 	if err != nil {
 		t.Fatalf("build NLRI: %v", err)
@@ -501,10 +477,7 @@ func TestBuildType5PathAttrsRejectsEUI64RouterMAC(t *testing.T) {
 }
 
 func TestBuildType5PathAttrsRejectsInvalidVPNRT(t *testing.T) {
-	rd, err := buildRouteDistinguisher(65000, 4000)
-	if err != nil {
-		t.Fatalf("build RD: %v", err)
-	}
+	rd := buildRouteDistinguisher(65000, 4000)
 	nlri, err := buildEVPNType5NLRI(rd, "10.100.0.20/32", "10.0.0.1", 4000)
 	if err != nil {
 		t.Fatalf("build NLRI: %v", err)
@@ -568,14 +541,8 @@ func TestAdvertiseType5PublishesRouterMAC(t *testing.T) {
 	}
 
 	var paths []*apipb.Path
-	err := bgp.ListPath(ctx, &apipb.ListPathRequest{
-		TableType: apipb.TableType_GLOBAL,
-		Family:    &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
-	}, func(dst *apipb.Destination) {
-		paths = append(paths, dst.GetPaths()...)
-	})
-	if err != nil {
-		t.Fatalf("list paths: %v", err)
+	for _, ps := range listPaths(t, bgp, &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN}) {
+		paths = append(paths, ps...)
 	}
 	if len(paths) != 1 {
 		t.Fatalf("expected 1 advertised Type-5 path, got %d", len(paths))
@@ -648,12 +615,9 @@ func TestAdvertiseType5RejectsInvalidProvisionIP(t *testing.T) {
 }
 
 func TestBuildEVPNType5NLRIInvalidIP(t *testing.T) {
-	rd, err := buildRouteDistinguisher(65000, 4000)
-	if err != nil {
-		t.Fatalf("build RD: %v", err)
-	}
+	rd := buildRouteDistinguisher(65000, 4000)
 
-	_, err = buildEVPNType5NLRI(rd, "not-a-cidr", "10.0.0.1", 4000)
+	_, err := buildEVPNType5NLRI(rd, "not-a-cidr", "10.0.0.1", 4000)
 	if err == nil {
 		t.Fatal("expected error for invalid CIDR")
 	}
@@ -663,7 +627,7 @@ func TestBuildEVPNType5NLRIInvalidIP(t *testing.T) {
 // into an apipb.Path for dispatch testing.
 func mustMarshalPath(t *testing.T, nlriMsg interface{ ProtoReflect() protoreflect.Message }, nextHop string, withdraw bool) *apipb.Path {
 	t.Helper()
-	nlri, err := anypb.New(nlriMsg)
+	nlri, err := wrapNLRI(nlriMsg)
 	if err != nil {
 		t.Fatalf("marshal NLRI: %v", err)
 	}
@@ -672,22 +636,22 @@ func mustMarshalPath(t *testing.T, nlriMsg interface{ ProtoReflect() protoreflec
 		IsWithdraw: withdraw,
 	}
 	if nextHop != "" {
-		mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
+		mp, err := wrapAttr(&apipb.MpReachNLRIAttribute{
 			Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
 			NextHops: []string{nextHop},
 		})
 		if err != nil {
 			t.Fatalf("marshal MpReachNLRI: %v", err)
 		}
-		p.Pattrs = []*anypb.Any{mp}
+		p.Pattrs = []*apipb.Attribute{mp}
 	}
 	return p
 }
 
 func mustAddRouteTarget(t *testing.T, p *apipb.Path) *apipb.Path {
 	t.Helper()
-	extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
-		Communities: []*anypb.Any{mustRT2(t, 65000, 4000)},
+	extComm, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{
+		Communities: []*apipb.ExtendedCommunity{mustRT2(t, 65000, 4000)},
 	})
 	if err != nil {
 		t.Fatalf("marshal ExtendedCommunitiesAttribute: %v", err)
@@ -781,7 +745,7 @@ func TestProcessRouteUpdateGuardAndL2Branches(t *testing.T) {
 	t.Run("invalid NLRI skips dispatch", func(t *testing.T) {
 		overlay, mock := newOverlay()
 		path := mustAddRouteTarget(t, &apipb.Path{
-			Nlri: &anypb.Any{TypeUrl: "type.googleapis.com/invalid.Route", Value: []byte{0xff}},
+			Nlri: &apipb.NLRI{}, // no NLRI type set
 		})
 
 		overlay.processRouteUpdate(path)
@@ -831,7 +795,7 @@ func TestProcessRouteUpdateGuardAndL2Branches(t *testing.T) {
 }
 
 func TestProcessRouteUpdateType5RouterMACNeighbor(t *testing.T) {
-	nlri, err := anypb.New(&apipb.EVPNIPPrefixRoute{
+	nlri, err := wrapNLRI(&apipb.EVPNIPPrefixRoute{
 		IpPrefix:    "10.100.0.0",
 		IpPrefixLen: 24,
 		GwAddress:   "0.0.0.0",
@@ -839,15 +803,15 @@ func TestProcessRouteUpdateType5RouterMACNeighbor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal NLRI: %v", err)
 	}
-	mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
+	mp, err := wrapAttr(&apipb.MpReachNLRIAttribute{
 		Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
 		NextHops: []string{"192.168.4.1"},
 	})
 	if err != nil {
 		t.Fatalf("marshal MpReachNLRI: %v", err)
 	}
-	extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
-		Communities: []*anypb.Any{
+	extComm, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{
+		Communities: []*apipb.ExtendedCommunity{
 			mustRT2(t, 65000, 4000),
 			mustRouterMAC(t, "62:db:b8:c1:80:52"),
 		},
@@ -871,7 +835,7 @@ func TestProcessRouteUpdateType5RouterMACNeighbor(t *testing.T) {
 
 	t.Run("install programs permanent neighbor", func(t *testing.T) {
 		mock := &mockOverlayNetlinkOps{}
-		path := &apipb.Path{Nlri: nlri, Pattrs: []*anypb.Any{mp, extComm}}
+		path := &apipb.Path{Nlri: nlri, Pattrs: []*apipb.Attribute{mp, extComm}}
 
 		newOverlay(mock).processRouteUpdate(path)
 
@@ -886,7 +850,7 @@ func TestProcessRouteUpdateType5RouterMACNeighbor(t *testing.T) {
 		path := &apipb.Path{
 			IsWithdraw: true,
 			Nlri:       nlri,
-			Pattrs:     []*anypb.Any{mp, extComm},
+			Pattrs:     []*apipb.Attribute{mp, extComm},
 		}
 
 		newOverlay(mock).processRouteUpdate(path)
@@ -900,11 +864,11 @@ func TestProcessRouteUpdateType5RouterMACNeighbor(t *testing.T) {
 	t.Run("withdraw uses stored router MAC when communities are omitted", func(t *testing.T) {
 		mock := &mockOverlayNetlinkOps{}
 		overlay := newOverlay(mock)
-		installPath := &apipb.Path{Nlri: nlri, Pattrs: []*anypb.Any{mp, extComm}}
+		installPath := &apipb.Path{Nlri: nlri, Pattrs: []*apipb.Attribute{mp, extComm}}
 		withdrawPath := &apipb.Path{
 			IsWithdraw: true,
 			Nlri:       nlri,
-			Pattrs:     []*anypb.Any{mp},
+			Pattrs:     []*apipb.Attribute{mp},
 		}
 
 		overlay.processRouteUpdate(installPath)
@@ -917,8 +881,8 @@ func TestProcessRouteUpdateType5RouterMACNeighbor(t *testing.T) {
 	})
 
 	t.Run("invalid router MAC still installs route without neighbor", func(t *testing.T) {
-		badExtComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
-			Communities: []*anypb.Any{
+		badExtComm, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{
+			Communities: []*apipb.ExtendedCommunity{
 				mustRT2(t, 65000, 4000),
 				mustRouterMAC(t, "not-a-mac"),
 			},
@@ -928,7 +892,7 @@ func TestProcessRouteUpdateType5RouterMACNeighbor(t *testing.T) {
 		}
 		mock := &mockOverlayNetlinkOps{}
 
-		newOverlay(mock).processRouteUpdate(&apipb.Path{Nlri: nlri, Pattrs: []*anypb.Any{mp, badExtComm}})
+		newOverlay(mock).processRouteUpdate(&apipb.Path{Nlri: nlri, Pattrs: []*apipb.Attribute{mp, badExtComm}})
 
 		if len(mock.routeReplaces) != 1 {
 			t.Fatalf("expected 1 route replace, got %d", len(mock.routeReplaces))
@@ -939,8 +903,8 @@ func TestProcessRouteUpdateType5RouterMACNeighbor(t *testing.T) {
 	})
 
 	t.Run("invalid router MAC preserves existing neighbor", func(t *testing.T) {
-		badExtComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
-			Communities: []*anypb.Any{
+		badExtComm, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{
+			Communities: []*apipb.ExtendedCommunity{
 				mustRT2(t, 65000, 4000),
 				mustRouterMAC(t, "not-a-mac"),
 			},
@@ -951,8 +915,8 @@ func TestProcessRouteUpdateType5RouterMACNeighbor(t *testing.T) {
 		mock := &mockOverlayNetlinkOps{}
 		overlay := newOverlay(mock)
 
-		overlay.processRouteUpdate(&apipb.Path{Nlri: nlri, Pattrs: []*anypb.Any{mp, extComm}})
-		overlay.processRouteUpdate(&apipb.Path{Nlri: nlri, Pattrs: []*anypb.Any{mp, badExtComm}})
+		overlay.processRouteUpdate(&apipb.Path{Nlri: nlri, Pattrs: []*apipb.Attribute{mp, extComm}})
+		overlay.processRouteUpdate(&apipb.Path{Nlri: nlri, Pattrs: []*apipb.Attribute{mp, badExtComm}})
 
 		if len(mock.routeReplaces) != 2 {
 			t.Fatalf("expected 2 route replaces, got %d", len(mock.routeReplaces))
@@ -977,7 +941,7 @@ func TestProcessRouteUpdateType5RouterMACNeighbor(t *testing.T) {
 // without enable-resolve-overlay-index, and its withdraw leaves the
 // neighbor entries alone.
 func TestProcessRouteUpdateType5GatewayIPNotInstalledByDefault(t *testing.T) {
-	nlri, err := anypb.New(&apipb.EVPNIPPrefixRoute{
+	nlri, err := wrapNLRI(&apipb.EVPNIPPrefixRoute{
 		IpPrefix:    "10.100.0.0",
 		IpPrefixLen: 24,
 		GwAddress:   "10.255.0.1",
@@ -985,15 +949,15 @@ func TestProcessRouteUpdateType5GatewayIPNotInstalledByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal NLRI: %v", err)
 	}
-	mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
+	mp, err := wrapAttr(&apipb.MpReachNLRIAttribute{
 		Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
 		NextHops: []string{"192.168.4.1"},
 	})
 	if err != nil {
 		t.Fatalf("marshal MpReachNLRI: %v", err)
 	}
-	extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
-		Communities: []*anypb.Any{
+	extComm, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{
+		Communities: []*apipb.ExtendedCommunity{
 			mustRT2(t, 65000, 4000),
 			mustRouterMAC(t, "62:db:b8:c1:80:52"),
 		},
@@ -1013,12 +977,12 @@ func TestProcessRouteUpdateType5GatewayIPNotInstalledByDefault(t *testing.T) {
 		netlinkOps: mock,
 	}
 
-	overlay.processRouteUpdate(&apipb.Path{Nlri: nlri, Pattrs: []*anypb.Any{mp, extComm}})
+	overlay.processRouteUpdate(&apipb.Path{Nlri: nlri, Pattrs: []*apipb.Attribute{mp, extComm}})
 	if len(mock.routeReplaces) != 0 || len(mock.sets) != 0 {
 		t.Fatalf("route %v, neighbor sets %v; want nothing without enable-resolve-overlay-index", mock.routeReplaces, mock.sets)
 	}
 
-	overlay.processRouteUpdate(&apipb.Path{IsWithdraw: true, Nlri: nlri, Pattrs: []*anypb.Any{mp, extComm}})
+	overlay.processRouteUpdate(&apipb.Path{IsWithdraw: true, Nlri: nlri, Pattrs: []*apipb.Attribute{mp, extComm}})
 	if len(mock.dels) != 0 {
 		t.Fatalf("the withdraw deleted neighbor or FDB entries %v; the gateway neighbor belongs to its Type-2 route", mock.dels)
 	}
@@ -1034,14 +998,14 @@ func TestExtractNextHop(t *testing.T) {
 			name: "with MpReach next-hop",
 			buildPath: func(t *testing.T) *apipb.Path {
 				t.Helper()
-				mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
+				mp, err := wrapAttr(&apipb.MpReachNLRIAttribute{
 					Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
 					NextHops: []string{"10.0.0.1"},
 				})
 				if err != nil {
-					t.Fatalf("anypb.New MpReachNLRIAttribute: %v", err)
+					t.Fatalf("wrap MpReachNLRIAttribute: %v", err)
 				}
-				return &apipb.Path{Pattrs: []*anypb.Any{mp}}
+				return &apipb.Path{Pattrs: []*apipb.Attribute{mp}}
 			},
 			want: "10.0.0.1",
 		},
@@ -1057,13 +1021,13 @@ func TestExtractNextHop(t *testing.T) {
 			name: "MpReach with empty next-hops",
 			buildPath: func(t *testing.T) *apipb.Path {
 				t.Helper()
-				mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
+				mp, err := wrapAttr(&apipb.MpReachNLRIAttribute{
 					Family: &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
 				})
 				if err != nil {
-					t.Fatalf("anypb.New MpReachNLRIAttribute: %v", err)
+					t.Fatalf("wrap MpReachNLRIAttribute: %v", err)
 				}
-				return &apipb.Path{Pattrs: []*anypb.Any{mp}}
+				return &apipb.Path{Pattrs: []*apipb.Attribute{mp}}
 			},
 			want: "",
 		},
@@ -1071,14 +1035,14 @@ func TestExtractNextHop(t *testing.T) {
 			name: "multiple next-hops returns first",
 			buildPath: func(t *testing.T) *apipb.Path {
 				t.Helper()
-				mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
+				mp, err := wrapAttr(&apipb.MpReachNLRIAttribute{
 					Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
 					NextHops: []string{"10.0.0.2", "10.0.0.3"},
 				})
 				if err != nil {
-					t.Fatalf("anypb.New MpReachNLRIAttribute: %v", err)
+					t.Fatalf("wrap MpReachNLRIAttribute: %v", err)
 				}
-				return &apipb.Path{Pattrs: []*anypb.Any{mp}}
+				return &apipb.Path{Pattrs: []*apipb.Attribute{mp}}
 			},
 			want: "10.0.0.2",
 		},
@@ -1097,18 +1061,18 @@ func TestExtractNextHop(t *testing.T) {
 
 func TestExtractNextHopMixedAttrs(t *testing.T) {
 	// MpReach buried among other attributes.
-	origin, err := anypb.New(&apipb.OriginAttribute{Origin: 0})
+	origin, err := wrapAttr(&apipb.OriginAttribute{Origin: 0})
 	if err != nil {
 		t.Fatalf("marshal origin attribute: %v", err)
 	}
-	mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
+	mp, err := wrapAttr(&apipb.MpReachNLRIAttribute{
 		Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
 		NextHops: []string{"10.0.0.5"},
 	})
 	if err != nil {
 		t.Fatalf("marshal mp reach attribute: %v", err)
 	}
-	path := &apipb.Path{Pattrs: []*anypb.Any{origin, mp}}
+	path := &apipb.Path{Pattrs: []*apipb.Attribute{origin, mp}}
 
 	got := extractNextHop(path)
 	if got != "10.0.0.5" {
@@ -2266,8 +2230,8 @@ func TestHasType5GatewayFDBRefSkipsEmptyRouterMAC(t *testing.T) {
 }
 
 func TestRouterMACInCommunitiesIgnoresUnmarshalFailures(t *testing.T) {
-	mac, err := routerMACInCommunities([]*anypb.Any{
-		{TypeUrl: "type.googleapis.com/invalid", Value: []byte{0xff}},
+	mac, err := routerMACInCommunities([]*apipb.ExtendedCommunity{
+		{}, // no extended community type set
 		mustRouterMAC(t, "62:db:b8:c1:80:52"),
 	})
 
@@ -2280,7 +2244,7 @@ func TestRouterMACInCommunitiesIgnoresUnmarshalFailures(t *testing.T) {
 }
 
 func TestRouterMACInCommunitiesRejectsEUI64(t *testing.T) {
-	_, err := routerMACInCommunities([]*anypb.Any{mustRouterMAC(t, "02:00:00:ff:fe:00:00:10")})
+	_, err := routerMACInCommunities([]*apipb.ExtendedCommunity{mustRouterMAC(t, "02:00:00:ff:fe:00:00:10")})
 
 	if err == nil {
 		t.Fatal("expected EUI-64 router MAC error")
@@ -2288,19 +2252,19 @@ func TestRouterMACInCommunitiesRejectsEUI64(t *testing.T) {
 }
 
 func TestExtractRouterMACIgnoresMalformedAndIrrelevantAttributes(t *testing.T) {
-	origin, err := anypb.New(&apipb.OriginAttribute{Origin: 0})
+	origin, err := wrapAttr(&apipb.OriginAttribute{Origin: 0})
 	if err != nil {
 		t.Fatalf("marshal OriginAttribute: %v", err)
 	}
-	extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
-		Communities: []*anypb.Any{mustRouterMAC(t, "62:db:b8:c1:80:52")},
+	extComm, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{
+		Communities: []*apipb.ExtendedCommunity{mustRouterMAC(t, "62:db:b8:c1:80:52")},
 	})
 	if err != nil {
 		t.Fatalf("marshal ExtendedCommunitiesAttribute: %v", err)
 	}
 
-	mac, err := extractRouterMAC(&apipb.Path{Pattrs: []*anypb.Any{
-		{TypeUrl: "type.googleapis.com/invalid.Attribute", Value: []byte{0xff}},
+	mac, err := extractRouterMAC(&apipb.Path{Pattrs: []*apipb.Attribute{
+		{}, // no attribute type set
 		origin,
 		extComm,
 	}})
@@ -2622,17 +2586,11 @@ func TestHandleType3RouteNoVTEP(t *testing.T) {
 // --- Type-3 NLRI builder tests -----------------------------------------------
 
 func TestBuildEVPNType3NLRI(t *testing.T) {
-	rd, err := buildRouteDistinguisher(65000, 4000)
-	if err != nil {
-		t.Fatalf("build RD: %v", err)
-	}
+	rd := buildRouteDistinguisher(65000, 4000)
 
-	nlri, err := buildEVPNType3NLRI(rd, "10.0.0.1")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	nlri := buildEVPNType3NLRI(rd, "10.0.0.1")
 
-	msg, err := nlri.UnmarshalNew()
+	msg, err := oneof(nlri)
 	if err != nil {
 		t.Fatalf("unmarshal NLRI: %v", err)
 	}
@@ -2649,15 +2607,9 @@ func TestBuildEVPNType3NLRI(t *testing.T) {
 }
 
 func TestBuildType3PathAttrs(t *testing.T) {
-	rd, err := buildRouteDistinguisher(65000, 4000)
-	if err != nil {
-		t.Fatalf("build RD: %v", err)
-	}
+	rd := buildRouteDistinguisher(65000, 4000)
 
-	nlri, err := buildEVPNType3NLRI(rd, "10.0.0.1")
-	if err != nil {
-		t.Fatalf("build NLRI: %v", err)
-	}
+	nlri := buildEVPNType3NLRI(rd, "10.0.0.1")
 
 	pattrs, err := buildType3PathAttrs(nlri, "10.0.0.1", 65000, 4000, "")
 	if err != nil {
@@ -2671,7 +2623,7 @@ func TestBuildType3PathAttrs(t *testing.T) {
 	// Verify PMSI tunnel attribute is present and correct.
 	pmsiFound := false
 	for _, attr := range pattrs {
-		msg, err := attr.UnmarshalNew()
+		msg, err := oneof(attr)
 		if err != nil {
 			continue
 		}
@@ -2691,15 +2643,9 @@ func TestBuildType3PathAttrs(t *testing.T) {
 }
 
 func TestBuildType3PathAttrs4ByteASN(t *testing.T) {
-	rd, err := buildRouteDistinguisher(70000, 5000)
-	if err != nil {
-		t.Fatalf("build RD: %v", err)
-	}
+	rd := buildRouteDistinguisher(70000, 5000)
 
-	nlri, err := buildEVPNType3NLRI(rd, "10.0.0.1")
-	if err != nil {
-		t.Fatalf("build NLRI: %v", err)
-	}
+	nlri := buildEVPNType3NLRI(rd, "10.0.0.1")
 
 	pattrs, err := buildType3PathAttrs(nlri, "10.0.0.1", 70000, 5000, "")
 	if err != nil {
@@ -2713,17 +2659,11 @@ func TestBuildType3PathAttrs4ByteASN(t *testing.T) {
 // --- Type-2 NLRI builder tests -----------------------------------------------
 
 func TestBuildEVPNType2NLRI(t *testing.T) {
-	rd, err := buildRouteDistinguisher(65000, 4000)
-	if err != nil {
-		t.Fatalf("build RD: %v", err)
-	}
+	rd := buildRouteDistinguisher(65000, 4000)
 
-	nlri, err := buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "10.100.0.20", 4000)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	nlri := buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "10.100.0.20", 4000)
 
-	msg, err := nlri.UnmarshalNew()
+	msg, err := oneof(nlri)
 	if err != nil {
 		t.Fatalf("unmarshal NLRI: %v", err)
 	}
@@ -2746,17 +2686,11 @@ func TestBuildEVPNType2NLRI(t *testing.T) {
 }
 
 func TestBuildEVPNType2NLRINoIP(t *testing.T) {
-	rd, err := buildRouteDistinguisher(65000, 4000)
-	if err != nil {
-		t.Fatalf("build RD: %v", err)
-	}
+	rd := buildRouteDistinguisher(65000, 4000)
 
-	nlri, err := buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "", 4000)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	nlri := buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "", 4000)
 
-	msg, err := nlri.UnmarshalNew()
+	msg, err := oneof(nlri)
 	if err != nil {
 		t.Fatalf("unmarshal NLRI: %v", err)
 	}
@@ -2770,15 +2704,9 @@ func TestBuildEVPNType2NLRINoIP(t *testing.T) {
 }
 
 func TestBuildType2PathAttrs(t *testing.T) {
-	rd, err := buildRouteDistinguisher(65000, 4000)
-	if err != nil {
-		t.Fatalf("build RD: %v", err)
-	}
+	rd := buildRouteDistinguisher(65000, 4000)
 
-	nlri, err := buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "10.100.0.20", 4000)
-	if err != nil {
-		t.Fatalf("build NLRI: %v", err)
-	}
+	nlri := buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "10.100.0.20", 4000)
 
 	pattrs, err := buildType2PathAttrs(nlri, "10.0.0.1", 65000, 4000, "")
 	if err != nil {
@@ -2791,7 +2719,7 @@ func TestBuildType2PathAttrs(t *testing.T) {
 
 	// Verify MpReach next-hop is RouterID.
 	for _, attr := range pattrs {
-		msg, err := attr.UnmarshalNew()
+		msg, err := oneof(attr)
 		if err != nil {
 			continue
 		}
@@ -2804,15 +2732,9 @@ func TestBuildType2PathAttrs(t *testing.T) {
 }
 
 func TestBuildType2PathAttrs4ByteASN(t *testing.T) {
-	rd, err := buildRouteDistinguisher(70000, 5000)
-	if err != nil {
-		t.Fatalf("build RD: %v", err)
-	}
+	rd := buildRouteDistinguisher(70000, 5000)
 
-	nlri, err := buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "10.100.0.20", 5000)
-	if err != nil {
-		t.Fatalf("build NLRI: %v", err)
-	}
+	nlri := buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "10.100.0.20", 5000)
 
 	pattrs, err := buildType2PathAttrs(nlri, "10.0.0.1", 70000, 5000, "")
 	if err != nil {
@@ -2959,20 +2881,20 @@ func TestUnderlaySetupRejectsUnimplementedAF(t *testing.T) {
 	}
 }
 
-func mustPathWithRT(t *testing.T, rts ...*anypb.Any) *apipb.Path {
+func mustPathWithRT(t *testing.T, rts ...*apipb.ExtendedCommunity) *apipb.Path {
 	t.Helper()
-	extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
+	extComm, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{
 		Communities: rts,
 	})
 	if err != nil {
 		t.Fatalf("marshal ExtendedCommunitiesAttribute: %v", err)
 	}
-	return &apipb.Path{Pattrs: []*anypb.Any{extComm}}
+	return &apipb.Path{Pattrs: []*apipb.Attribute{extComm}}
 }
 
-func mustRouterMAC(t *testing.T, mac string) *anypb.Any {
+func mustRouterMAC(t *testing.T, mac string) *apipb.ExtendedCommunity {
 	t.Helper()
-	a, err := anypb.New(&apipb.RouterMacExtended{Mac: mac})
+	a, err := wrapExt(&apipb.RouterMacExtended{Mac: mac})
 	if err != nil {
 		t.Fatalf("marshal RouterMacExtended: %v", err)
 	}
@@ -3064,7 +2986,7 @@ func assertType5GatewayDelete(t *testing.T, dels []*netlink.Neigh, index int, gw
 func mustFindRouterMAC(t *testing.T, path *apipb.Path) string {
 	t.Helper()
 	for _, attr := range path.GetPattrs() {
-		msg, err := attr.UnmarshalNew()
+		msg, err := oneof(attr)
 		if err != nil {
 			continue
 		}
@@ -3073,7 +2995,7 @@ func mustFindRouterMAC(t *testing.T, path *apipb.Path) string {
 			continue
 		}
 		for _, community := range extComm.GetCommunities() {
-			msg, err := community.UnmarshalNew()
+			msg, err := oneof(community)
 			if err != nil {
 				continue
 			}
@@ -3092,7 +3014,7 @@ func mustFindType5Route(t *testing.T, path *apipb.Path) *apipb.EVPNIPPrefixRoute
 	if nlri == nil {
 		t.Fatal("Type-5 NLRI not found")
 	}
-	msg, err := nlri.UnmarshalNew()
+	msg, err := oneof(nlri)
 	if err != nil {
 		t.Fatalf("unmarshal Type-5 NLRI: %v", err)
 	}
@@ -3106,7 +3028,7 @@ func mustFindType5Route(t *testing.T, path *apipb.Path) *apipb.EVPNIPPrefixRoute
 func mustFindEncapTunnelType(t *testing.T, path *apipb.Path) uint32 {
 	t.Helper()
 	for _, attr := range path.GetPattrs() {
-		msg, err := attr.UnmarshalNew()
+		msg, err := oneof(attr)
 		if err != nil {
 			continue
 		}
@@ -3115,7 +3037,7 @@ func mustFindEncapTunnelType(t *testing.T, path *apipb.Path) uint32 {
 			continue
 		}
 		for _, community := range extComm.GetCommunities() {
-			msg, err := community.UnmarshalNew()
+			msg, err := oneof(community)
 			if err != nil {
 				continue
 			}
@@ -3131,7 +3053,7 @@ func mustFindEncapTunnelType(t *testing.T, path *apipb.Path) uint32 {
 func countExtendedCommunities(t *testing.T, path *apipb.Path) int {
 	t.Helper()
 	for _, attr := range path.GetPattrs() {
-		msg, err := attr.UnmarshalNew()
+		msg, err := oneof(attr)
 		if err != nil {
 			continue
 		}
@@ -3145,9 +3067,9 @@ func countExtendedCommunities(t *testing.T, path *apipb.Path) int {
 	return 0
 }
 
-func mustRT2(t *testing.T, asn, vni uint32) *anypb.Any {
+func mustRT2(t *testing.T, asn, vni uint32) *apipb.ExtendedCommunity {
 	t.Helper()
-	a, err := anypb.New(&apipb.TwoOctetAsSpecificExtended{
+	a, err := wrapExt(&apipb.TwoOctetAsSpecificExtended{
 		IsTransitive: true,
 		SubType:      0x02,
 		Asn:          asn,
@@ -3159,9 +3081,9 @@ func mustRT2(t *testing.T, asn, vni uint32) *anypb.Any {
 	return a
 }
 
-func mustRT4(t *testing.T, asn, vni uint32) *anypb.Any {
+func mustRT4(t *testing.T, asn, vni uint32) *apipb.ExtendedCommunity {
 	t.Helper()
-	a, err := anypb.New(&apipb.FourOctetAsSpecificExtended{
+	a, err := wrapExt(&apipb.FourOctetAsSpecificExtended{
 		IsTransitive: true,
 		SubType:      0x02,
 		Asn:          asn,
@@ -3173,9 +3095,9 @@ func mustRT4(t *testing.T, asn, vni uint32) *anypb.Any {
 	return a
 }
 
-func mustRTIPv4(t *testing.T, address string, localAdmin uint32) *anypb.Any {
+func mustRTIPv4(t *testing.T, address string, localAdmin uint32) *apipb.ExtendedCommunity {
 	t.Helper()
-	a, err := anypb.New(&apipb.IPv4AddressSpecificExtended{
+	a, err := wrapExt(&apipb.IPv4AddressSpecificExtended{
 		IsTransitive: true,
 		SubType:      0x02,
 		Address:      address,
@@ -3187,9 +3109,9 @@ func mustRTIPv4(t *testing.T, address string, localAdmin uint32) *anypb.Any {
 	return a
 }
 
-func mustRawRT(t *testing.T, typ uint32) *anypb.Any {
+func mustRawRT(t *testing.T, typ uint32) *apipb.ExtendedCommunity {
 	t.Helper()
-	a, err := anypb.New(&apipb.UnknownExtended{
+	a, err := wrapExt(&apipb.UnknownExtended{
 		Type:  typ,
 		Value: []byte{0x02, 0, 0, 0, 0, 0, 0},
 	})
@@ -3339,7 +3261,7 @@ func TestConfigImportRouteTarget(t *testing.T) {
 }
 
 func TestProcessRouteUpdateRTFilter(t *testing.T) {
-	nlri, err := anypb.New(&apipb.EVPNIPPrefixRoute{
+	nlri, err := wrapNLRI(&apipb.EVPNIPPrefixRoute{
 		IpPrefix:    "10.100.0.0",
 		IpPrefixLen: 24,
 		GwAddress:   "0.0.0.0",
@@ -3348,7 +3270,7 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 		t.Fatalf("marshal NLRI: %v", err)
 	}
 
-	mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
+	mp, err := wrapAttr(&apipb.MpReachNLRIAttribute{
 		Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
 		NextHops: []string{"10.0.0.1"},
 	})
@@ -3372,15 +3294,15 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 	t.Run("route with matching RT is dispatched to FDB", func(t *testing.T) {
 		mock := &mockOverlayNetlinkOps{}
 		overlay := newOverlay(mock)
-		extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
-			Communities: []*anypb.Any{mustRT2(t, 65000, 4000)},
+		extComm, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{
+			Communities: []*apipb.ExtendedCommunity{mustRT2(t, 65000, 4000)},
 		})
 		if err != nil {
 			t.Fatalf("marshal ExtendedCommunitiesAttribute: %v", err)
 		}
 		path := &apipb.Path{
 			Nlri:   nlri,
-			Pattrs: []*anypb.Any{mp, extComm},
+			Pattrs: []*apipb.Attribute{mp, extComm},
 		}
 		overlay.processRouteUpdate(path)
 		// Matching RT must reach FDB dispatch (LinkByName is called for Type-5 installs).
@@ -3395,15 +3317,15 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 		overlay.cfg.ASN = 65100
 		overlay.cfg.ProvisionVNI = 1000
 		overlay.cfg.VPNRT = "65000:1000"
-		extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
-			Communities: []*anypb.Any{mustRT2(t, 65000, 1000)},
+		extComm, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{
+			Communities: []*apipb.ExtendedCommunity{mustRT2(t, 65000, 1000)},
 		})
 		if err != nil {
 			t.Fatalf("marshal ExtendedCommunitiesAttribute: %v", err)
 		}
 		path := &apipb.Path{
 			Nlri:   nlri,
-			Pattrs: []*anypb.Any{mp, extComm},
+			Pattrs: []*apipb.Attribute{mp, extComm},
 		}
 		overlay.processRouteUpdate(path)
 		if mock.linkName == "" {
@@ -3417,15 +3339,15 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 		overlay.cfg.ASN = 65100
 		overlay.cfg.ProvisionVNI = 1000
 		overlay.cfg.VPNRT = "65000:1000"
-		extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
-			Communities: []*anypb.Any{mustRT2(t, 65000, 1000)},
+		extComm, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{
+			Communities: []*apipb.ExtendedCommunity{mustRT2(t, 65000, 1000)},
 		})
 		if err != nil {
 			t.Fatalf("marshal ExtendedCommunitiesAttribute: %v", err)
 		}
 		path := &apipb.Path{
 			Nlri:   nlri,
-			Pattrs: []*anypb.Any{mp, extComm},
+			Pattrs: []*apipb.Attribute{mp, extComm},
 		}
 
 		overlay.processRouteUpdate(path)
@@ -3444,15 +3366,15 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 	t.Run("route with non-matching RT is skipped", func(t *testing.T) {
 		mock := &mockOverlayNetlinkOps{}
 		overlay := newOverlay(mock)
-		extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
-			Communities: []*anypb.Any{mustRT2(t, 65001, 1111)},
+		extComm, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{
+			Communities: []*apipb.ExtendedCommunity{mustRT2(t, 65001, 1111)},
 		})
 		if err != nil {
 			t.Fatalf("marshal ExtendedCommunitiesAttribute: %v", err)
 		}
 		path := &apipb.Path{
 			Nlri:   nlri,
-			Pattrs: []*anypb.Any{extComm},
+			Pattrs: []*apipb.Attribute{extComm},
 		}
 		overlay.processRouteUpdate(path)
 		// Non-matching RT must not reach FDB dispatch.
@@ -3464,8 +3386,8 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 	t.Run("withdrawal with non-matching RT is skipped", func(t *testing.T) {
 		mock := &mockOverlayNetlinkOps{}
 		overlay := newOverlay(mock)
-		extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
-			Communities: []*anypb.Any{mustRT2(t, 65001, 1111)},
+		extComm, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{
+			Communities: []*apipb.ExtendedCommunity{mustRT2(t, 65001, 1111)},
 		})
 		if err != nil {
 			t.Fatalf("marshal ExtendedCommunitiesAttribute: %v", err)
@@ -3474,7 +3396,7 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 		path := &apipb.Path{
 			IsWithdraw: true,
 			Nlri:       nlri,
-			Pattrs:     []*anypb.Any{extComm},
+			Pattrs:     []*apipb.Attribute{extComm},
 		}
 		overlay.processRouteUpdate(path)
 		if mock.linkName != "" {
@@ -3488,7 +3410,7 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 		path := &apipb.Path{
 			IsWithdraw: true,
 			Nlri:       nlri,
-			Pattrs:     []*anypb.Any{mp},
+			Pattrs:     []*apipb.Attribute{mp},
 		}
 		overlay.processRouteUpdate(path)
 		if mock.linkName == "" {
@@ -3512,9 +3434,9 @@ func TestHandleType5RouteKeepsRouteWhileAnotherGatewayAdvertisesIt(t *testing.T)
 	}
 	routeVia := func(rdAdmin uint32) *apipb.EVPNIPPrefixRoute {
 		t.Helper()
-		rd, err := anypb.New(&apipb.RouteDistinguisherTwoOctetASN{Admin: 65000, Assigned: rdAdmin})
+		rd, err := wrapRD(&apipb.RouteDistinguisherTwoOctetASN{Admin: 65000, Assigned: rdAdmin})
 		if err != nil {
-			t.Fatalf("anypb.New: %v", err)
+			t.Fatalf("wrap: %v", err)
 		}
 		return &apipb.EVPNIPPrefixRoute{Rd: rd, IpPrefix: "0.0.0.0", IpPrefixLen: 0}
 	}
@@ -3556,9 +3478,9 @@ func TestHandleType5RouteDeletesWithdrawnRouteWhenFallbackFails(t *testing.T) {
 	}
 	routeVia := func(rdAdmin uint32) *apipb.EVPNIPPrefixRoute {
 		t.Helper()
-		rd, err := anypb.New(&apipb.RouteDistinguisherTwoOctetASN{Admin: 65000, Assigned: rdAdmin})
+		rd, err := wrapRD(&apipb.RouteDistinguisherTwoOctetASN{Admin: 65000, Assigned: rdAdmin})
 		if err != nil {
-			t.Fatalf("anypb.New: %v", err)
+			t.Fatalf("wrap: %v", err)
 		}
 		return &apipb.EVPNIPPrefixRoute{Rd: rd, IpPrefix: "0.0.0.0", IpPrefixLen: 0}
 	}
@@ -3613,9 +3535,9 @@ func TestHandleType5RouteFallsBackToPathWhoseInstallFailed(t *testing.T) {
 	}
 	routeVia := func(rdAdmin uint32) *apipb.EVPNIPPrefixRoute {
 		t.Helper()
-		rd, err := anypb.New(&apipb.RouteDistinguisherTwoOctetASN{Admin: 65000, Assigned: rdAdmin})
+		rd, err := wrapRD(&apipb.RouteDistinguisherTwoOctetASN{Admin: 65000, Assigned: rdAdmin})
 		if err != nil {
-			t.Fatalf("anypb.New: %v", err)
+			t.Fatalf("wrap: %v", err)
 		}
 		return &apipb.EVPNIPPrefixRoute{Rd: rd, IpPrefix: "0.0.0.0", IpPrefixLen: 0}
 	}
@@ -3650,9 +3572,9 @@ func TestHandleType5RouteTriesEveryRemainingPath(t *testing.T) {
 	}
 	routeVia := func(rdAdmin uint32) *apipb.EVPNIPPrefixRoute {
 		t.Helper()
-		rd, err := anypb.New(&apipb.RouteDistinguisherTwoOctetASN{Admin: 65000, Assigned: rdAdmin})
+		rd, err := wrapRD(&apipb.RouteDistinguisherTwoOctetASN{Admin: 65000, Assigned: rdAdmin})
 		if err != nil {
-			t.Fatalf("anypb.New: %v", err)
+			t.Fatalf("wrap: %v", err)
 		}
 		return &apipb.EVPNIPPrefixRoute{Rd: rd, IpPrefix: "0.0.0.0", IpPrefixLen: 0}
 	}
@@ -3743,9 +3665,9 @@ func newType5FailoverTestOverlay(ops overlayNetlinkOps) *OverlayTier {
 
 func type5FailoverRoute(t *testing.T, rdAssigned uint32) *apipb.EVPNIPPrefixRoute {
 	t.Helper()
-	rd, err := anypb.New(&apipb.RouteDistinguisherTwoOctetASN{Admin: 65000, Assigned: rdAssigned})
+	rd, err := wrapRD(&apipb.RouteDistinguisherTwoOctetASN{Admin: 65000, Assigned: rdAssigned})
 	if err != nil {
-		t.Fatalf("anypb.New: %v", err)
+		t.Fatalf("wrap: %v", err)
 	}
 	return &apipb.EVPNIPPrefixRoute{Rd: rd, IpPrefix: "0.0.0.0", IpPrefixLen: 0}
 }
@@ -3970,12 +3892,9 @@ func startLocalTestBGP(t *testing.T, asn uint32, routerID string) *server.BgpSer
 // listLocalEVPNPaths returns the EVPN paths in the global RIB keyed by NLRI type.
 func listLocalEVPNPaths(t *testing.T, bgp *server.BgpServer) (type2, type3, type5 []*apipb.Path) {
 	t.Helper()
-	err := bgp.ListPath(context.Background(), &apipb.ListPathRequest{
-		TableType: apipb.TableType_GLOBAL,
-		Family:    &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
-	}, func(dst *apipb.Destination) {
-		for _, p := range dst.GetPaths() {
-			msg, err := p.GetNlri().UnmarshalNew()
+	for _, paths := range listPaths(t, bgp, &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN}) {
+		for _, p := range paths {
+			msg, err := oneof(p.GetNlri())
 			if err != nil {
 				t.Errorf("unmarshal NLRI: %v", err)
 				continue
@@ -3991,9 +3910,6 @@ func listLocalEVPNPaths(t *testing.T, bgp *server.BgpServer) (type2, type3, type
 				t.Errorf("unexpected EVPN NLRI %T", msg)
 			}
 		}
-	})
-	if err != nil {
-		t.Fatalf("list paths: %v", err)
 	}
 	return type2, type3, type5
 }
@@ -4001,7 +3917,7 @@ func listLocalEVPNPaths(t *testing.T, bgp *server.BgpServer) (type2, type3, type
 func mustFindPMSITunnel(t *testing.T, path *apipb.Path) *apipb.PmsiTunnelAttribute {
 	t.Helper()
 	for _, attr := range path.GetPattrs() {
-		msg, err := attr.UnmarshalNew()
+		msg, err := oneof(attr)
 		if err != nil {
 			t.Fatalf("unmarshal path attribute: %v", err)
 		}
@@ -4039,7 +3955,7 @@ func TestAdvertiseType3PublishesIMETWithIngressReplication(t *testing.T) {
 		t.Fatalf("paths: type-2=%d type-3=%d type-5=%d, want only one type-3", len(type2), len(type3), len(type5))
 	}
 	path := type3[0]
-	msg, err := path.GetNlri().UnmarshalNew()
+	msg, err := oneof(path.GetNlri())
 	if err != nil {
 		t.Fatalf("unmarshal NLRI: %v", err)
 	}
@@ -4083,7 +3999,7 @@ func TestAdvertiseType2PublishesBridgeMACAndIP(t *testing.T) {
 		t.Fatalf("paths: type-2=%d type-3=%d type-5=%d, want only one type-2", len(type2), len(type3), len(type5))
 	}
 	path := type2[0]
-	msg, err := path.GetNlri().UnmarshalNew()
+	msg, err := oneof(path.GetNlri())
 	if err != nil {
 		t.Fatalf("unmarshal NLRI: %v", err)
 	}
@@ -4192,9 +4108,9 @@ func TestHandleType5RouteZebraMetricAndWithdraw(t *testing.T) {
 	}
 }
 
-func mustPMSI(t *testing.T, tunnelType uint32) *anypb.Any {
+func mustPMSI(t *testing.T, tunnelType uint32) *apipb.Attribute {
 	t.Helper()
-	a, err := anypb.New(&apipb.PmsiTunnelAttribute{Type: tunnelType, Label: 100, Id: net.ParseIP("10.0.0.1").To4()})
+	a, err := wrapAttr(&apipb.PmsiTunnelAttribute{Type: tunnelType, Label: 100, Id: net.ParseIP("10.0.0.1").To4()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4215,7 +4131,7 @@ func TestProcessRouteUpdateType3TunnelType(t *testing.T) {
 			netlinkOps: mock,
 		}, mock
 	}
-	path := func(pmsi ...*anypb.Any) *apipb.Path {
+	path := func(pmsi ...*apipb.Attribute) *apipb.Path {
 		p := mustAddRouteTarget(t, mustMarshalPath(t, &apipb.EVPNInclusiveMulticastEthernetTagRoute{IpAddress: "10.0.0.1"}, "10.0.0.1", false))
 		p.Pattrs = append(p.Pattrs, pmsi...)
 		return p
@@ -4254,10 +4170,7 @@ func TestHandleType2RouteBestPathPerMAC(t *testing.T) {
 		}, mock
 	}
 	route := func(rd uint32, ip string) *apipb.EVPNMACIPAdvertisementRoute {
-		a, err := buildRouteDistinguisher(65000, rd)
-		if err != nil {
-			t.Fatal(err)
-		}
+		a := buildRouteDistinguisher(65000, rd)
 		return &apipb.EVPNMACIPAdvertisementRoute{Rd: a, MacAddress: mac, IpAddress: ip}
 	}
 	lastSet := func(t *testing.T, mock *mockOverlayNetlinkOps) string {
@@ -4329,15 +4242,15 @@ func TestHandleType2RouteBestPathPerMAC(t *testing.T) {
 // TestMacMobilityOf reads the sequence number and the sticky flag of the
 // MAC Mobility extended community.
 func TestMacMobilityOf(t *testing.T) {
-	mm, err := anypb.New(&apipb.MacMobilityExtended{SequenceNum: 7, IsSticky: true})
+	mm, err := wrapExt(&apipb.MacMobilityExtended{SequenceNum: 7, IsSticky: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ext, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{Communities: []*anypb.Any{mustRT2(t, 65000, 100), mm}})
+	ext, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{Communities: []*apipb.ExtendedCommunity{mustRT2(t, 65000, 100), mm}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := macMobilityOf(&apipb.Path{Pattrs: []*anypb.Any{ext}}); got != (macMobility{seq: 7, sticky: true}) {
+	if got := macMobilityOf(&apipb.Path{Pattrs: []*apipb.Attribute{ext}}); got != (macMobility{seq: 7, sticky: true}) {
 		t.Errorf("MAC mobility = %+v, want sequence 7, sticky", got)
 	}
 	if got := macMobilityOf(&apipb.Path{}); got != (macMobility{}) {
@@ -4356,32 +4269,29 @@ func type2TestOverlay() (*OverlayTier, *mockOverlayNetlinkOps) {
 
 func type2TestPath(t *testing.T, rd uint32, nh string, mm *apipb.MacMobilityExtended) *apipb.Path {
 	t.Helper()
-	r, err := buildRouteDistinguisher(65000, rd)
+	r := buildRouteDistinguisher(65000, rd)
+	n, err := wrapNLRI(&apipb.EVPNMACIPAdvertisementRoute{Rd: r, MacAddress: "aa:bb:cc:dd:ee:ff"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	n, err := anypb.New(&apipb.EVPNMACIPAdvertisementRoute{Rd: r, MacAddress: "aa:bb:cc:dd:ee:ff"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
+	mp, err := wrapAttr(&apipb.MpReachNLRIAttribute{
 		Family: &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN}, NextHops: []string{nh}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := []*anypb.Any{mustRT2(t, 65000, 100)}
+	c := []*apipb.ExtendedCommunity{mustRT2(t, 65000, 100)}
 	if mm != nil {
-		a, err := anypb.New(mm)
+		a, err := wrapExt(mm)
 		if err != nil {
 			t.Fatal(err)
 		}
 		c = append(c, a)
 	}
-	ec, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{Communities: c})
+	ec, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{Communities: c})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &apipb.Path{Nlri: n, Pattrs: []*anypb.Any{mp, ec}}
+	return &apipb.Path{Nlri: n, Pattrs: []*apipb.Attribute{mp, ec}}
 }
 
 // The MAC Mobility community reaches the selection through
@@ -4467,11 +4377,7 @@ func TestHandleType2RouteInstallsNeighbor(t *testing.T) {
 		netlinkOps: mock,
 	}
 	route := func(rd uint32, mac, ip string) *apipb.EVPNMACIPAdvertisementRoute {
-		a, err := buildRouteDistinguisher(65000, rd)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return &apipb.EVPNMACIPAdvertisementRoute{Rd: a, MacAddress: mac, IpAddress: ip}
+		return &apipb.EVPNMACIPAdvertisementRoute{Rd: buildRouteDistinguisher(65000, rd), MacAddress: mac, IpAddress: ip}
 	}
 	neighbors := func(list []*netlink.Neigh) []*netlink.Neigh {
 		var out []*netlink.Neigh
@@ -4638,11 +4544,7 @@ func TestType5GatewayIPResolutionKeepsTheActivePath(t *testing.T) {
 	o, m := type2TestOverlay()
 	o.cfg.ResolveOverlayIndex = true
 	route := func(rd uint32, gw string) *apipb.EVPNIPPrefixRoute {
-		r, err := buildRouteDistinguisher(65000, rd)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return &apipb.EVPNIPPrefixRoute{Rd: r, IpPrefix: "10.100.0.0", IpPrefixLen: 24, GwAddress: gw}
+		return &apipb.EVPNIPPrefixRoute{Rd: buildRouteDistinguisher(65000, rd), IpPrefix: "10.100.0.0", IpPrefixLen: 24, GwAddress: gw}
 	}
 	o.handleType5Route(route(2, "0.0.0.0"), "10.0.0.2", nil, false) // "b", installed
 	o.handleType5Route(route(1, "0.0.0.0"), "10.0.0.1", nil, false) // "a", sorts first
@@ -4673,5 +4575,76 @@ func TestRemoveType5PrefixClearsGatewayRefOnESRCH(t *testing.T) {
 	o.removeType5Prefix(state)
 	if _, ok := o.loadType5GatewayRef("10.100.0.0/24"); ok {
 		t.Fatal("the gateway reference survived an ESRCH delete")
+	}
+}
+
+// oneof returns the message set in the oneof of a GoBGP v4 API wrapper
+// (NLRI, Attribute, ExtendedCommunity, RouteDistinguisher), what
+// Any.UnmarshalNew did with GoBGP v3.
+func oneof(w proto.Message) (proto.Message, error) {
+	r := w.ProtoReflect()
+	fd := r.WhichOneof(r.Descriptor().Oneofs().Get(0))
+	if fd == nil {
+		return nil, fmt.Errorf("%T: no value set", w)
+	}
+	return r.Get(fd).Message().Interface(), nil
+}
+
+// wrapOneof sets m into the oneof field of w that has its type, what
+// anypb.New did with GoBGP v3.
+func wrapOneof[W proto.Message](w W, m proto.Message) (W, error) {
+	r := w.ProtoReflect()
+	fields := r.Descriptor().Oneofs().Get(0).Fields()
+	for i := range fields.Len() {
+		if fd := fields.Get(i); fd.Message() != nil && fd.Message().FullName() == m.ProtoReflect().Descriptor().FullName() {
+			r.Set(fd, protoreflect.ValueOfMessage(m.ProtoReflect()))
+			return w, nil
+		}
+	}
+	return w, fmt.Errorf("%T has no %T", w, m)
+}
+
+func wrapNLRI(m proto.Message) (*apipb.NLRI, error) { return wrapOneof(&apipb.NLRI{}, m) }
+
+func wrapAttr(m proto.Message) (*apipb.Attribute, error) { return wrapOneof(&apipb.Attribute{}, m) }
+
+func wrapExt(m proto.Message) (*apipb.ExtendedCommunity, error) {
+	return wrapOneof(&apipb.ExtendedCommunity{}, m)
+}
+
+func wrapRD(m proto.Message) (*apipb.RouteDistinguisher, error) {
+	return wrapOneof(&apipb.RouteDistinguisher{}, m)
+}
+
+// apiPath hands a GoBGP v4 watch path to the overlay handlers: the NLRI,
+// the next hop, the route target and the withdraw flag survive the
+// conversion from the native types.
+func TestAPIPathKeepsWithdrawAndAttributes(t *testing.T) {
+	nlri, err := buildEVPNType5NLRI(buildRouteDistinguisher(65000, 4000), "10.100.0.20/32", "0.0.0.0", 4000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attrs, err := buildType5PathAttrs(nlri, "10.0.0.1", 65000, 4000, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := &apipb.Path{Family: &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN}, Nlri: nlri, Pattrs: attrs}
+	native, err := apiutil.GetNativeNlri(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nattrs, err := apiutil.GetNativePathAttributes(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, withdraw := range []bool{false, true} {
+		p, err := apiPath(&apiutil.Path{Family: bgp.RF_EVPN, Nlri: native, Attrs: nattrs, Withdrawal: withdraw})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.GetIsWithdraw() != withdraw || p.GetNlri().GetEvpnIpPrefix().GetIpPrefix() != "10.100.0.20" ||
+			extractNextHop(p) != "10.0.0.1" || !matchesLocalRT(p, 65000, 4000) {
+			t.Errorf("withdraw=%v: apiPath = %v", withdraw, p)
+		}
 	}
 }

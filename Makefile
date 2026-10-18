@@ -39,7 +39,7 @@ CLEAN_FILES := \
 # Keep the version in sync with the golangci-lint step in .github/workflows/ci.yml.
 # CI lints with the Go version from go.mod. golangci-lint and staticcheck can
 # crash with a newer local Go, so build and run the linter with that version.
-GOLANGCI_LINT_VERSION ?= v2.12.2
+GOLANGCI_LINT_VERSION ?= v2.14.0
 LINT_GOTOOLCHAIN ?= go$(shell sed -n 's/^go //p' go.mod)
 LINT_HOSTOS := $(shell go env GOHOSTOS)
 LINT_EXE := $(if $(filter windows,$(LINT_HOSTOS)),.exe)

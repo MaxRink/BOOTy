@@ -40,6 +40,6 @@ sleep 5
 ) &
 docker run --rm --network "$net" --ip 172.30.99.3 -v "$root":/src:ro -v "${GOMODCACHE:-$HOME/go/pkg/mod}":/go/pkg/mod -w /src \
 	-e GOFLAGS=-buildvcs=false -e GOTOOLCHAIN=local -e BFD_FRR_PEER=172.30.99.2 -e BFD_FRR_DURATION=$((45 + cycles * 13))s \
-	golang:1.26.6 go test -tags bfd_frr -count=1 -v -run TestFRRInterop ./pkg/network/bfd/
+	golang:1.27.2 go test -tags bfd_frr -count=1 -v -run TestFRRInterop ./pkg/network/bfd/
 wait
 docker exec "$name-frr" vtysh -c 'show bfd peers counters' | grep -E 'peer|Session up|Session down' || true

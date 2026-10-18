@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
-	apipb "github.com/osrg/gobgp/v3/api"
+	apipb "github.com/osrg/gobgp/v4/api"
+	"github.com/osrg/gobgp/v4/pkg/apiutil"
+	"github.com/osrg/gobgp/v4/pkg/server"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -39,7 +42,7 @@ type peerRestarter struct {
 
 // handle takes a peer state event. GoBGP calls it from one goroutine.
 func (r *peerRestarter) handle(ctx context.Context, p *apipb.Peer) {
-	if p.GetState().GetSessionState() != apipb.PeerState_IDLE || p.GetState().GetAdminState() != apipb.PeerState_UP {
+	if p.GetState().GetSessionState() != apipb.PeerState_SESSION_STATE_IDLE || p.GetState().GetAdminState() != apipb.PeerState_ADMIN_STATE_UP {
 		return
 	}
 	host := p.GetState().GetNeighborAddress()
@@ -76,11 +79,13 @@ func (r *peerRestarter) stop() {
 func (u *UnderlayTier) startRestarter() error {
 	r := &peerRestarter{peers: u.peersOfHost, restart: u.restartPeer, log: u.log}
 	ctx, cancel := context.WithCancel(context.Background())
-	err := u.bgp.WatchEvent(ctx, &apipb.WatchEventRequest{Peer: &apipb.WatchEventRequest_Peer{}}, func(e *apipb.WatchEventResponse) {
-		if pe := e.GetPeer(); pe.GetType() == apipb.WatchEventResponse_PeerEvent_STATE {
-			r.handle(ctx, pe.GetPeer())
-		}
-	})
+	err := u.bgp.WatchEvent(ctx, server.WatchEventMessageCallbacks{
+		OnPeerUpdate: func(e *apiutil.WatchEventMessage_PeerEvent, _ time.Time) {
+			if e.Type == apiutil.PEER_EVENT_STATE {
+				r.handle(ctx, peerStateEvent(&e.Peer.State))
+			}
+		},
+	}, server.WatchPeer())
 	if err != nil {
 		cancel()
 		return fmt.Errorf("watch BGP peer states: %w", err)
@@ -90,6 +95,18 @@ func (u *UnderlayTier) startRestarter() error {
 		r.stop()
 	}
 	return nil
+}
+
+// peerStateEvent is the API form of a GoBGP v4 peer state event, with the
+// neighbor address without zone like the v3 events. The API session
+// state is the FSM state plus one, as in GoBGP's gRPC server
+// (pkg/server/grpc_server.go:441).
+func peerStateEvent(s *apiutil.PeerState) *apipb.Peer {
+	return &apipb.Peer{State: &apipb.PeerState{
+		NeighborAddress: s.NeighborAddress.WithZone("").String(),
+		SessionState:    apipb.PeerState_SessionState(int(s.SessionState) + 1),
+		AdminState:      s.AdminState,
+	}}
 }
 
 // peersOfHost returns the added peers whose address without zone is host.
@@ -114,7 +131,7 @@ func (u *UnderlayTier) peersOfHost(host string) []string {
 func (u *UnderlayTier) needsRestart(ctx context.Context, addr string) bool {
 	needs := false
 	_ = u.bgp.ListPeer(ctx, &apipb.ListPeerRequest{Address: addr}, func(p *apipb.Peer) {
-		needs = p.GetState().GetSessionState() == apipb.PeerState_IDLE && p.GetState().GetAdminState() == apipb.PeerState_UP &&
+		needs = p.GetState().GetSessionState() == apipb.PeerState_SESSION_STATE_IDLE && p.GetState().GetAdminState() == apipb.PeerState_ADMIN_STATE_UP &&
 			p.GetTimers().GetState().GetUptime() != nil && !keepsGracefulRestartRoutes(p)
 	})
 	return needs

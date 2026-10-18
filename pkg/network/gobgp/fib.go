@@ -10,8 +10,10 @@ import (
 	"net/netip"
 	"time"
 
-	apipb "github.com/osrg/gobgp/v3/api"
-	"github.com/osrg/gobgp/v3/pkg/server"
+	apipb "github.com/osrg/gobgp/v4/api"
+	"github.com/osrg/gobgp/v4/pkg/apiutil"
+	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
+	"github.com/osrg/gobgp/v4/pkg/server"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netlink/nl"
 	"golang.org/x/sys/unix"
@@ -54,9 +56,9 @@ type fibWriter struct {
 	resolveViaDefault bool
 }
 
-func newFIBWriter(bgp *server.BgpServer, sel *fibSelector, vrfs map[int]string) *fibWriter {
+func newFIBWriter(srv *server.BgpServer, sel *fibSelector, vrfs map[int]string) *fibWriter {
 	return &fibWriter{
-		bgp:        bgp,
+		bgp:        srv,
 		sel:        sel,
 		nl:         &netlink.Handle{},
 		vrfs:       vrfs,
@@ -78,14 +80,13 @@ func (w *fibWriter) run(ctx context.Context) {
 		default:
 		}
 	}
-	err := w.bgp.WatchEvent(ctx, &apipb.WatchEventRequest{Table: &apipb.WatchEventRequest_Table{
-		// A new equal-cost path does not change the best path, so every
-		// received update triggers a reconcile too.
-		Filters: []*apipb.WatchEventRequest_Table_Filter{
-			{Type: apipb.WatchEventRequest_Table_Filter_BEST, Init: true},
-			{Type: apipb.WatchEventRequest_Table_Filter_ADJIN},
-		},
-	}}, func(*apipb.WatchEventResponse) { notify() })
+	onPaths := func([]*apiutil.Path, time.Time) { notify() }
+	// A new equal-cost path does not change the best path, so every
+	// received update triggers a reconcile too, and so does the drop of
+	// the paths of a peer that went down (a separate stream since GoBGP
+	// v4.8.0, pkg/server/server.go:5280).
+	err := w.bgp.WatchEvent(ctx, server.WatchEventMessageCallbacks{OnBestPath: onPaths, OnPathUpdate: onPaths},
+		server.WatchBestPath(true), server.WatchUpdate(false, "", ""), server.WatchAdjInWithdraw())
 	if err != nil {
 		w.log.Error("watch best paths", "error", err)
 		return
@@ -176,12 +177,14 @@ func (w *fibWriter) reconcile(ctx context.Context, force bool) error {
 // wanted returns the kernel routes of the current RIB by table and prefix.
 func (w *fibWriter) wanted(ctx context.Context) (map[string]*netlink.Route, error) {
 	want := map[string]*netlink.Route{}
-	for _, afi := range []apipb.Family_Afi{apipb.Family_AFI_IP, apipb.Family_AFI_IP6} {
-		var dests []*apipb.Destination
-		err := w.bgp.ListPath(ctx, &apipb.ListPathRequest{
-			TableType: apipb.TableType_GLOBAL,
-			Family:    &apipb.Family{Afi: afi, Safi: apipb.Family_SAFI_UNICAST},
-		}, func(d *apipb.Destination) { dests = append(dests, d) })
+	for _, family := range []bgp.Family{bgp.RF_IPv4_UC, bgp.RF_IPv6_UC} {
+		var dests []fibDest
+		err := w.bgp.ListPath(apiutil.ListPathRequest{
+			TableType: apipb.TableType_TABLE_TYPE_GLOBAL,
+			Family:    family,
+		}, func(prefix bgp.NLRI, paths []*apiutil.Path) {
+			dests = append(dests, fibDest{prefix: prefix, paths: paths})
+		})
 		if err != nil {
 			return nil, fmt.Errorf("list paths: %w", err)
 		}

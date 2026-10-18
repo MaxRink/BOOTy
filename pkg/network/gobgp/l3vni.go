@@ -11,7 +11,7 @@ import (
 	"slices"
 	"syscall"
 
-	apipb "github.com/osrg/gobgp/v3/api"
+	apipb "github.com/osrg/gobgp/v4/api"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netlink/nl"
 	"golang.org/x/sys/unix"
@@ -127,10 +127,7 @@ func (o *OverlayTier) advertiseType5Networks(ctx context.Context) error {
 			o.log.Warn("network is not in the local RIB, not advertised (import check)", "prefix", prefix)
 			continue
 		}
-		rd, err := buildRouteDistinguisher(o.cfg.ASN, vni)
-		if err != nil {
-			return fmt.Errorf("build route distinguisher: %w", err)
-		}
+		rd := buildRouteDistinguisher(o.cfg.ASN, vni)
 		gw := type5DirectGateway
 		if prefix.Addr().Is6() {
 			gw = "::"
@@ -143,11 +140,11 @@ func (o *OverlayTier) advertiseType5Networks(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("build path attributes for %s: %w", prefix, err)
 		}
-		if _, err := o.bgp.AddPath(ctx, &apipb.AddPathRequest{Path: &apipb.Path{
+		if err := addPath(o.bgp, &apipb.Path{
 			Family: &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
 			Nlri:   nlri,
 			Pattrs: pattrs,
-		}}); err != nil {
+		}); err != nil {
 			return fmt.Errorf("add EVPN Type-5 path for %s: %w", prefix, err)
 		}
 		o.log.Info("advertised EVPN type-5 network", "prefix", prefix, "vni", vni)

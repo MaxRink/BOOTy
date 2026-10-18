@@ -8,14 +8,15 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/netip"
 	"slices"
 	"sync"
 	"testing"
 	"time"
 
-	apipb "github.com/osrg/gobgp/v3/api"
-	"github.com/osrg/gobgp/v3/pkg/packet/bgp"
-	"github.com/osrg/gobgp/v3/pkg/server"
+	apipb "github.com/osrg/gobgp/v4/api"
+	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
+	"github.com/osrg/gobgp/v4/pkg/server"
 )
 
 func peerEvent(addr string, s apipb.PeerState_SessionState, a apipb.PeerState_AdminState) *apipb.Peer {
@@ -44,10 +45,10 @@ func TestPeerRestarterHandle(t *testing.T) {
 		event *apipb.Peer
 		want  []string
 	}{
-		{peerEvent("fe80::1", apipb.PeerState_ACTIVE, apipb.PeerState_UP), nil},
-		{peerEvent("fe80::1", apipb.PeerState_ESTABLISHED, apipb.PeerState_UP), nil},
-		{peerEvent("fe80::1", apipb.PeerState_IDLE, apipb.PeerState_DOWN), nil},
-		{peerEvent("fe80::1", apipb.PeerState_IDLE, apipb.PeerState_UP), both},
+		{peerEvent("fe80::1", apipb.PeerState_SESSION_STATE_ACTIVE, apipb.PeerState_ADMIN_STATE_UP), nil},
+		{peerEvent("fe80::1", apipb.PeerState_SESSION_STATE_ESTABLISHED, apipb.PeerState_ADMIN_STATE_UP), nil},
+		{peerEvent("fe80::1", apipb.PeerState_SESSION_STATE_IDLE, apipb.PeerState_ADMIN_STATE_DOWN), nil},
+		{peerEvent("fe80::1", apipb.PeerState_SESSION_STATE_IDLE, apipb.PeerState_ADMIN_STATE_UP), both},
 	}
 	for i, s := range steps {
 		r.handle(ctx, s.event)
@@ -57,7 +58,7 @@ func TestPeerRestarterHandle(t *testing.T) {
 		}
 	}
 	r.stop()
-	r.handle(ctx, peerEvent("fe80::1", apipb.PeerState_IDLE, apipb.PeerState_UP))
+	r.handle(ctx, peerEvent("fe80::1", apipb.PeerState_SESSION_STATE_IDLE, apipb.PeerState_ADMIN_STATE_UP))
 	r.wg.Wait()
 	if !slices.Equal(asked, both) {
 		t.Fatalf("asked after stop: %v", asked)
@@ -128,11 +129,17 @@ func fakeSpeaker(t *testing.T, u *UnderlayTier, gr bool) net.Conn {
 		}
 	}
 	readMsg() // GoBGP's OPEN
-	send(bgp.NewBGPOpenMessage(65500, 90, "198.51.100.1", []bgp.OptionParameterInterface{bgp.NewOptionParameterCapability(caps)}))
+	open, err := bgp.NewBGPOpenMessage(65500, 90, netip.MustParseAddr("198.51.100.1"), []bgp.OptionParameterInterface{bgp.NewOptionParameterCapability(caps)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	send(open)
 	readMsg() // GoBGP's KEEPALIVE, sent after it took our OPEN
 	send(bgp.NewBGPKeepAliveMessage())
 	go func() { _, _ = io.Copy(io.Discard, conn) }()
-	waitPeer(t, u, func(p *apipb.Peer) bool { return p.GetState().GetSessionState() == apipb.PeerState_ESTABLISHED })
+	waitPeer(t, u, func(p *apipb.Peer) bool {
+		return p.GetState().GetSessionState() == apipb.PeerState_SESSION_STATE_ESTABLISHED
+	})
 	return conn
 }
 
@@ -151,7 +158,7 @@ func waitPeer(t *testing.T, u *UnderlayTier, ok func(*apipb.Peer) bool) {
 }
 
 func idleAfterUp(p *apipb.Peer) bool {
-	return p.GetState().GetSessionState() == apipb.PeerState_IDLE && p.GetTimers().GetState().GetUptime() != nil
+	return p.GetState().GetSessionState() == apipb.PeerState_SESSION_STATE_IDLE && p.GetTimers().GetState().GetUptime() != nil
 }
 
 // restartPeer against a real GoBGP: it restarts a peer whose session
@@ -194,7 +201,7 @@ func TestRestartPeerReal(t *testing.T) {
 		}
 		// GoBGP also clears the uptime of a disabled peer.
 		waitPeer(t, u, func(p *apipb.Peer) bool {
-			return p.GetState().GetSessionState() == apipb.PeerState_IDLE && p.GetState().GetAdminState() == apipb.PeerState_DOWN
+			return p.GetState().GetSessionState() == apipb.PeerState_SESSION_STATE_IDLE && p.GetState().GetAdminState() == apipb.PeerState_ADMIN_STATE_DOWN
 		})
 		if ok, err := u.restartPeer(ctx, "127.0.0.1"); ok || err != nil {
 			t.Fatalf("restart = %v, %v; want none", ok, err)
@@ -287,7 +294,7 @@ func waitEstablished(ctx context.Context, s *server.BgpServer, addr string, sinc
 	for {
 		var up int64
 		_ = s.ListPeer(ctx, &apipb.ListPeerRequest{Address: addr}, func(p *apipb.Peer) {
-			if p.GetState().GetSessionState() == apipb.PeerState_ESTABLISHED {
+			if p.GetState().GetSessionState() == apipb.PeerState_SESSION_STATE_ESTABLISHED {
 				up = p.GetTimers().GetState().GetUptime().GetSeconds()
 			}
 		})

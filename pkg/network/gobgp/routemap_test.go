@@ -5,17 +5,20 @@ package gobgp
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"net"
 	"net/netip"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	apipb "github.com/osrg/gobgp/v3/api"
-	"github.com/osrg/gobgp/v3/pkg/server"
-	"google.golang.org/protobuf/types/known/anypb"
+	apipb "github.com/osrg/gobgp/v4/api"
+	"github.com/osrg/gobgp/v4/pkg/apiutil"
+	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
+	"github.com/osrg/gobgp/v4/pkg/server"
 
 	"github.com/telekom/BOOTy/pkg/network"
 )
@@ -30,7 +33,7 @@ var templateLists = []network.CommunityList{{Name: "cm-received-fabric", Entries
 // The bm4x template: entries in sequence order, the implicit deny last.
 func TestBuildPolicyTemplate(t *testing.T) {
 	peers := []policyPeer{{
-		name: "fe80::1%eth1", addr: netip.MustParseAddr("fe80::1%eth1"), localAS: 65501, allowASIn: 3,
+		name: "fe80::1%eth1", addr: netip.MustParseAddr("fe80::1%eth1"), localAS: 65501, routerAS: 4210000017, allowASIn: 3,
 		routeMaps: []network.SessionRouteMaps{{Family: "ipv4-unicast", In: "TAG-FABRIC-IN", Out: "DENY-TAG-FABRIC-OUT"}},
 	}}
 	p, err := buildPolicy(peers, templateMaps, templateLists)
@@ -45,17 +48,17 @@ func TestBuildPolicyTemplate(t *testing.T) {
 	for _, s := range p.ex {
 		ex = append(ex, s.Name+":"+s.GetActions().GetRouteAction().String())
 	}
-	wantIm := "local-as-65501-3:REJECT rm-in-TAG-FABRIC-IN-ipv4-unicast-10:ACCEPT rm-in-TAG-FABRIC-IN-ipv4-unicast-deny:REJECT"
-	wantEx := "rm-out-DENY-TAG-FABRIC-OUT-ipv4-unicast-10-0:REJECT rm-out-DENY-TAG-FABRIC-OUT-ipv4-unicast-20:ACCEPT rm-out-DENY-TAG-FABRIC-OUT-ipv4-unicast-deny:REJECT"
+	wantIm := "router-as-4210000017-3:ROUTE_ACTION_REJECT rm-in-TAG-FABRIC-IN-ipv4-unicast-10:ROUTE_ACTION_ACCEPT rm-in-TAG-FABRIC-IN-ipv4-unicast-deny:ROUTE_ACTION_REJECT"
+	wantEx := "rm-out-DENY-TAG-FABRIC-OUT-ipv4-unicast-10-0:ROUTE_ACTION_REJECT rm-out-DENY-TAG-FABRIC-OUT-ipv4-unicast-20:ROUTE_ACTION_ACCEPT rm-out-DENY-TAG-FABRIC-OUT-ipv4-unicast-deny:ROUTE_ACTION_REJECT"
 	if strings.Join(im, " ") != wantIm || strings.Join(ex, " ") != wantEx {
 		t.Fatalf("import %v\nexport %v", im, ex)
 	}
 	tag := p.im[1].GetActions()
-	if tag.GetLocalPref().GetValue() != 90 || tag.GetCommunity().GetType() != apipb.CommunityAction_ADD || tag.GetCommunity().GetCommunities()[0] != "65169:200" {
+	if tag.GetLocalPref().GetValue() != 90 || tag.GetCommunity().GetType() != apipb.CommunityAction_TYPE_ADD || tag.GetCommunity().GetCommunities()[0] != "65169:200" {
 		t.Fatalf("TAG-FABRIC-IN actions = %v", tag)
 	}
 	for _, set := range p.sets {
-		if set.GetDefinedType() == apipb.DefinedType_NEIGHBOR && set.GetList()[0] != "fe80::1/128" {
+		if set.GetDefinedType() == apipb.DefinedType_DEFINED_TYPE_NEIGHBOR && set.GetList()[0] != "fe80::1/128" {
 			t.Fatalf("neighbor set %s = %v, want the address without zone", set.GetName(), set.GetList())
 		}
 	}
@@ -98,11 +101,11 @@ func TestPolicyInGoBGP(t *testing.T) {
 	fabric := startServer(t, 65500, "10.0.0.1", port)
 	booty := startServer(t, 4210000017, "192.0.2.17", -1)
 	addr := "127.0.0.1"
-	// The GoBGP peer carries no local-as here: GoBGP would not send paths
-	// with the peer AS to it (sender-side loop check). The policy gets the
-	// local-as from the session, so the local-as check is tested alone.
+	// BOOTy peers with local-as 65501 like in production. The fabric
+	// paths carry the router AS of BOOTy, which GoBGP v4 does not check
+	// for a local-as session, so the policy has to reject them.
 	if err := fabric.AddPeer(ctx, &apipb.AddPeerRequest{Peer: &apipb.Peer{
-		Conf:      &apipb.PeerConf{NeighborAddress: addr, PeerAsn: 4210000017},
+		Conf:      &apipb.PeerConf{NeighborAddress: addr, PeerAsn: 65501},
 		Transport: &apipb.Transport{PassiveMode: true},
 		AfiSafis:  ipv4Families(),
 	}}); err != nil {
@@ -119,7 +122,7 @@ func TestPolicyInGoBGP(t *testing.T) {
 		t.Fatal(err)
 	}
 	u := &UnderlayTier{bgp: booty, log: slog.Default(), cfg: &Config{
-		RouteMaps: templateMaps, CommunityLists: templateLists,
+		RouteMaps: templateMaps, CommunityLists: templateLists, ASN: 4210000017,
 		Sessions: []network.BGPSession{
 			{Name: addr, RemoteASN: 65500, LocalASN: 65501, AllowASIn: 3,
 				RouteMaps: []network.SessionRouteMaps{{Family: "ipv4-unicast", In: "TAG-FABRIC-IN", Out: "DENY-TAG-FABRIC-OUT"}}},
@@ -128,12 +131,13 @@ func TestPolicyInGoBGP(t *testing.T) {
 		},
 	}}
 	for _, peer := range []struct {
-		addr string
-		asn  uint32
-		port int
-	}{{addr, 65500, port}, {"127.0.0.2", 65502, port2}} {
+		addr    string
+		asn     uint32
+		port    int
+		localAS uint32
+	}{{addr, 65500, port, 65501}, {"127.0.0.2", 65502, port2, 0}} {
 		if err := booty.AddPeer(ctx, &apipb.AddPeerRequest{Peer: &apipb.Peer{
-			Conf:      &apipb.PeerConf{NeighborAddress: peer.addr, PeerAsn: peer.asn},
+			Conf:      &apipb.PeerConf{NeighborAddress: peer.addr, PeerAsn: peer.asn, LocalAsn: peer.localAS},
 			Transport: &apipb.Transport{RemotePort: uint32(peer.port)}, //nolint:gosec // test port
 			AfiSafis:  ipv4Families(),
 			Timers:    &apipb.Timers{Config: &apipb.TimersConfig{ConnectRetry: 1}},
@@ -152,12 +156,13 @@ func TestPolicyInGoBGP(t *testing.T) {
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) && len(got) < 3 {
 		clear(got)
-		_ = booty.ListPath(ctx, &apipb.ListPathRequest{TableType: apipb.TableType_GLOBAL, Family: ipv4Families()[0].GetConfig().GetFamily()},
-			func(d *apipb.Destination) { got[d.GetPrefix()] = d.GetPaths()[0] })
+		for prefix, paths := range listPaths(t, booty, ipv4Families()[0].GetConfig().GetFamily()) {
+			got[prefix] = paths[0]
+		}
 		time.Sleep(200 * time.Millisecond)
 	}
 	if _, ok := got["203.0.113.0/24"]; ok {
-		t.Error("path with the local-as 4 times imported, want rejected (allowas-in 3)")
+		t.Error("path with the router AS 4 times imported, want rejected (allowas-in 3)")
 	}
 	for _, prefix := range []string{"203.0.113.128/25", "198.51.100.0/24"} {
 		p, ok := got[prefix]
@@ -174,8 +179,7 @@ func TestPolicyInGoBGP(t *testing.T) {
 	var sent []string
 	for time.Now().Before(deadline) {
 		sent = sent[:0]
-		_ = other.ListPath(ctx, &apipb.ListPathRequest{TableType: apipb.TableType_GLOBAL, Family: ipv4Families()[0].GetConfig().GetFamily()},
-			func(d *apipb.Destination) { sent = append(sent, d.GetPrefix()) })
+		sent = slices.AppendSeq(sent, maps.Keys(listPaths(t, other, ipv4Families()[0].GetConfig().GetFamily())))
 		if len(sent) > 0 {
 			break
 		}
@@ -183,8 +187,7 @@ func TestPolicyInGoBGP(t *testing.T) {
 	}
 	time.Sleep(time.Second) // let more updates arrive, if any were sent
 	sent = sent[:0]
-	_ = other.ListPath(ctx, &apipb.ListPathRequest{TableType: apipb.TableType_GLOBAL, Family: ipv4Families()[0].GetConfig().GetFamily()},
-		func(d *apipb.Destination) { sent = append(sent, d.GetPrefix()) })
+	sent = slices.AppendSeq(sent, maps.Keys(listPaths(t, other, ipv4Families()[0].GetConfig().GetFamily())))
 	if len(sent) != 1 || sent[0] != "192.0.2.17/32" {
 		t.Errorf("other peer received %v, want only 192.0.2.17/32", sent)
 	}
@@ -232,21 +235,23 @@ func startServer(t *testing.T, asn uint32, id string, port int) *server.BgpServe
 func addRoute(t *testing.T, s *server.BgpServer, prefix string, prepend int) {
 	t.Helper()
 	pfx := netip.MustParsePrefix(prefix)
-	nlri, _ := anypb.New(&apipb.IPAddressPrefix{Prefix: pfx.Addr().String(), PrefixLen: uint32(pfx.Bits())}) //nolint:gosec // test
-	origin, _ := anypb.New(&apipb.OriginAttribute{Origin: 0})
-	nh, _ := anypb.New(&apipb.NextHopAttribute{NextHop: "10.0.0.1"})
-	attrs := []*anypb.Any{origin, nh}
+	nlri := &apipb.NLRI{Nlri: &apipb.NLRI_Prefix{Prefix: &apipb.IPAddressPrefix{Prefix: pfx.Addr().String(), PrefixLen: uint32(pfx.Bits())}}} //nolint:gosec // test
+	attrs := []*apipb.Attribute{
+		{Attr: &apipb.Attribute_Origin{Origin: &apipb.OriginAttribute{Origin: 0}}},
+		{Attr: &apipb.Attribute_NextHop{NextHop: &apipb.NextHopAttribute{NextHop: "10.0.0.1"}}},
+	}
 	if prepend > 0 {
 		asns := make([]uint32, prepend)
 		for i := range asns {
-			asns[i] = 65501
+			asns[i] = 4210000017 // the router AS of the BOOTy servers
 		}
-		asp, _ := anypb.New(&apipb.AsPathAttribute{Segments: []*apipb.AsSegment{{Type: apipb.AsSegment_AS_SEQUENCE, Numbers: asns}}})
-		attrs = append(attrs, asp)
+		attrs = append(attrs, &apipb.Attribute{Attr: &apipb.Attribute_AsPath{AsPath: &apipb.AsPathAttribute{
+			Segments: []*apipb.AsSegment{{Type: apipb.AsSegment_TYPE_AS_SEQUENCE, Numbers: asns}},
+		}}})
 	}
-	if _, err := s.AddPath(context.Background(), &apipb.AddPathRequest{Path: &apipb.Path{
+	if err := addPath(s, &apipb.Path{
 		Family: &apipb.Family{Afi: apipb.Family_AFI_IP, Safi: apipb.Family_SAFI_UNICAST}, Nlri: nlri, Pattrs: attrs,
-	}}); err != nil {
+	}); err != nil {
 		t.Fatalf("add %s: %v", prefix, err)
 	}
 }
@@ -254,18 +259,36 @@ func addRoute(t *testing.T, s *server.BgpServer, prefix string, prepend int) {
 func pathPolicyAttrs(t *testing.T, p *apipb.Path) (lp uint32, comms []uint32) {
 	t.Helper()
 	for _, a := range p.GetPattrs() {
-		m, err := a.UnmarshalNew()
-		if err != nil {
-			t.Fatal(err)
-		}
-		switch v := m.(type) {
-		case *apipb.LocalPrefAttribute:
+		if v := a.GetLocalPref(); v != nil {
 			lp = v.GetLocalPref()
-		case *apipb.CommunitiesAttribute:
+		}
+		if v := a.GetCommunities(); v != nil {
 			comms = v.GetCommunities()
 		}
 	}
 	return lp, comms
+}
+
+// listPaths returns the paths of the global RIB of a family by prefix, as
+// the API types (GoBGP v4 ListPath returns native types).
+func listPaths(t *testing.T, s *server.BgpServer, family *apipb.Family) map[string][]*apipb.Path {
+	t.Helper()
+	out := map[string][]*apipb.Path{}
+	err := s.ListPath(apiutil.ListPathRequest{TableType: apipb.TableType_TABLE_TYPE_GLOBAL, Family: apiutil.ToFamily(family)},
+		func(prefix bgp.NLRI, paths []*apiutil.Path) {
+			for _, p := range paths {
+				ap, err := apiPath(p)
+				if err != nil {
+					t.Error(err)
+					continue
+				}
+				out[prefix.String()] = append(out[prefix.String()], ap)
+			}
+		})
+	if err != nil {
+		t.Fatalf("list paths: %v", err)
+	}
+	return out
 }
 
 // Mirrors FRR evpn_type5_test_topo1 test_RT_verification_manual: with
@@ -274,7 +297,7 @@ func pathPolicyAttrs(t *testing.T, p *apipb.Path) (lp uint32, comms []uint32) {
 func TestExplicitRouteTargets(t *testing.T) {
 	o := &OverlayTier{cfg: &Config{ASN: 4210000017, ProvisionVNI: 3000, ImportRTs: []string{"65169:3000", "65169:3001"}, ExportRTs: []string{"65169:3000", "4210000017:7"}}}
 	path := func(rts ...[2]uint32) *apipb.Path {
-		comms := make([]*anypb.Any, 0, len(rts))
+		comms := make([]*apipb.ExtendedCommunity, 0, len(rts))
 		for _, rt := range rts {
 			a, err := buildRouteTarget(rt[0], rt[1])
 			if err != nil {
@@ -282,8 +305,7 @@ func TestExplicitRouteTargets(t *testing.T) {
 			}
 			comms = append(comms, a)
 		}
-		ext, _ := anypb.New(&apipb.ExtendedCommunitiesAttribute{Communities: comms})
-		return &apipb.Path{Pattrs: []*anypb.Any{ext}}
+		return &apipb.Path{Pattrs: []*apipb.Attribute{extCommunities(comms...)}}
 	}
 	for name, tc := range map[string]struct {
 		p    *apipb.Path
@@ -314,13 +336,9 @@ func TestExplicitRouteTargets(t *testing.T) {
 	}
 }
 
-func mustRD(t *testing.T) *anypb.Any {
+func mustRD(t *testing.T) *apipb.RouteDistinguisher {
 	t.Helper()
-	rd, err := buildRouteDistinguisher(4210000017, 3000)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return rd
+	return buildRouteDistinguisher(4210000017, 3000)
 }
 
 // "bgp ebgp-requires-policy": an eBGP peer without a route-map in a family
@@ -349,7 +367,7 @@ func TestBuildPolicyEBGPRequiresPolicy(t *testing.T) {
 	for _, st := range append(append([]*apipb.Statement{}, p.im...), p.ex...) {
 		if strings.HasPrefix(st.GetName(), "ebgp-requires-policy") {
 			names = append(names, st.GetName())
-			if st.GetActions().GetRouteAction() != apipb.RouteAction_REJECT {
+			if st.GetActions().GetRouteAction() != apipb.RouteAction_ROUTE_ACTION_REJECT {
 				t.Errorf("%s does not reject", st.GetName())
 			}
 		}
@@ -393,15 +411,12 @@ func TestEBGPRequiresPolicyInGoBGP(t *testing.T) {
 			addRoute(t, fabric, "198.51.100.0/24", 0)
 			addRoute(t, booty, "192.0.2.17/32", 0)
 			count := func(s *server.BgpServer) int {
-				n := 0
-				_ = s.ListPath(ctx, &apipb.ListPathRequest{TableType: apipb.TableType_GLOBAL, Family: ipv4Families()[0].GetConfig().GetFamily()},
-					func(*apipb.Destination) { n++ })
-				return n
+				return len(listPaths(t, s, ipv4Families()[0].GetConfig().GetFamily()))
 			}
 			established := func() bool {
 				up := false
 				_ = booty.ListPeer(ctx, &apipb.ListPeerRequest{Address: addr}, func(p *apipb.Peer) {
-					up = p.GetState().GetSessionState() == apipb.PeerState_ESTABLISHED
+					up = p.GetState().GetSessionState() == apipb.PeerState_SESSION_STATE_ESTABLISHED
 				})
 				return up
 			}
@@ -479,7 +494,7 @@ func TestBuildPolicyCommunityListAll(t *testing.T) {
 		t.Fatal(err)
 	}
 	cond := p.ex[0].GetConditions().GetCommunitySet()
-	if cond.GetType() != apipb.MatchSet_ALL {
+	if cond.GetType() != apipb.MatchSet_TYPE_ALL {
 		t.Fatalf("community condition %v, want ALL", cond)
 	}
 	for _, set := range p.sets {
@@ -512,7 +527,7 @@ func TestPolicyPeersNative(t *testing.T) {
 				ifacePeers: map[string]string{"eth1": "fe80::1%eth1"},
 			}
 			want := []policyPeer{
-				{name: "fe80::1%eth1", addr: netip.MustParseAddr("fe80::1%eth1"), routeMaps: maps, localAS: 65501, allowASIn: 3, requirePolicy: true, families: all},
+				{name: "fe80::1%eth1", addr: netip.MustParseAddr("fe80::1%eth1"), routeMaps: maps, localAS: 65501, routerAS: 65000, allowASIn: 3, requirePolicy: true, families: all},
 				{name: "198.51.100.1", addr: netip.MustParseAddr("198.51.100.1"), routeMaps: maps, allowASIn: 3, requirePolicy: tt.numbered, families: all},
 			}
 			if got := u.policyPeers(); !reflect.DeepEqual(got, want) {

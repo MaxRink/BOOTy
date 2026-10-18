@@ -8,7 +8,7 @@ import (
 	"net/netip"
 	"time"
 
-	apipb "github.com/osrg/gobgp/v3/api"
+	apipb "github.com/osrg/gobgp/v4/api"
 	"github.com/vishvananda/netlink"
 
 	"github.com/telekom/BOOTy/pkg/network"
@@ -154,7 +154,8 @@ func bfdTimers(txMS, rxMS, mult uint32) bfd.Timers {
 // sends Cease/Administrative Reset, not Cease/BFD Down (RFC 9384), and
 // connects again after idleHoldAfterReset. FRR also starts a connect at
 // BFD Up; GoBGP has no API for that, its Active state connects within
-// 1 to 2 s by itself.
+// 1.5 to 2 s by itself (pkg/server/fsm.go:967, minConnectRetryInterval 2
+// with 0.75 to 1 jitter since GoBGP v4.0.0).
 //
 // Like bgpd, a BFD Down does not reset a BGP session that came up in the
 // same second (bss->last_event > peer->uptime, both in seconds): a
@@ -192,11 +193,11 @@ func (u *UnderlayTier) bfdChanged(p *bfd.Peer, from, to bfd.State, diag bfd.Diag
 	// sync that steps the clock back puts it in the future (FRR compares
 	// monotonic times). Then the BFD Down resets the session as usual.
 	switch state, at := session(ctx, p.Name); {
-	case state == apipb.PeerState_OPENCONFIRM:
+	case state == apipb.PeerState_SESSION_STATE_OPENCONFIRM:
 		u.log.Info("BFD down while the BGP session is coming up (OpenConfirm), not resetting it yet", "peer", p.Name, "diag", diag)
 		u.recheck(p)
 		return
-	case state == apipb.PeerState_ESTABLISHED && (at.IsZero() || now().Unix() == at.Unix()):
+	case state == apipb.PeerState_SESSION_STATE_ESTABLISHED && (at.IsZero() || now().Unix() == at.Unix()):
 		u.log.Info("BFD down in the second the BGP session came up, not resetting it yet, like FRR", "peer", p.Name, "diag", diag)
 		u.recheck(p)
 		return
@@ -262,9 +263,9 @@ func (u *UnderlayTier) resetUnlessBFDUp(ctx context.Context, name string, downAt
 		switch {
 		case ctx.Err() != nil: // Teardown
 			return
-		case state == apipb.PeerState_OPENCONFIRM || state == apipb.PeerState_ESTABLISHED && at.IsZero():
+		case state == apipb.PeerState_SESSION_STATE_OPENCONFIRM || state == apipb.PeerState_SESSION_STATE_ESTABLISHED && at.IsZero():
 			continue // still coming up; the hold timer bounds this
-		case state != apipb.PeerState_ESTABLISHED:
+		case state != apipb.PeerState_SESSION_STATE_ESTABLISHED:
 			return
 		case time.Since(downAt) < grace:
 			continue
@@ -288,13 +289,13 @@ func (u *UnderlayTier) reset(ctx context.Context, name string) {
 // sessionState returns the BGP session state of addr and, when it is
 // established, when it came up. Without a server or peer it is UNKNOWN.
 func (u *UnderlayTier) sessionState(ctx context.Context, addr string) (apipb.PeerState_SessionState, time.Time) {
-	state, at := apipb.PeerState_UNKNOWN, time.Time{}
+	state, at := apipb.PeerState_SESSION_STATE_UNSPECIFIED, time.Time{}
 	if u.bgp == nil {
 		return state, at
 	}
 	_ = u.bgp.ListPeer(ctx, &apipb.ListPeerRequest{Address: addr}, func(p *apipb.Peer) {
 		state = p.GetState().GetSessionState()
-		if state == apipb.PeerState_ESTABLISHED && p.GetTimers().GetState().GetUptime() != nil {
+		if state == apipb.PeerState_SESSION_STATE_ESTABLISHED && p.GetTimers().GetState().GetUptime() != nil {
 			at = p.GetTimers().GetState().GetUptime().AsTime()
 		}
 	})

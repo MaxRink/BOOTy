@@ -75,11 +75,19 @@ func parseAK(akPublic []byte) (*ecdsa.PublicKey, *tpm2.TPMTPublic, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("AK public point: %w", err)
 	}
-	// ecdsa.VerifyASN1 rejects a point that is not on the curve.
-	key := &ecdsa.PublicKey{
-		Curve: elliptic.P256(),
-		X:     new(big.Int).SetBytes(point.X.Buffer),
-		Y:     new(big.Int).SetBytes(point.Y.Buffer),
+	const coordLen = 32 // P-256
+	if len(point.X.Buffer) > coordLen || len(point.Y.Buffer) > coordLen {
+		return nil, nil, fmt.Errorf("AK public point: coordinates longer than %d bytes", coordLen)
+	}
+	// The uncompressed point 0x04 || X || Y, the coordinates left-padded.
+	// The parser rejects a point that is not on the curve.
+	raw := make([]byte, 1+2*coordLen)
+	raw[0] = 4
+	copy(raw[1+coordLen-len(point.X.Buffer):1+coordLen], point.X.Buffer)
+	copy(raw[1+2*coordLen-len(point.Y.Buffer):], point.Y.Buffer)
+	key, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), raw)
+	if err != nil {
+		return nil, nil, fmt.Errorf("AK public point: %w", err)
 	}
 	return key, pub, nil
 }

@@ -4,7 +4,7 @@ import (
 	"cmp"
 	"fmt"
 
-	apipb "github.com/osrg/gobgp/v3/api"
+	apipb "github.com/osrg/gobgp/v4/api"
 
 	"github.com/telekom/BOOTy/pkg/network"
 )

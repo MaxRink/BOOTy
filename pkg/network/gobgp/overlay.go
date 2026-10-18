@@ -16,11 +16,12 @@ import (
 	"syscall"
 	"time"
 
-	apipb "github.com/osrg/gobgp/v3/api"
-	"github.com/osrg/gobgp/v3/pkg/server"
+	apipb "github.com/osrg/gobgp/v4/api"
+	"github.com/osrg/gobgp/v4/pkg/apiutil"
+	"github.com/osrg/gobgp/v4/pkg/server"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
-	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -699,10 +700,7 @@ func (o *OverlayTier) advertiseType5(ctx context.Context) error {
 		return nil
 	}
 
-	rd, err := buildRouteDistinguisher(o.cfg.ASN, uint32(o.cfg.ProvisionVNI))
-	if err != nil {
-		return fmt.Errorf("build route distinguisher: %w", err)
-	}
+	rd := buildRouteDistinguisher(o.cfg.ASN, uint32(o.cfg.ProvisionVNI))
 
 	// Extract the host IP from the CIDR and advertise it as a /32 host route.
 	ip, _, err := net.ParseCIDR(o.cfg.ProvisionIP)
@@ -721,12 +719,10 @@ func (o *OverlayTier) advertiseType5(ctx context.Context) error {
 		return fmt.Errorf("build path attributes: %w", err)
 	}
 
-	_, err = o.bgp.AddPath(ctx, &apipb.AddPathRequest{
-		Path: &apipb.Path{
-			Family: &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
-			Nlri:   nlri,
-			Pattrs: pattrs,
-		},
+	err = addPath(o.bgp, &apipb.Path{
+		Family: &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
+		Nlri:   nlri,
+		Pattrs: pattrs,
 	})
 	if err != nil {
 		return fmt.Errorf("add EVPN Type-5 path: %w", err)
@@ -742,27 +738,19 @@ func (o *OverlayTier) advertiseType5(ctx context.Context) error {
 // target. The IMET route carries a PMSI tunnel attribute (ingress replication)
 // telling peers to use unicast VXLAN encapsulation for BUM traffic.
 func (o *OverlayTier) advertiseType3(ctx context.Context) error {
-	rd, err := buildRouteDistinguisher(o.cfg.ASN, uint32(o.cfg.ProvisionVNI))
-	if err != nil {
-		return fmt.Errorf("build route distinguisher: %w", err)
-	}
+	rd := buildRouteDistinguisher(o.cfg.ASN, uint32(o.cfg.ProvisionVNI))
 
-	nlri, err := buildEVPNType3NLRI(rd, o.cfg.RouterID)
-	if err != nil {
-		return fmt.Errorf("build EVPN type-3 NLRI: %w", err)
-	}
+	nlri := buildEVPNType3NLRI(rd, o.cfg.RouterID)
 
 	pattrs, err := buildType3PathAttrs(nlri, o.cfg.RouterID, o.cfg.ASN, uint32(o.cfg.ProvisionVNI), o.cfg.VPNRT)
 	if err != nil {
 		return fmt.Errorf("build type-3 path attributes: %w", err)
 	}
 
-	_, err = o.bgp.AddPath(ctx, &apipb.AddPathRequest{
-		Path: &apipb.Path{
-			Family: &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
-			Nlri:   nlri,
-			Pattrs: pattrs,
-		},
+	err = addPath(o.bgp, &apipb.Path{
+		Family: &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
+		Nlri:   nlri,
+		Pattrs: pattrs,
 	})
 	if err != nil {
 		return fmt.Errorf("add EVPN type-3 path: %w", err)
@@ -791,27 +779,19 @@ func (o *OverlayTier) advertiseType2(ctx context.Context) error {
 		return fmt.Errorf("parse provision IP %s: %w", o.cfg.ProvisionIP, err)
 	}
 
-	rd, err := buildRouteDistinguisher(o.cfg.ASN, uint32(o.cfg.ProvisionVNI))
-	if err != nil {
-		return fmt.Errorf("build route distinguisher: %w", err)
-	}
+	rd := buildRouteDistinguisher(o.cfg.ASN, uint32(o.cfg.ProvisionVNI))
 
-	nlri, err := buildEVPNType2NLRI(rd, o.cfg.BridgeMAC, ip.String(), uint32(o.cfg.ProvisionVNI))
-	if err != nil {
-		return fmt.Errorf("build EVPN type-2 NLRI: %w", err)
-	}
+	nlri := buildEVPNType2NLRI(rd, o.cfg.BridgeMAC, ip.String(), uint32(o.cfg.ProvisionVNI))
 
 	pattrs, err := buildType2PathAttrs(nlri, o.cfg.RouterID, o.cfg.ASN, uint32(o.cfg.ProvisionVNI), o.cfg.VPNRT)
 	if err != nil {
 		return fmt.Errorf("build type-2 path attributes: %w", err)
 	}
 
-	_, err = o.bgp.AddPath(ctx, &apipb.AddPathRequest{
-		Path: &apipb.Path{
-			Family: &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
-			Nlri:   nlri,
-			Pattrs: pattrs,
-		},
+	err = addPath(o.bgp, &apipb.Path{
+		Family: &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
+		Nlri:   nlri,
+		Pattrs: pattrs,
 	})
 	if err != nil {
 		return fmt.Errorf("add EVPN type-2 path: %w", err)
@@ -823,22 +803,18 @@ func (o *OverlayTier) advertiseType2(ctx context.Context) error {
 }
 
 func (o *OverlayTier) watchRoutes(ctx context.Context) {
-	err := o.bgp.WatchEvent(ctx, &apipb.WatchEventRequest{
-		Table: &apipb.WatchEventRequest_Table{
-			Filters: []*apipb.WatchEventRequest_Table_Filter{
-				{
-					Type: apipb.WatchEventRequest_Table_Filter_BEST,
-					Init: true,
-				},
-			},
-		},
-	}, func(resp *apipb.WatchEventResponse) {
-		if t := resp.GetTable(); t != nil {
-			for _, p := range t.GetPaths() {
+	err := o.bgp.WatchEvent(ctx, server.WatchEventMessageCallbacks{
+		OnBestPath: func(paths []*apiutil.Path, _ time.Time) {
+			for _, native := range paths {
+				p, err := apiPath(native)
+				if err != nil {
+					o.log.Debug("route update skipped", "error", err)
+					continue
+				}
 				o.processRouteUpdate(p)
 			}
-		}
-	})
+		},
+	}, server.WatchBestPath(true))
 	if err != nil {
 		o.log.Warn("route watcher stopped", "error", err)
 	}
@@ -862,23 +838,18 @@ func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 	}
 
 	if ok, err := o.importsRoute(p); err != nil {
-		o.log.Debug("route update skipped: invalid configured import RT", "action", action, "type", nlri.GetTypeUrl(), "error", err)
+		o.log.Debug("route update skipped: invalid configured import RT", "action", action, "type", fmt.Sprintf("%T", nlri.GetNlri()), "error", err)
 		return
 	} else if !ok {
-		o.log.Debug("route update skipped: RT mismatch", "action", action, "type", nlri.GetTypeUrl())
-		return
-	}
-
-	msg, err := nlri.UnmarshalNew()
-	if err != nil {
-		o.log.Debug("route update unmarshal failed", "error", err)
+		o.log.Debug("route update skipped: RT mismatch", "action", action, "type", fmt.Sprintf("%T", nlri.GetNlri()))
 		return
 	}
 
 	vtep := extractNextHop(p)
 
-	switch route := msg.(type) {
-	case *apipb.EVPNIPPrefixRoute:
+	switch {
+	case nlri.GetEvpnIpPrefix() != nil:
+		route := nlri.GetEvpnIpPrefix()
 		routerMAC, err := extractRouterMAC(p)
 		routerMACValid := true
 		if err != nil {
@@ -886,12 +857,13 @@ func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 			routerMACValid = false
 		}
 		o.handleType5RouteWithRouterMACState(route, vtep, routerMAC, routerMACValid, withdraw)
-	case *apipb.EVPNMACIPAdvertisementRoute:
+	case nlri.GetEvpnMacadv() != nil:
 		if o.cfg.EnableL2 {
-			o.handleType2Update(route, vtep, macMobilityOf(p), withdraw)
+			o.handleType2Update(nlri.GetEvpnMacadv(), vtep, macMobilityOf(p), withdraw)
 		}
-	case *apipb.EVPNInclusiveMulticastEthernetTagRoute:
+	case nlri.GetEvpnMulticast() != nil:
 		if o.cfg.EnableL2 {
+			route := nlri.GetEvpnMulticast()
 			if !withdraw && !ingressReplication(p) {
 				// Like FRR: flooding only for ingress replication.
 				o.log.Debug("type-3 route without ingress replication, no BUM entry", "vtep", route.GetIpAddress())
@@ -900,7 +872,7 @@ func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 			o.handleType3Route(route, vtep, withdraw)
 		}
 	default:
-		o.log.Debug("route update", "action", action, "type", nlri.GetTypeUrl())
+		o.log.Debug("route update", "action", action, "type", fmt.Sprintf("%T", nlri.GetNlri()))
 	}
 }
 
@@ -1195,9 +1167,15 @@ type type5Path struct {
 // (EVPNIPPrefixRoute.String), so an update that changes the gateway of the
 // same key replaces the old path instead of adding a second one.
 func type5PathKey(route *apipb.EVPNIPPrefixRoute) string {
-	rd := route.GetRd()
-	return fmt.Sprintf("%s|%x|%d|%s/%d",
-		rd.GetTypeUrl(), rd.GetValue(), route.GetEthernetTag(), route.GetIpPrefix(), route.GetIpPrefixLen())
+	return fmt.Sprintf("%s|%d|%s/%d", rdKey(route.GetRd()), route.GetEthernetTag(), route.GetIpPrefix(), route.GetIpPrefixLen())
+}
+
+// rdKey identifies a route distinguisher in a route key: its protobuf
+// encoding, which keeps the RD types apart by their field number (the
+// GoBGP v3 keys used the type URL and value of the Any).
+func rdKey(rd *apipb.RouteDistinguisher) string {
+	b, _ := proto.MarshalOptions{Deterministic: true}.Marshal(rd) //nolint:errcheck // a valid message always encodes
+	return fmt.Sprintf("%x", b)
 }
 
 // rememberType5Path records a live path. The caller holds type5PathsMu.
@@ -1643,8 +1621,7 @@ type type2Path struct {
 // type2Key is the route key of a Type-2 route (RFC 7432 section 7.2): RD,
 // Ethernet Tag, MAC and IP address.
 func type2Key(route *apipb.EVPNMACIPAdvertisementRoute) string {
-	rd := route.GetRd()
-	return fmt.Sprintf("%s|%x|%d|%s|%s", rd.GetTypeUrl(), rd.GetValue(), route.GetEthernetTag(),
+	return fmt.Sprintf("%s|%d|%s|%s", rdKey(route.GetRd()), route.GetEthernetTag(),
 		strings.ToLower(route.GetMacAddress()), route.GetIpAddress())
 }
 
@@ -1901,20 +1878,8 @@ func (o *OverlayTier) syncType2FDB(mac net.HardwareAddr) {
 // sequence number (0 without one, RFC 7432 section 15) and the sticky flag.
 func macMobilityOf(path *apipb.Path) macMobility {
 	for _, attr := range path.GetPattrs() {
-		msg, err := attr.UnmarshalNew()
-		if err != nil {
-			continue
-		}
-		ext, ok := msg.(*apipb.ExtendedCommunitiesAttribute)
-		if !ok {
-			continue
-		}
-		for _, c := range ext.GetCommunities() {
-			m, err := c.UnmarshalNew()
-			if err != nil {
-				continue
-			}
-			if mm, ok := m.(*apipb.MacMobilityExtended); ok {
+		for _, c := range attr.GetExtendedCommunities().GetCommunities() {
+			if mm := c.GetMacMobility(); mm != nil {
 				return macMobility{seq: mm.GetSequenceNum(), sticky: mm.GetIsSticky()}
 			}
 		}
@@ -1930,11 +1895,7 @@ func macMobilityOf(path *apipb.Path) macMobility {
 // the VTEP (RFC 8365 section 9: the receiver uses the advertised tunnel).
 func ingressReplication(path *apipb.Path) bool {
 	for _, attr := range path.GetPattrs() {
-		msg, err := attr.UnmarshalNew()
-		if err != nil {
-			continue
-		}
-		if pmsi, ok := msg.(*apipb.PmsiTunnelAttribute); ok {
+		if pmsi := attr.GetPmsiTunnel(); pmsi != nil {
 			return pmsi.GetType() == pmsiTunnelTypeIngressReplication
 		}
 	}
@@ -2017,44 +1978,31 @@ func parsePrefixRoute(prefix string, prefixLen uint32) (*net.IPNet, error) {
 // attribute. Returns empty string if not found.
 func extractNextHop(p *apipb.Path) string {
 	for _, attr := range p.GetPattrs() {
-		msg, err := attr.UnmarshalNew()
-		if err != nil {
-			continue
-		}
-		if mpReach, ok := msg.(*apipb.MpReachNLRIAttribute); ok {
-			if hops := mpReach.GetNextHops(); len(hops) > 0 {
-				return hops[0]
-			}
+		if hops := attr.GetMpReach().GetNextHops(); len(hops) > 0 {
+			return hops[0]
 		}
 	}
 	return ""
 }
 
 // buildRouteDistinguisher builds an RD, selecting 2-octet or 4-octet ASN type.
-func buildRouteDistinguisher(asn, vni uint32) (*anypb.Any, error) {
-	var a *anypb.Any
-	var err error
+func buildRouteDistinguisher(asn, vni uint32) *apipb.RouteDistinguisher {
 	if asn <= asnMax2Byte {
-		a, err = anypb.New(&apipb.RouteDistinguisherTwoOctetASN{
+		return &apipb.RouteDistinguisher{Rd: &apipb.RouteDistinguisher_TwoOctetAsn{TwoOctetAsn: &apipb.RouteDistinguisherTwoOctetASN{
 			Admin:    asn,
 			Assigned: vni,
-		})
-	} else {
-		a, err = anypb.New(&apipb.RouteDistinguisherFourOctetASN{
-			Admin:    asn,
-			Assigned: vni & 0xFFFF,
-		})
+		}}}
 	}
-	if err != nil {
-		return nil, fmt.Errorf("marshal route distinguisher: %w", err)
-	}
-	return a, nil
+	return &apipb.RouteDistinguisher{Rd: &apipb.RouteDistinguisher_FourOctetAsn{FourOctetAsn: &apipb.RouteDistinguisherFourOctetASN{
+		Admin:    asn,
+		Assigned: vni & 0xFFFF,
+	}}}
 }
 
 // buildEVPNType5NLRI builds an EVPN IP Prefix (Type-5) NLRI for the given
 // IP prefix (typically a /32 host route), so the fabric can route overlay
 // traffic to this VTEP.
-func buildEVPNType5NLRI(rd *anypb.Any, provisionIP, gwIP string, label uint32) (*anypb.Any, error) {
+func buildEVPNType5NLRI(rd *apipb.RouteDistinguisher, provisionIP, gwIP string, label uint32) (*apipb.NLRI, error) {
 	_, ipNet, err := net.ParseCIDR(provisionIP)
 	if err != nil {
 		return nil, fmt.Errorf("parse provision IP %s: %w", provisionIP, err)
@@ -2074,38 +2022,18 @@ func buildEVPNType5NLRI(rd *anypb.Any, provisionIP, gwIP string, label uint32) (
 		GwAddress:   gwIP,
 		Label:       label,
 	}
-	a, err := anypb.New(route)
-	if err != nil {
-		return nil, fmt.Errorf("marshal EVPN type-5 NLRI: %w", err)
-	}
-	return a, nil
+	return &apipb.NLRI{Nlri: &apipb.NLRI_EvpnIpPrefix{EvpnIpPrefix: route}}, nil
 }
 
 // buildType5PathAttrs builds BGP path attributes for EVPN Type-5 advertisement.
-func buildType5PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32, vpnRT, routerMAC string) ([]*anypb.Any, error) {
+func buildType5PathAttrs(nlri *apipb.NLRI, nextHop string, asn, vni uint32, vpnRT, routerMAC string) ([]*apipb.Attribute, error) {
 	return buildType5PathAttrsRTs(nlri, nextHop, asn, vni, []string{vpnRT}, routerMAC)
 }
 
 // buildType5PathAttrsRTs is buildType5PathAttrs with one route target per
 // spec, like FRR "route-target export" with several values.
-func buildType5PathAttrsRTs(nlri *anypb.Any, nextHop string, asn, vni uint32, rtSpecs []string, routerMAC string) ([]*anypb.Any, error) {
-	origin, err := anypb.New(&apipb.OriginAttribute{Origin: 0}) // IGP
-	if err != nil {
-		return nil, fmt.Errorf("marshal origin: %w", err)
-	}
-
-	// GoBGP requires MpReachNLRIAttribute to carry both the next-hop and the
-	// NLRI list for EVPN address families.
-	mpReach, err := anypb.New(&apipb.MpReachNLRIAttribute{
-		Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
-		NextHops: []string{nextHop},
-		Nlris:    []*anypb.Any{nlri},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("marshal mp-reach: %w", err)
-	}
-
-	var communities []*anypb.Any
+func buildType5PathAttrsRTs(nlri *apipb.NLRI, nextHop string, asn, vni uint32, rtSpecs []string, routerMAC string) ([]*apipb.Attribute, error) {
+	var communities []*apipb.ExtendedCommunity
 	for _, spec := range rtSpecs {
 		rt, err := buildRouteTargetForSpec(spec, asn, vni)
 		if err != nil {
@@ -2114,12 +2042,7 @@ func buildType5PathAttrsRTs(nlri *anypb.Any, nextHop string, asn, vni uint32, rt
 		communities = append(communities, rt)
 	}
 
-	encap, err := anypb.New(&apipb.EncapExtended{TunnelType: vxlanTunnelType})
-	if err != nil {
-		return nil, fmt.Errorf("marshal vxlan encapsulation extended community: %w", err)
-	}
-
-	communities = append(communities, encap)
+	communities = append(communities, &apipb.ExtendedCommunity{Extcom: &apipb.ExtendedCommunity_Encap{Encap: &apipb.EncapExtended{TunnelType: vxlanTunnelType}}})
 	if routerMAC != "" {
 		rmac, err := buildRouterMACExtended(routerMAC)
 		if err != nil {
@@ -2128,14 +2051,27 @@ func buildType5PathAttrsRTs(nlri *anypb.Any, nextHop string, asn, vni uint32, rt
 		communities = append(communities, rmac)
 	}
 
-	extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
-		Communities: communities,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("marshal ext-communities: %w", err)
-	}
+	return []*apipb.Attribute{originIGP(), evpnMpReach(nextHop, nlri), extCommunities(communities...)}, nil
+}
 
-	return []*anypb.Any{origin, mpReach, extComm}, nil
+// originIGP is the ORIGIN attribute IGP.
+func originIGP() *apipb.Attribute {
+	return &apipb.Attribute{Attr: &apipb.Attribute_Origin{Origin: &apipb.OriginAttribute{Origin: 0}}}
+}
+
+// evpnMpReach is the MP_REACH_NLRI attribute of an EVPN route. GoBGP
+// requires it to carry both the next hop and the NLRI for EVPN.
+func evpnMpReach(nextHop string, nlri *apipb.NLRI) *apipb.Attribute {
+	return &apipb.Attribute{Attr: &apipb.Attribute_MpReach{MpReach: &apipb.MpReachNLRIAttribute{
+		Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
+		NextHops: []string{nextHop},
+		Nlris:    []*apipb.NLRI{nlri},
+	}}}
+}
+
+// extCommunities is the EXTENDED_COMMUNITIES attribute.
+func extCommunities(c ...*apipb.ExtendedCommunity) *apipb.Attribute {
+	return &apipb.Attribute{Attr: &apipb.Attribute_ExtendedCommunities{ExtendedCommunities: &apipb.ExtendedCommunitiesAttribute{Communities: c}}}
 }
 
 const ethernetMACLength = 6
@@ -2151,16 +2087,12 @@ func parseRouterMAC(routerMAC string) (net.HardwareAddr, error) {
 	return mac, nil
 }
 
-func buildRouterMACExtended(routerMAC string) (*anypb.Any, error) {
+func buildRouterMACExtended(routerMAC string) (*apipb.ExtendedCommunity, error) {
 	mac, err := parseRouterMAC(routerMAC)
 	if err != nil {
 		return nil, err
 	}
-	rmac, err := anypb.New(&apipb.RouterMacExtended{Mac: mac.String()})
-	if err != nil {
-		return nil, fmt.Errorf("marshal router MAC: %w", err)
-	}
-	return rmac, nil
+	return &apipb.ExtendedCommunity{Extcom: &apipb.ExtendedCommunity_RouterMac{RouterMac: &apipb.RouterMacExtended{Mac: mac.String()}}}, nil
 }
 
 // matchesLocalRT reports whether path carries an extended community Route Target
@@ -2182,12 +2114,8 @@ func routeUpdateMatchesImportRT(path *apipb.Path, localASN, localVNI uint32) boo
 
 func routeTargetMatchState(path *apipb.Path, localASN, localVNI uint32) (matches, hasRouteTarget bool) {
 	for _, attr := range path.GetPattrs() {
-		msg, err := attr.UnmarshalNew()
-		if err != nil {
-			continue
-		}
-		extComm, ok := msg.(*apipb.ExtendedCommunitiesAttribute)
-		if !ok {
+		extComm := attr.GetExtendedCommunities()
+		if extComm == nil {
 			continue
 		}
 		rtMatches, rtPresent := rtFoundInCommunities(extComm.GetCommunities(), localASN, localVNI)
@@ -2201,12 +2129,8 @@ func routeTargetMatchState(path *apipb.Path, localASN, localVNI uint32) (matches
 
 func extractRouterMAC(path *apipb.Path) (net.HardwareAddr, error) {
 	for _, attr := range path.GetPattrs() {
-		msg, err := attr.UnmarshalNew()
-		if err != nil {
-			continue
-		}
-		extComm, ok := msg.(*apipb.ExtendedCommunitiesAttribute)
-		if !ok {
+		extComm := attr.GetExtendedCommunities()
+		if extComm == nil {
 			continue
 		}
 		routerMAC, err := routerMACInCommunities(extComm.GetCommunities())
@@ -2264,32 +2188,24 @@ func (o *OverlayTier) importRouteTarget() (asn, vni uint32, err error) {
 	return o.importRTASN, o.importRTVNI, o.importRTErr
 }
 
-// rtFoundInCommunities checks a slice of extended community Any values for a
-// Route Target matching localASN and localVNI.
-func rtFoundInCommunities(communities []*anypb.Any, localASN, localVNI uint32) (matches, hasRouteTarget bool) {
+// rtFoundInCommunities checks a slice of extended communities for a Route
+// Target matching localASN and localVNI.
+func rtFoundInCommunities(communities []*apipb.ExtendedCommunity, localASN, localVNI uint32) (matches, hasRouteTarget bool) {
 	for _, c := range communities {
-		msg, err := c.UnmarshalNew()
-		if err != nil {
-			continue
-		}
-		if rtCommunityPresent(msg) {
+		if rtCommunityPresent(c) {
 			hasRouteTarget = true
 		}
-		if rtCommunityMatches(msg, localASN, localVNI) {
+		if rtCommunityMatches(c, localASN, localVNI) {
 			return true, true
 		}
 	}
 	return false, hasRouteTarget
 }
 
-func routerMACInCommunities(communities []*anypb.Any) (net.HardwareAddr, error) {
+func routerMACInCommunities(communities []*apipb.ExtendedCommunity) (net.HardwareAddr, error) {
 	for _, c := range communities {
-		msg, err := c.UnmarshalNew()
-		if err != nil {
-			continue
-		}
-		rmac, ok := msg.(*apipb.RouterMacExtended)
-		if !ok {
+		rmac := c.GetRouterMac()
+		if rmac == nil {
 			continue
 		}
 		mac, err := parseRouterMAC(rmac.GetMac())
@@ -2301,19 +2217,20 @@ func routerMACInCommunities(communities []*anypb.Any) (net.HardwareAddr, error) 
 	return nil, nil
 }
 
-func rtCommunityPresent(msg interface{}) bool {
+// rtCommunityPresent reports a Route Target. IPv6 address specific Route
+// Targets travel in their own attribute since GoBGP v4.8.0, which BOOTy
+// does not import from.
+func rtCommunityPresent(c *apipb.ExtendedCommunity) bool {
 	const rtSubType = uint32(0x02)
-	switch v := msg.(type) {
-	case *apipb.TwoOctetAsSpecificExtended:
-		return v.GetSubType() == rtSubType
-	case *apipb.IPv4AddressSpecificExtended:
-		return v.GetSubType() == rtSubType
-	case *apipb.IPv6AddressSpecificExtended:
-		return v.GetSubType() == rtSubType
-	case *apipb.FourOctetAsSpecificExtended:
-		return v.GetSubType() == rtSubType
-	case *apipb.UnknownExtended:
-		return isRawRouteTargetType(v.GetType()) && rawExtendedSubType(v.GetValue()) == rtSubType
+	switch v := c.GetExtcom().(type) {
+	case *apipb.ExtendedCommunity_TwoOctetAsSpecific:
+		return v.TwoOctetAsSpecific.GetSubType() == rtSubType
+	case *apipb.ExtendedCommunity_Ipv4AddressSpecific:
+		return v.Ipv4AddressSpecific.GetSubType() == rtSubType
+	case *apipb.ExtendedCommunity_FourOctetAsSpecific:
+		return v.FourOctetAsSpecific.GetSubType() == rtSubType
+	case *apipb.ExtendedCommunity_Unknown:
+		return isRawRouteTargetType(v.Unknown.GetType()) && rawExtendedSubType(v.Unknown.GetValue()) == rtSubType
 	}
 	return false
 }
@@ -2333,16 +2250,16 @@ func rawExtendedSubType(value []byte) uint32 {
 	return uint32(value[0])
 }
 
-// rtCommunityMatches returns true if the proto message represents a Route
-// Target extended community (SubType 0x02) matching the given ASN and VNI.
-func rtCommunityMatches(msg interface{}, localASN, localVNI uint32) bool {
+// rtCommunityMatches returns true if the extended community is a Route
+// Target (SubType 0x02) matching the given ASN and VNI.
+func rtCommunityMatches(c *apipb.ExtendedCommunity, localASN, localVNI uint32) bool {
 	const rtSubType = uint32(0x02)
-	switch v := msg.(type) {
-	case *apipb.TwoOctetAsSpecificExtended:
+	if v := c.GetTwoOctetAsSpecific(); v != nil {
 		return v.GetSubType() == rtSubType &&
 			v.GetAsn() == localASN &&
 			v.GetLocalAdmin() == localVNI
-	case *apipb.FourOctetAsSpecificExtended:
+	}
+	if v := c.GetFourOctetAsSpecific(); v != nil {
 		return v.GetSubType() == rtSubType &&
 			v.GetAsn() == localASN &&
 			localVNI <= routeTargetLocalAdminMax &&
@@ -2353,34 +2270,27 @@ func rtCommunityMatches(msg interface{}, localASN, localVNI uint32) bool {
 
 // buildRouteTarget builds a route target extended community (Type 0x02),
 // selecting 2-octet or 4-octet format based on ASN size.
-func buildRouteTarget(asn, vni uint32) (*anypb.Any, error) {
-	var a *anypb.Any
-	var err error
+func buildRouteTarget(asn, vni uint32) (*apipb.ExtendedCommunity, error) {
 	if asn <= asnMax2Byte {
-		a, err = anypb.New(&apipb.TwoOctetAsSpecificExtended{
+		return &apipb.ExtendedCommunity{Extcom: &apipb.ExtendedCommunity_TwoOctetAsSpecific{TwoOctetAsSpecific: &apipb.TwoOctetAsSpecificExtended{
 			IsTransitive: true,
 			SubType:      0x02, // Route Target
 			Asn:          asn,
 			LocalAdmin:   vni,
-		})
-	} else {
-		if vni > routeTargetLocalAdminMax {
-			return nil, fmt.Errorf("route target value %d exceeds %d for 4-octet ASN %d", vni, routeTargetLocalAdminMax, asn)
-		}
-		a, err = anypb.New(&apipb.FourOctetAsSpecificExtended{
-			IsTransitive: true,
-			SubType:      0x02, // Route Target
-			Asn:          asn,
-			LocalAdmin:   vni,
-		})
+		}}}, nil
 	}
-	if err != nil {
-		return nil, fmt.Errorf("marshal route target: %w", err)
+	if vni > routeTargetLocalAdminMax {
+		return nil, fmt.Errorf("route target value %d exceeds %d for 4-octet ASN %d", vni, routeTargetLocalAdminMax, asn)
 	}
-	return a, nil
+	return &apipb.ExtendedCommunity{Extcom: &apipb.ExtendedCommunity_FourOctetAsSpecific{FourOctetAsSpecific: &apipb.FourOctetAsSpecificExtended{
+		IsTransitive: true,
+		SubType:      0x02, // Route Target
+		Asn:          asn,
+		LocalAdmin:   vni,
+	}}}, nil
 }
 
-func buildRouteTargetForSpec(spec string, fallbackASN, fallbackVNI uint32) (*anypb.Any, error) {
+func buildRouteTargetForSpec(spec string, fallbackASN, fallbackVNI uint32) (*apipb.ExtendedCommunity, error) {
 	if strings.TrimSpace(spec) == "" {
 		return buildRouteTarget(fallbackASN, fallbackVNI)
 	}
@@ -2402,66 +2312,37 @@ const pmsiTunnelTypeIngressReplication = 6
 
 // buildEVPNType3NLRI builds an EVPN Inclusive Multicast Ethernet Tag (Type-3)
 // NLRI. The IMET route tells the fabric to send BUM traffic to this VTEP.
-func buildEVPNType3NLRI(rd *anypb.Any, routerID string) (*anypb.Any, error) {
-	route := &apipb.EVPNInclusiveMulticastEthernetTagRoute{
+func buildEVPNType3NLRI(rd *apipb.RouteDistinguisher, routerID string) *apipb.NLRI {
+	return &apipb.NLRI{Nlri: &apipb.NLRI_EvpnMulticast{EvpnMulticast: &apipb.EVPNInclusiveMulticastEthernetTagRoute{
 		Rd:          rd,
 		EthernetTag: 0,
 		IpAddress:   routerID,
-	}
-	a, err := anypb.New(route)
-	if err != nil {
-		return nil, fmt.Errorf("marshal EVPN type-3 NLRI: %w", err)
-	}
-	return a, nil
+	}}}
 }
 
 // buildType3PathAttrs builds BGP path attributes for EVPN Type-3 (IMET)
 // advertisement, including Origin, MpReach, Route Target, and PMSI Tunnel.
-func buildType3PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32, vpnRT string) ([]*anypb.Any, error) {
-	origin, err := anypb.New(&apipb.OriginAttribute{Origin: 0})
-	if err != nil {
-		return nil, fmt.Errorf("marshal origin: %w", err)
-	}
-
-	mpReach, err := anypb.New(&apipb.MpReachNLRIAttribute{
-		Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
-		NextHops: []string{nextHop},
-		Nlris:    []*anypb.Any{nlri},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("marshal mp-reach: %w", err)
-	}
-
+func buildType3PathAttrs(nlri *apipb.NLRI, nextHop string, asn, vni uint32, vpnRT string) ([]*apipb.Attribute, error) {
 	rt, err := buildRouteTargetForSpec(vpnRT, asn, vni)
 	if err != nil {
 		return nil, fmt.Errorf("build route target: %w", err)
 	}
 
-	extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
-		Communities: []*anypb.Any{rt},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("marshal ext-communities: %w", err)
-	}
-
-	pmsi, err := anypb.New(&apipb.PmsiTunnelAttribute{
+	pmsi := &apipb.Attribute{Attr: &apipb.Attribute_PmsiTunnel{PmsiTunnel: &apipb.PmsiTunnelAttribute{
 		Flags: 0,
 		Type:  pmsiTunnelTypeIngressReplication,
 		Label: vni,
 		Id:    net.ParseIP(nextHop).To4(),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("marshal pmsi tunnel: %w", err)
-	}
+	}}}
 
-	return []*anypb.Any{origin, mpReach, extComm, pmsi}, nil
+	return []*apipb.Attribute{originIGP(), evpnMpReach(nextHop, nlri), extCommunities(rt), pmsi}, nil
 }
 
 // buildEVPNType2NLRI builds an EVPN MAC/IP Advertisement (Type-2) NLRI for
 // the given MAC address and optional IP. Used to announce the local bridge
 // MAC so remote VTEPs learn the FDB entry via control-plane.
-func buildEVPNType2NLRI(rd *anypb.Any, mac, ip string, label uint32) (*anypb.Any, error) {
-	route := &apipb.EVPNMACIPAdvertisementRoute{
+func buildEVPNType2NLRI(rd *apipb.RouteDistinguisher, mac, ip string, label uint32) *apipb.NLRI {
+	return &apipb.NLRI{Nlri: &apipb.NLRI_EvpnMacadv{EvpnMacadv: &apipb.EVPNMACIPAdvertisementRoute{
 		Rd: rd,
 		Esi: &apipb.EthernetSegmentIdentifier{
 			Type:  0,
@@ -2471,42 +2352,15 @@ func buildEVPNType2NLRI(rd *anypb.Any, mac, ip string, label uint32) (*anypb.Any
 		MacAddress:  mac,
 		IpAddress:   ip,
 		Labels:      []uint32{label},
-	}
-	a, err := anypb.New(route)
-	if err != nil {
-		return nil, fmt.Errorf("marshal EVPN type-2 NLRI: %w", err)
-	}
-	return a, nil
+	}}}
 }
 
 // buildType2PathAttrs builds BGP path attributes for EVPN Type-2 (MAC/IP)
 // advertisement, including Origin, MpReach, and Route Target.
-func buildType2PathAttrs(nlri *anypb.Any, nextHop string, asn, vni uint32, vpnRT string) ([]*anypb.Any, error) {
-	origin, err := anypb.New(&apipb.OriginAttribute{Origin: 0})
-	if err != nil {
-		return nil, fmt.Errorf("marshal origin: %w", err)
-	}
-
-	mpReach, err := anypb.New(&apipb.MpReachNLRIAttribute{
-		Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
-		NextHops: []string{nextHop},
-		Nlris:    []*anypb.Any{nlri},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("marshal mp-reach: %w", err)
-	}
-
+func buildType2PathAttrs(nlri *apipb.NLRI, nextHop string, asn, vni uint32, vpnRT string) ([]*apipb.Attribute, error) {
 	rt, err := buildRouteTargetForSpec(vpnRT, asn, vni)
 	if err != nil {
 		return nil, fmt.Errorf("build route target: %w", err)
 	}
-
-	extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
-		Communities: []*anypb.Any{rt},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("marshal ext-communities: %w", err)
-	}
-
-	return []*anypb.Any{origin, mpReach, extComm}, nil
+	return []*apipb.Attribute{originIGP(), evpnMpReach(nextHop, nlri), extCommunities(rt)}, nil
 }

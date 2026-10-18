@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	apipb "github.com/osrg/gobgp/v3/api"
-	"github.com/osrg/gobgp/v3/pkg/apiutil"
-	"github.com/osrg/gobgp/v3/pkg/packet/bgp"
-	"github.com/osrg/gobgp/v3/pkg/server"
+	apipb "github.com/osrg/gobgp/v4/api"
+	"github.com/osrg/gobgp/v4/pkg/apiutil"
+	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
+	"github.com/osrg/gobgp/v4/pkg/server"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
 	"golang.org/x/sys/unix"
@@ -94,19 +94,21 @@ func fibTestRoutes(t *testing.T, h *netlink.Handle) []string {
 
 func fibTestAnnounce(t *testing.T, s *server.BgpServer, prefix, nexthop string, withdraw bool) {
 	t.Helper()
-	ip, ipnet, _ := net.ParseCIDR(prefix)
-	ones, _ := ipnet.Mask.Size()
-	nlri := bgp.NewIPAddrPrefix(uint8(ones), ip.String()) //nolint:gosec // test prefix length
-	p, err := apiutil.NewPath(nlri, withdraw, []bgp.PathAttributeInterface{
-		bgp.NewPathAttributeOrigin(0), bgp.NewPathAttributeNextHop(nexthop), bgp.NewPathAttributeLocalPref(100),
-	}, time.Now())
+	nlri, err := bgp.NewIPAddrPrefix(netip.MustParsePrefix(prefix))
 	if err != nil {
 		t.Fatal(err)
 	}
+	nh, err := bgp.NewPathAttributeNextHop(netip.MustParseAddr(nexthop))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &apiutil.Path{Family: bgp.RF_IPv4_UC, Nlri: nlri, Attrs: []bgp.PathAttributeInterface{
+		bgp.NewPathAttributeOrigin(0), nh, bgp.NewPathAttributeLocalPref(100),
+	}}
 	if withdraw {
-		err = s.DeletePath(context.Background(), &apipb.DeletePathRequest{Path: p})
+		err = s.DeletePath(apiutil.DeletePathRequest{Paths: []*apiutil.Path{p}})
 	} else {
-		_, err = s.AddPath(context.Background(), &apipb.AddPathRequest{Path: p})
+		_, err = s.AddPath(apiutil.AddPathRequest{Paths: []*apiutil.Path{p}})
 	}
 	if err != nil {
 		t.Fatal(err)

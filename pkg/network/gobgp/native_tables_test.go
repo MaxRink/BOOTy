@@ -8,8 +8,8 @@ import (
 	"slices"
 	"testing"
 
-	apipb "github.com/osrg/gobgp/v3/api"
-	"github.com/osrg/gobgp/v3/pkg/server"
+	apipb "github.com/osrg/gobgp/v4/api"
+	"github.com/osrg/gobgp/v4/pkg/server"
 	"golang.org/x/sys/unix"
 
 	"github.com/telekom/BOOTy/pkg/network"

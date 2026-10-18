@@ -71,7 +71,7 @@ make clab-vrnetlab-up && make test-e2e-vrnetlab
 
 ## Code Style
 
-- **Go 1.26+**, Linux-only code uses `//go:build linux`
+- **Go 1.27+**, Linux-only code uses `//go:build linux`
 - **Logging**: `log/slog` only — never `fmt.Print` or `logrus`
 - **Errors**: `fmt.Errorf("lowercase context: %w", err)` — lowercase first letter, always wrap
 - **Naming**: `ctx` for context, `cfg` for config, `mgr` for manager

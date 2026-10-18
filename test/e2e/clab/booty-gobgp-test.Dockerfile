@@ -1,7 +1,7 @@
 # Test container for GoBGP mode inside containerlab.
 # Unlike booty-test.Dockerfile, this does NOT install FRR — GoBGP is compiled
 # directly into the BOOTy binary and runs in-process.
-FROM golang:1.27-alpine AS builder
+FROM golang:1.27.2-alpine AS builder
 RUN set -eu; \
     n=0; \
     until apk add --no-cache git ca-certificates gcc linux-headers musl-dev; do \

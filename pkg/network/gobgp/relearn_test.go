@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	apipb "github.com/osrg/gobgp/v3/api"
+	apipb "github.com/osrg/gobgp/v4/api"
 
 	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/bfd"
@@ -96,7 +96,7 @@ func TestReplaceInterfacePeer(t *testing.T) {
 		}
 		for name, list := range map[string][]string{"rm-in": {"fe80::1/128", "fe80::9/128"}, "other": {"fe80::9/128"}} {
 			if err := s.AddDefinedSet(ctx, &apipb.AddDefinedSetRequest{DefinedSet: &apipb.DefinedSet{
-				DefinedType: apipb.DefinedType_NEIGHBOR, Name: name, List: list}}); err != nil {
+				DefinedType: apipb.DefinedType_DEFINED_TYPE_NEIGHBOR, Name: name, List: list}}); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -118,7 +118,7 @@ func TestReplaceInterfacePeer(t *testing.T) {
 			t.Fatalf("shared=%v: peers after the move = %v", shared, peers)
 		}
 		sets := map[string][]string{}
-		_ = s.ListDefinedSet(ctx, &apipb.ListDefinedSetRequest{DefinedType: apipb.DefinedType_NEIGHBOR},
+		_ = s.ListDefinedSet(ctx, &apipb.ListDefinedSetRequest{DefinedType: apipb.DefinedType_DEFINED_TYPE_NEIGHBOR},
 			func(d *apipb.DefinedSet) { sets[d.GetName()] = slices.Sorted(slices.Values(d.GetList())) })
 		wantIn := []string{"fe80::2/128", "fe80::9/128"}
 		if shared {
