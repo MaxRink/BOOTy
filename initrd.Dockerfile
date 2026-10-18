@@ -452,7 +452,9 @@ COPY --from=frr /frr-libs/ .
 # Kernel modules for common server NICs (flat directory, loaded via insmod)
 COPY --from=kernel /modules/ modules/
 
-# Drop the libraries that no shipped executable loads.
+# Drop the libraries that no shipped executable loads, then check in a chroot
+# that every dynamic executable resolves its libraries from the tree alone.
+# Nothing may change the tree between this step and cpio.
 COPY hack/prune-initramfs-libs.sh /usr/local/bin/
 RUN prune-initramfs-libs.sh .
 
@@ -568,7 +570,9 @@ COPY --from=tools /tool-libs/ .
 # of the Debian kernel, and slim ships mdadm and the disk tools.
 COPY --from=kernel /modules/ modules/
 
-# Drop the libraries of the tools that slim does not ship.
+# Drop the libraries of the tools that slim does not ship, then check in a
+# chroot that every dynamic executable resolves its libraries from the tree
+# alone. Nothing may change the tree between this step and cpio.
 COPY hack/prune-initramfs-libs.sh /usr/local/bin/
 RUN prune-initramfs-libs.sh .
 
@@ -679,7 +683,9 @@ COPY --from=tools /tool-libs-full/ .
 # Kernel modules for common server NICs (flat directory, loaded via insmod)
 COPY --from=kernel /modules/ modules/
 
-# Drop the libraries that no shipped executable loads.
+# Drop the libraries that no shipped executable loads, then check in a chroot
+# that every dynamic executable resolves its libraries from the tree alone.
+# Nothing may change the tree between this step and cpio.
 COPY hack/prune-initramfs-libs.sh /usr/local/bin/
 RUN prune-initramfs-libs.sh .
 

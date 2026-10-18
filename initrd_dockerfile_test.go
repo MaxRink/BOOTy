@@ -481,19 +481,25 @@ func TestDockerfileFlavorsShipEFIBootMgr(t *testing.T) {
 
 // TestDockerfilePrunesUnusedLibsBeforePacking: the builders copy the library
 // sets of every tool, so each flavor must prune the libraries of the tools it
-// does not ship, and must do so after the last COPY and before cpio runs.
+// does not ship. The prune also checks that every executable resolves its
+// libraries from the tree, so the only instruction allowed after it is the
+// cpio packaging: a later COPY, ADD or RUN could add an unchecked executable
+// or library.
 func TestDockerfilePrunesUnusedLibsBeforePacking(t *testing.T) {
 	data, err := os.ReadFile("initrd.Dockerfile")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, stage := range []string{"busybox", "slim-builder", "gobgp-builder"} {
-		block := dockerfileStageBlock(t, string(data), stage)
-		prune := strings.Index(block, "RUN prune-initramfs-libs.sh .")
-		pack := strings.Index(block, "cpio --null")
-		lastCopy := strings.LastIndex(block, "\nCOPY --from=")
-		if prune < 0 || pack < 0 || prune > pack || lastCopy > prune {
-			t.Errorf("stage %s must run prune-initramfs-libs.sh after its last COPY --from and before cpio", stage)
+		instructions := dockerfileInstructions(dockerfileStageBlock(t, string(data), stage))
+		prune := slices.Index(instructions, "RUN prune-initramfs-libs.sh .")
+		if prune < 0 {
+			t.Errorf("stage %s does not run prune-initramfs-libs.sh", stage)
+			continue
+		}
+		rest := instructions[prune+1:]
+		if len(rest) != 1 || !strings.HasPrefix(rest[0], "RUN find . -print0 > ../initramfs.files") || !strings.Contains(rest[0], "cpio --null") {
+			t.Errorf("stage %s: only the cpio packaging may follow prune-initramfs-libs.sh, got %q", stage, rest)
 		}
 	}
 }
@@ -528,4 +534,26 @@ func TestDockerfileShipsWatchdogModulesSeparately(t *testing.T) {
 			t.Errorf("watchdog module %q is in the /modules loop, so it loads on every start", mod)
 		}
 	}
+}
+
+// dockerfileInstructions returns the instructions of a Dockerfile block with
+// continuation lines joined and comments and blank lines dropped.
+func dockerfileInstructions(block string) []string {
+	var out []string
+	var cur strings.Builder
+	for _, line := range strings.Split(block, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if cur.Len() == 0 && (trimmed == "" || strings.HasPrefix(trimmed, "#")) {
+			continue
+		}
+		cont := strings.HasSuffix(trimmed, "\\")
+		cur.WriteString(strings.TrimSuffix(trimmed, "\\"))
+		if cont {
+			cur.WriteString(" ")
+			continue
+		}
+		out = append(out, cur.String())
+		cur.Reset()
+	}
+	return out
 }
