@@ -18,8 +18,13 @@ topology:
       exec:
         # eth1 → leaf01 (eBGP fabric underlay)
         - ip link set dev eth1 mtu 9000
+        # VXLAN MTU = underlay 9000 - 50. With the kernel default (1500)
+        # the bridge drops the jumbo frames of the BOOTy VMs (MTU 9000,
+        # VXLAN 8950): image responses never arrived, small requests did.
         - ip link add vxlan100 type vxlan id 100 dstport 4789 local 10.0.0.1 nolearning
+        - ip link set dev vxlan100 mtu 8950
         - ip link add br100 type bridge
+        - ip link set dev br100 mtu 8950
         - ip link set vxlan100 master br100
         - ip link set vxlan100 up
         - ip link set br100 up
@@ -45,8 +50,13 @@ topology:
       exec:
         # eth1 → spine01 (eBGP fabric underlay)
         - ip link set dev eth1 mtu 9000
+        # VXLAN MTU = underlay 9000 - 50. With the kernel default (1500)
+        # the bridge drops the jumbo frames of the BOOTy VMs (MTU 9000,
+        # VXLAN 8950): image responses never arrived, small requests did.
         - ip link add vxlan100 type vxlan id 100 dstport 4789 local 10.0.0.2 nolearning
+        - ip link set dev vxlan100 mtu 8950
         - ip link add br100 type bridge
+        - ip link set dev br100 mtu 8950
         - ip link set vxlan100 master br100
         - ip link set vxlan100 up
         - ip link set br100 up

@@ -131,7 +131,8 @@ RUN mkdir -p bin sbin dev proc run sys etc tmp deploy lib/modules mnt \
 RUN cp /bin/busybox bin/busybox && \
     cd bin && \
     for cmd in sh mount umount insmod find ip ping cat echo ls mkdir rm \
-               chmod sleep ln test grep awk sed head tail stty chroot; do \
+               chmod sleep ln test grep awk sed head tail stty chroot \
+               blockdev sync; do \
         ln -sf busybox "$cmd"; \
     done
 

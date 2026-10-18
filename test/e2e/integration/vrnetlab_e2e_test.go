@@ -368,18 +368,19 @@ func TestVrnetlabProvisionAttemptsImageDownload(t *testing.T) {
 		t.Fatalf("provision VM did not reach report-init\n%s", logs)
 	}
 
-	// The image request crosses the fabric in both cases; nginx logs it
-	// (TestVrnetlabNginxReceivedImageRequest). In this lab the response
-	// headers do not come back, so the format probe stops the run before
-	// the disk wipe (BOOTY-IMG-004) instead of a stream after the wipe.
 	if logs, ok := waitForVMLogAny(t, vmProvision, []string{
 		"Streaming image",
 		"Beginning write",
 		"stream-image",
-		"image format probe failed",
 	}, 120*time.Second); !ok {
 		t.Logf("Serial log:\n%s", logs)
 		t.Fatal("provision VM did not attempt image download through EVPN")
+	}
+	// The format probe read the image over EVPN, and the stream wrote it.
+	for _, marker := range []string{"image prerequisites validated", `msg="image written"`} {
+		if !waitForVMLog(t, vmProvision, marker, 60*time.Second) {
+			t.Fatalf("provision VM log lacks %q: the image did not come over EVPN\n%s", marker, getVMSerialLog(t, vmProvision))
+		}
 	}
 	t.Log("provision VM: image download attempted through EVPN")
 }
@@ -713,9 +714,10 @@ var vrnetlabAllowedErrorRootCauses = []string{
 	// Expected when CAPRF endpoints are HTTP-only and token auth is enforced.
 	"failed to report error status",
 	"insecure transport",
-	// The image response does not come back over the fabric of this lab;
-	// the probe stops the run before the disk wipe.
-	"image format probe failed after",
+	// The vrnetlab ramdisk has no cloud-guest-utils: the provision ends in
+	// grow-partition, after the image came over EVPN and was written
+	// (TestVrnetlabProvisionAttemptsImageDownload requires both).
+	`exec: "growpart": executable file not found`,
 }
 
 var vrnetlabDeniedErrorRootCauses = []string{
