@@ -496,6 +496,7 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   resets the session if BFD is not Up again within the slow detection time
   (multiplier x 1 s). This ends the
   `TestProdTplRRSessionsNotResetAtStart` start flake (#761)
+- gobgp: the Type-2 FDB entry follows the best live route of the MAC (MAC Mobility sequence number), and a MAC/IP withdraw keeps the MAC-only entry (RFC 7432) (#748)
 - GoBGP mode: an L3VNI provision VNI without `provision_gateway` (bm4x IPv6
   provisioning network) selects Type-5 only, instead of failing with
   `provision gateway is required for GoBGP VXLAN data plane` (#662).

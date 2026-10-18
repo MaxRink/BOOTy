@@ -130,10 +130,17 @@ type OverlayTier struct {
 	blackholes         []*netlink.Route
 	gatewayFDB         *netlink.Neigh
 
-	// macVTEP tracks MAC → VTEP mappings learned from Type-2 routes
-	// so withdrawals (which lack next-hop) can still delete the right
-	// FDB entry. WatchEvent callbacks may run concurrently.
-	macVTEP sync.Map
+	// type2Paths holds the live Type-2 paths of each MAC by route key, and
+	// type2FDB the VTEP of the FDB entry installed for the MAC. A MAC can
+	// have several routes (MAC-only and MAC/IP, or the old and the new PE
+	// of a move), so the FDB entry follows the best of them and goes only
+	// with the last one. WatchEvent callbacks may run concurrently.
+	type2Mu    sync.Mutex
+	type2Paths map[string]map[string]type2Path
+	type2FDB   map[string]string
+	// type2Stopped is set by Teardown, so a Type-2 callback that is still
+	// in flight does not install anything afterwards.
+	type2Stopped bool
 	// type5GatewayMAC tracks Type-5 gateway IP → router MAC mappings so
 	// withdrawals without extended communities can still delete the neighbor.
 	// type5GatewayMu serializes gateway MAC/reference updates and the refcount
@@ -212,6 +219,9 @@ func (o *OverlayTier) Setup(ctx context.Context) error {
 	o.type5PathsMu.Lock()
 	o.type5Stopped = false
 	o.type5PathsMu.Unlock()
+	o.type2Mu.Lock()
+	o.type2Stopped = false
+	o.type2Mu.Unlock()
 
 	if err := o.setupCreateVXLANAndBridge(); err != nil {
 		return o.cleanupSetupFailure(ctx, "create VXLAN/bridge", err)
@@ -300,6 +310,15 @@ func (o *OverlayTier) Teardown(_ context.Context) error {
 	o.type5Active = nil
 	o.type5Stopped = true
 	o.type5PathsMu.Unlock()
+
+	// Remove the FDB entries of the Type-2 routes: a VXLAN device that
+	// BOOTy did not create stays, and so would they. A new Setup learns
+	// the routes again.
+	o.type2Mu.Lock()
+	o.type2Stopped = true
+	o.removeType2FDB()
+	o.type2Paths, o.type2FDB = nil, nil
+	o.type2Mu.Unlock()
 
 	if o.gatewayFDB != nil {
 		if err := o.netlinkOps.NeighDel(o.gatewayFDB); err != nil {
@@ -864,7 +883,7 @@ func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 		o.handleType5RouteWithRouterMACState(route, vtep, routerMAC, routerMACValid, withdraw)
 	case *apipb.EVPNMACIPAdvertisementRoute:
 		if o.cfg.EnableL2 {
-			o.handleType2Route(route, vtep, withdraw)
+			o.handleType2Update(route, vtep, macMobilityOf(p), withdraw)
 		}
 	case *apipb.EVPNInclusiveMulticastEthernetTagRoute:
 		if o.cfg.EnableL2 {
@@ -1488,35 +1507,136 @@ func buildType5GatewayFDB(vxLink netlink.Link, vtep net.IP, routerMAC net.Hardwa
 	}
 }
 
-// handleType2Route installs or removes an FDB entry for a remote MAC learned
-// via EVPN Type-2 (MAC/IP Advertisement) route. Only active when EnableL2 is set.
-func (o *OverlayTier) handleType2Route(route *apipb.EVPNMACIPAdvertisementRoute, vtep string, withdraw bool) {
+// type2Path is one live Type-2 route of a MAC: its VTEP and the sequence
+// number of its MAC Mobility extended community (0 without one).
+type type2Path struct {
+	vtep   net.IP
+	seq    uint32
+	sticky bool // the static (sticky) flag of the MAC Mobility community
+}
+
+// type2Key is the route key of a Type-2 route (RFC 7432 section 7.2): RD,
+// Ethernet Tag, MAC and IP address.
+func type2Key(route *apipb.EVPNMACIPAdvertisementRoute) string {
+	rd := route.GetRd()
+	return fmt.Sprintf("%s|%x|%d|%s|%s", rd.GetTypeUrl(), rd.GetValue(), route.GetEthernetTag(),
+		strings.ToLower(route.GetMacAddress()), route.GetIpAddress())
+}
+
+// better reports whether a is a better location of the MAC than b (RFC
+// 7432 section 15): the higher sequence number in serial number arithmetic
+// (RFC 1982), so a wrap around stays a move, else the lower VTEP address.
+//
+// Like FRR (bgpd/bgp_route.c, bgp_path_info_cmp), a route with the sticky
+// flag wins over one without it before the sequence numbers count: RFC
+// 7432 section 15.2 only asks to alert the operator in that case. FRR
+// compares the sequence numbers as plain integers; BOOTy keeps serial
+// number arithmetic because section 15 requires wrap around handling.
+func (a type2Path) better(b type2Path) bool {
+	if a.sticky != b.sticky {
+		return a.sticky
+	}
+	if d := int32(a.seq - b.seq); d != 0 { //nolint:gosec // serial number arithmetic
+		return d > 0
+	}
+	return bytes.Compare(a.vtep.To16(), b.vtep.To16()) < 0
+}
+
+// handleType2Route installs, moves or removes the FDB entry of a remote MAC
+// learned via EVPN Type-2 (MAC/IP Advertisement) routes. Only active when
+// EnableL2 is set. The entry points to the best live route of the MAC, so
+// the withdraw of a MAC/IP route keeps the entry of the MAC-only route
+// (RFC 7432 section 10) and a stale route of the old PE does not move the
+// MAC back (section 15).
+func (o *OverlayTier) handleType2Route(route *apipb.EVPNMACIPAdvertisementRoute, vtep string, seq uint32, withdraw bool) {
+	o.handleType2Update(route, vtep, macMobility{seq: seq}, withdraw)
+}
+
+// removeType2FDB deletes the FDB entries of the Type-2 routes. The caller
+// holds type2Mu.
+func (o *OverlayTier) removeType2FDB() {
+	if len(o.type2FDB) == 0 || o.netlinkOps == nil {
+		return
+	}
+	vxLink, err := o.netlinkOps.LinkByName(o.vxlanName())
+	if err != nil {
+		return // the device is gone, and its FDB with it
+	}
+	for macStr, vtep := range o.type2FDB {
+		mac, _ := net.ParseMAC(macStr)
+		fdb := &netlink.Neigh{LinkIndex: vxLink.Attrs().Index, Family: syscall.AF_BRIDGE, HardwareAddr: mac,
+			IP: net.ParseIP(vtep), Flags: netlink.NTF_SELF, State: netlink.NUD_PERMANENT}
+		if err := o.netlinkOps.NeighDel(fdb); err != nil {
+			o.log.Debug("failed to delete FDB entry at teardown", "mac", macStr, "vtep", vtep, "error", err)
+		}
+	}
+}
+
+// macMobility is the MAC Mobility extended community of a Type-2 route.
+type macMobility struct {
+	seq    uint32
+	sticky bool
+}
+
+// handleType2Update is handleType2Route with the whole MAC Mobility
+// community.
+func (o *OverlayTier) handleType2Update(route *apipb.EVPNMACIPAdvertisementRoute, vtep string, mm macMobility, withdraw bool) {
 	mac, err := net.ParseMAC(route.GetMacAddress())
 	if err != nil {
 		o.log.Debug("type-2 route with invalid MAC", "mac", route.GetMacAddress(), "error", err)
 		return
 	}
-
 	macStr := mac.String()
-
-	if withdraw && vtep == "" {
-		if stored, ok := o.macVTEP.Load(macStr); ok {
-			if storedVTEP, ok := stored.(string); ok {
-				vtep = storedVTEP
-			}
-		} else {
-			o.log.Debug("type-2 withdraw with no tracked VTEP", "mac", macStr)
-			return
-		}
-	}
+	key := type2Key(route)
 
 	remoteIP := net.ParseIP(vtep)
-	if remoteIP == nil {
+	if !withdraw && remoteIP == nil {
 		o.log.Debug("type-2 route with no valid next-hop", "vtep", vtep)
 		return
 	}
+	if !withdraw && vtep == o.cfg.RouterID {
+		return
+	}
 
-	if vtep == o.cfg.RouterID {
+	o.type2Mu.Lock()
+	defer o.type2Mu.Unlock()
+	if o.type2Stopped {
+		return
+	}
+	if withdraw {
+		delete(o.type2Paths[macStr], key)
+	} else {
+		o.rememberType2Path(macStr, key, type2Path{vtep: remoteIP, seq: mm.seq, sticky: mm.sticky})
+	}
+	o.syncType2FDB(mac)
+}
+
+// rememberType2Path records a live Type-2 path. The caller holds type2Mu.
+func (o *OverlayTier) rememberType2Path(mac, key string, p type2Path) {
+	if o.type2Paths == nil {
+		o.type2Paths = map[string]map[string]type2Path{}
+	}
+	if o.type2Paths[mac] == nil {
+		o.type2Paths[mac] = map[string]type2Path{}
+	}
+	o.type2Paths[mac][key] = p
+}
+
+// syncType2FDB points the FDB entry of mac at its best live route, or
+// removes it when no route is left. The caller holds type2Mu.
+func (o *OverlayTier) syncType2FDB(mac net.HardwareAddr) {
+	macStr := mac.String()
+	var best *type2Path
+	for _, p := range o.type2Paths[macStr] {
+		if best == nil || p.better(*best) {
+			best = &p
+		}
+	}
+	installed := o.type2FDB[macStr]
+	if best == nil {
+		delete(o.type2Paths, macStr)
+	}
+	if (best == nil && installed == "") || (best != nil && best.vtep.String() == installed) {
 		return
 	}
 
@@ -1526,32 +1646,61 @@ func (o *OverlayTier) handleType2Route(route *apipb.EVPNMACIPAdvertisementRoute,
 		o.log.Warn("cannot find VXLAN for FDB update", "vxlan", vxlanName, "error", err)
 		return
 	}
-
-	fdb := &netlink.Neigh{
-		LinkIndex:    vxLink.Attrs().Index,
-		Family:       syscall.AF_BRIDGE,
-		HardwareAddr: mac,
-		IP:           remoteIP,
-		Flags:        netlink.NTF_SELF,
-		State:        netlink.NUD_PERMANENT,
+	fdb := func(ip net.IP) *netlink.Neigh {
+		return &netlink.Neigh{
+			LinkIndex:    vxLink.Attrs().Index,
+			Family:       syscall.AF_BRIDGE,
+			HardwareAddr: mac,
+			IP:           ip,
+			Flags:        netlink.NTF_SELF,
+			State:        netlink.NUD_PERMANENT,
+		}
 	}
 
-	if withdraw {
-		if err := o.netlinkOps.NeighDel(fdb); err != nil {
-			o.log.Debug("failed to delete FDB entry", "mac", mac, "vtep", vtep, "error", err)
+	if best == nil {
+		if err := o.netlinkOps.NeighDel(fdb(net.ParseIP(installed))); err != nil {
+			o.log.Debug("failed to delete FDB entry", "mac", mac, "vtep", installed, "error", err)
 		} else {
-			o.log.Info("removed FDB entry from type-2 withdraw", "mac", mac, "vtep", vtep)
+			o.log.Info("removed FDB entry from type-2 withdraw", "mac", mac, "vtep", installed)
 		}
-		o.macVTEP.Delete(macStr)
+		delete(o.type2FDB, macStr)
 		return
 	}
 
-	if err := o.netlinkOps.NeighSet(fdb); err != nil {
-		o.log.Debug("failed to add/update FDB entry", "mac", mac, "vtep", vtep, "error", err)
-	} else {
-		o.log.Info("installed FDB entry from type-2 route", "mac", mac, "vtep", vtep)
+	if err := o.netlinkOps.NeighSet(fdb(best.vtep)); err != nil {
+		o.log.Debug("failed to add/update FDB entry", "mac", mac, "vtep", best.vtep, "error", err)
+		return
 	}
-	o.macVTEP.Store(macStr, vtep)
+	o.log.Info("installed FDB entry from type-2 route", "mac", mac, "vtep", best.vtep, "seq", best.seq)
+	if o.type2FDB == nil {
+		o.type2FDB = map[string]string{}
+	}
+	o.type2FDB[macStr] = best.vtep.String()
+}
+
+// macMobilityOf returns the MAC Mobility extended community of a path: the
+// sequence number (0 without one, RFC 7432 section 15) and the sticky flag.
+func macMobilityOf(path *apipb.Path) macMobility {
+	for _, attr := range path.GetPattrs() {
+		msg, err := attr.UnmarshalNew()
+		if err != nil {
+			continue
+		}
+		ext, ok := msg.(*apipb.ExtendedCommunitiesAttribute)
+		if !ok {
+			continue
+		}
+		for _, c := range ext.GetCommunities() {
+			m, err := c.UnmarshalNew()
+			if err != nil {
+				continue
+			}
+			if mm, ok := m.(*apipb.MacMobilityExtended); ok {
+				return macMobility{seq: mm.GetSequenceNum(), sticky: mm.GetIsSticky()}
+			}
+		}
+	}
+	return macMobility{}
 }
 
 // ingressReplication reports an IMET route whose PMSI Tunnel attribute has
