@@ -137,7 +137,7 @@ provision or deprovision that names its disk, after "network ready".
 | Recompress or trim the kernel | no | | rejected: the Debian signature covers the image (Secure Boot), and all ISOs boot with Secure Boot |
 | Strip or compress kernel modules (9.0 MB of the default ramdisk) | no | | rejected: the module signature covers the file; a compressed module inside the compressed ramdisk is larger |
 | Drop `lldpcli -f xml` (`libxml2`) | measured | 0.75 MB | superseded: lldpd and lldpcli are dropped, see below |
-| Drop lldpd and lldpcli (`booty lldp` diagnoses LLDP, #735) | yes | see the PR | done |
+| Drop lldpd and lldpcli (`booty lldp` diagnoses LLDP, #735) | yes | default 1.02 MB, gobgp 1.01 MB | done, #812 |
 | ipmitool without FreeIPMI | measured | 1.15 MB | rejected: loses the `-I free` interface |
 | Drop `vtysh` | measured | 2.05 MB | rejected: FRR mode and its diagnostics use it |
 | Merge `booty-esp-sync` into `init` | measured | 0.62 MB | rejected: it is installed on the target as its own binary |
