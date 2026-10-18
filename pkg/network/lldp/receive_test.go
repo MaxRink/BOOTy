@@ -137,3 +137,82 @@ func TestOwnFrame(t *testing.T) {
 		}
 	}
 }
+
+// FirstSeen stays while the same neighbor sends; a different neighbor on
+// the interface, or the same one after its TTL ran out, counts as a change.
+func TestReceiverChanges(t *testing.T) {
+	r := &receiver{neighbors: map[string]Neighbor{}, expires: map[string]time.Time{}, log: slog.Default()}
+	t0 := time.Unix(1000, 0)
+	n := Neighbor{ChassisID: "leaf01", PortID: "eth1", Interface: "ens1f0np0", TTL: 120}
+	for i, step := range []struct {
+		at        time.Duration
+		chassis   string
+		firstSeen time.Duration
+		changes   int
+	}{
+		{0, "leaf01", 0, 0},
+		{30 * time.Second, "leaf01", 0, 0},                  // same neighbor
+		{60 * time.Second, "leaf02", 60 * time.Second, 1},   // cable moved
+		{400 * time.Second, "leaf02", 400 * time.Second, 2}, // back after the TTL
+	} {
+		f := n
+		f.ChassisID = step.chassis
+		r.record(&f, t0.Add(step.at))
+		got := r.neighbors["ens1f0np0"]
+		if !got.FirstSeen.Equal(t0.Add(step.firstSeen)) || got.Changes != step.changes || !got.LastSeen.Equal(t0.Add(step.at)) {
+			t.Fatalf("step %d: first %v last %v changes %d", i, got.FirstSeen.Sub(t0), got.LastSeen.Sub(t0), got.Changes)
+		}
+	}
+}
+
+// Only NICs with carrier need a neighbor.
+func TestMissingNeighbors(t *testing.T) {
+	orig := hasCarrier
+	t.Cleanup(func() { hasCarrier = orig })
+	hasCarrier = func(iface string) bool { return iface != "eno1" }
+	got := missingNeighbors([]string{"eno1", "ens1f0np0", "ens1f1np1"}, []Neighbor{{Interface: "ens1f0np0"}})
+	if !reflect.DeepEqual(got, []string{"ens1f1np1"}) {
+		t.Fatalf("missing = %v, want [ens1f1np1]", got)
+	}
+}
+
+// A decoder panic drops the frame and keeps the receiver running.
+func TestReceiverReadRecovers(t *testing.T) {
+	orig := readFrame
+	t.Cleanup(func() { readFrame = orig })
+	readFrame = func(int, []byte, string) *Neighbor { panic("index out of range") }
+	r := &receiver{neighbors: map[string]Neighbor{}, expires: map[string]time.Time{}, log: slog.Default()}
+	if nb := r.read(-1, nil, "eth0"); nb != nil {
+		t.Fatalf("read = %+v, want nil", nb)
+	}
+}
+
+// WaitForNeighbors does not judge before the first carrier: links come up
+// after the network setup.
+func TestWaitForNeighborsWaitsForCarrier(t *testing.T) {
+	origCarrier, origSettle, origTick := hasCarrier, carrierSettle, waitTick
+	current.Lock()
+	origR := current.r
+	current.r = nil
+	current.Unlock()
+	t.Cleanup(func() {
+		hasCarrier, carrierSettle, waitTick = origCarrier, origSettle, origTick
+		current.Lock()
+		current.r = origR
+		current.Unlock()
+	})
+	carrierSettle, waitTick = 5*time.Second, 10*time.Millisecond
+	up := time.Now().Add(200 * time.Millisecond)
+	hasCarrier = func(string) bool { return time.Now().After(up) }
+	got := WaitForNeighbors(context.Background(), []string{"eth0"}, 300*time.Millisecond)
+	if !reflect.DeepEqual(got, []string{"eth0"}) {
+		t.Fatalf("missing = %v, want [eth0] (carrier came up after 200 ms)", got)
+	}
+	// Without any carrier it returns after the settle time, not the timeout.
+	hasCarrier = func(string) bool { return false }
+	carrierSettle = 50 * time.Millisecond
+	start := time.Now()
+	if got := WaitForNeighbors(context.Background(), []string{"eth0"}, time.Minute); len(got) != 0 || time.Since(start) > 5*time.Second {
+		t.Fatalf("no carrier: missing %v after %v", got, time.Since(start))
+	}
+}

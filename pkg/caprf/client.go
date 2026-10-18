@@ -1301,6 +1301,8 @@ func applyCheckStringVar(cfg *config.MachineConfig, key, value string) bool {
 	switch key {
 	case "CHECK_HOLD":
 		cfg.Check.Hold = value
+	case "LLDP_NEIGHBOR_WAIT":
+		cfg.Check.LLDPNeighborWait = value
 	default:
 		return false
 	}

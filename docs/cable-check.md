@@ -28,6 +28,7 @@ shim and GRUB do not verify it.
 | `NETWORK_MODE` | `links` | Every physical NIC up with IPv6 link-local only, no DHCP, no BGP ([links mode](networking.md#links-mode)). |
 | `LLDP_PROFILE` | `bm4x-cablecheck` | Port ID = NIC MAC, system name `bare-minimal`, on every NIC with carrier ([identity profiles](networking.md#lldp-identity-profiles)). |
 | `CHECK_HOLD` | `until-poweroff` | Keep the links and LLDP up after the checks until bm4x powers the host off (`STOP_LLDP`). |
+| `LLDP_NEIGHBOR_WAIT` | `90s` | Before the checks, wait until every NIC with carrier has an LLDP neighbor. |
 
 BOOTy also stops the firmware LLDP agent of Intel NICs, as in every mode
 (`LLDP_DISABLE_FW_AGENT`, on by default), so the switch frames reach BOOTy
@@ -58,7 +59,8 @@ checks:
 ## Tests
 
 - KVM `check-iso-hold` (`TestCheckISOVarsHoldQEMU`) boots the vars of the ISO
-  with two NICs. After 75 s the VM still runs, and each NIC has sent the
+  with two NICs. After 130 s (the 90 s neighbor wait runs out, as the VM
+  has no switch) the VM still runs, and each NIC has sent the
   four fast LLDP frames and the next one 30 s later with the bm4x identity,
   and no IPv4 frame.
 - `TestCheckISOQEMU`, `TestCheckISOUEFIQEMU` and

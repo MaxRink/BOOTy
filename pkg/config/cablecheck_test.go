@@ -162,3 +162,17 @@ func TestCheckHold(t *testing.T) {
 		t.Fatal("unknown check key accepted")
 	}
 }
+
+func TestCheckNeighborWait(t *testing.T) {
+	c := &Config{Check: CheckConfig{LLDPNeighborWait: "90s"}}
+	if err := c.Validate(); err != nil || c.Check.NeighborWait() != 90*time.Second {
+		t.Fatalf("90s: %v, %v", c.Check.NeighborWait(), err)
+	}
+	c.Check.LLDPNeighborWait = "soon"
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "LLDP_NEIGHBOR_WAIT") {
+		t.Fatalf("Validate = %v, want an LLDP_NEIGHBOR_WAIT error", err)
+	}
+	if (CheckConfig{}).NeighborWait() != 0 {
+		t.Fatal("no wait by default")
+	}
+}

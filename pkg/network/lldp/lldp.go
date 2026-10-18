@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"golang.org/x/sys/unix"
 )
@@ -178,54 +177,6 @@ func DiscoverAll(ctx context.Context, ifaces []string, timeout time.Duration) []
 		}
 	}
 	return neighbors
-}
-
-// parseLLDP extracts LLDP neighbor information from raw LLDP payload. It
-// drops an LLDPDU whose first three TLVs are not Chassis ID, Port ID and
-// TTL in this order (IEEE 802.1AB). The End of LLDPDU TLV is optional
-// since 802.1AB-2016; the decoder needs one, so a payload without it gets
-// one appended (a present End TLV ends the decoding before it).
-func parseLLDP(data []byte, iface string) *Neighbor {
-	if !mandatoryTLVsFirst(data) {
-		return nil
-	}
-	data = append(data[:len(data):len(data)], 0, 0)
-	pkt := gopacket.NewPacket(data, layers.LayerTypeLinkLayerDiscovery, gopacket.NoCopy)
-
-	lldpLayer := pkt.Layer(layers.LayerTypeLinkLayerDiscovery)
-	if lldpLayer == nil {
-		return nil
-	}
-	lldp, ok := lldpLayer.(*layers.LinkLayerDiscovery)
-	if !ok {
-		return nil
-	}
-
-	n := &Neighbor{
-		Interface: iface,
-		TTL:       lldp.TTL,
-	}
-
-	switch lldp.ChassisID.Subtype {
-	case layers.LLDPChassisIDSubTypeMACAddr:
-		if len(lldp.ChassisID.ID) >= 6 {
-			n.ChassisID = net.HardwareAddr(lldp.ChassisID.ID).String()
-		}
-	default:
-		n.ChassisID = sanitizeLLDP(string(lldp.ChassisID.ID))
-	}
-
-	n.PortID = sanitizeLLDP(string(lldp.PortID.ID))
-
-	infoLayer := pkt.Layer(layers.LayerTypeLinkLayerDiscoveryInfo)
-	if infoLayer != nil {
-		if info, ok := infoLayer.(*layers.LinkLayerDiscoveryInfo); ok {
-			n.SystemName = sanitizeLLDP(info.SysName)
-			n.Description = sanitizeLLDP(info.SysDescription)
-		}
-	}
-
-	return n
 }
 
 // mandatoryTLVsFirst reports whether the LLDPDU starts with the Chassis ID,

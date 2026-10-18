@@ -73,3 +73,22 @@ func TestCheckModeHold(t *testing.T) {
 	runCheck(context.Background(), t, newStatusProvider(), "", time.Second)
 	runCheck(context.Background(), t, newStatusProvider(), "off", time.Second)
 }
+
+// With LLDP_RECEIVE=false no neighbor can arrive, so check mode does not
+// wait for one.
+func TestCheckModeNoNeighborWaitWithoutReceive(t *testing.T) {
+	off := false
+	cfg := &config.MachineConfig{Mode: "check", Check: config.CheckConfig{LLDPNeighborWait: "1h"}}
+	cfg.Network.LLDPReceive = &off
+	cfg.Health.SkipChecks = "disk-presence,disk-ioerr,memory-ecc,minimum-memory,minimum-cpu,nic-link-state,thermal-state"
+	done := make(chan struct{})
+	go func() {
+		_ = (&CheckMode{deps: Deps{Cfg: cfg, Client: newStatusProvider()}}).Run(context.Background())
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("check mode waited for LLDP neighbors although LLDP receive is off")
+	}
+}

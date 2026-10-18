@@ -16,6 +16,21 @@ type CheckConfig struct {
 	// BOOTy holds.
 	// Default: "" (off)
 	Hold string `yaml:"hold,omitempty" json:"hold,omitempty"`
+
+	// LLDPNeighborWait makes check mode wait, before the checks, until
+	// every physical NIC with carrier has an LLDP neighbor, at most this
+	// long (a duration such as "90s"). Switches send every 30 s.
+	// Default: "" (no wait)
+	LLDPNeighborWait string `yaml:"lldpNeighborWait,omitempty" json:"lldpNeighborWait,omitempty"`
+}
+
+// NeighborWait returns the LLDP neighbor wait, 0 for none.
+func (c CheckConfig) NeighborWait() time.Duration {
+	d, err := time.ParseDuration(c.LLDPNeighborWait)
+	if err != nil || d < 0 {
+		return 0
+	}
+	return d
 }
 
 // Values of CheckConfig.Hold besides a duration.
@@ -41,12 +56,18 @@ func (c CheckConfig) HoldDuration() time.Duration {
 }
 
 func (c CheckConfig) validate() []string {
+	var errs []string
 	switch c.Hold {
 	case "", CheckHoldOff, CheckHoldUntilPowerOff:
-		return nil
+	default:
+		if d, err := time.ParseDuration(c.Hold); err != nil || d <= 0 {
+			errs = append(errs, fmt.Sprintf("invalid check.hold (CHECK_HOLD) %q: want off, until-poweroff or a positive duration", c.Hold))
+		}
 	}
-	if d, err := time.ParseDuration(c.Hold); err != nil || d <= 0 {
-		return []string{fmt.Sprintf("invalid check.hold (CHECK_HOLD) %q: want off, until-poweroff or a positive duration", c.Hold)}
+	if c.LLDPNeighborWait != "" {
+		if d, err := time.ParseDuration(c.LLDPNeighborWait); err != nil || d < 0 {
+			errs = append(errs, fmt.Sprintf("invalid check.lldpNeighborWait (LLDP_NEIGHBOR_WAIT) %q: want a duration", c.LLDPNeighborWait))
+		}
 	}
-	return nil
+	return errs
 }

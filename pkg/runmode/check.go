@@ -10,6 +10,8 @@ import (
 
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/health"
+	"github.com/telekom/BOOTy/pkg/network"
+	"github.com/telekom/BOOTy/pkg/network/lldp"
 )
 
 // CheckMode runs hardware health checks without provisioning.
@@ -24,6 +26,11 @@ func (m *CheckMode) Name() string { return "check" }
 func (m *CheckMode) Run(ctx context.Context) error {
 	cfg := m.deps.Cfg
 	_ = m.deps.Client.ReportStatus(ctx, config.StatusInit, "health-check")
+	if config.BoolOr(cfg.Network.LLDPReceive, true) {
+		waitForLLDPNeighbors(ctx, cfg.Check.NeighborWait())
+	} else if cfg.Check.NeighborWait() > 0 {
+		slog.Info("LLDP neighbor wait skipped: LLDP receive is off")
+	}
 
 	checks := []health.Check{
 		&health.DiskPresenceCheck{},
@@ -85,4 +92,23 @@ func hold(ctx context.Context, d time.Duration) {
 		case <-time.After(d):
 		}
 	}
+}
+
+// waitForLLDPNeighbors waits up to d for an LLDP neighbor on every NIC
+// with carrier (LLDP_NEIGHBOR_WAIT) and logs the NICs without one.
+func waitForLLDPNeighbors(ctx context.Context, d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	nics, err := network.DetectPhysicalNICsContext(ctx)
+	if err != nil {
+		slog.Warn("LLDP neighbor wait skipped: no physical NICs", "error", err)
+		return
+	}
+	slog.Info("waiting for LLDP neighbors", "timeout", d, "nics", nics)
+	if missing := lldp.WaitForNeighbors(ctx, nics, d); len(missing) > 0 {
+		slog.Warn("no LLDP neighbor on NICs with carrier", "nics", missing)
+		return
+	}
+	slog.Info("LLDP neighbor on every NIC with carrier")
 }

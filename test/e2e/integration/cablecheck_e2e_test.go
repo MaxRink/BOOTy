@@ -161,7 +161,9 @@ func TestCableCheckLLDP(t *testing.T) {
 // checks (CHECK_HOLD=until-poweroff) and keeps sending.
 func TestCableCheckHold(t *testing.T) {
 	cablecheckStartBooty(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	// The checks start after LLDP_NEIGHBOR_WAIT (90 s): the management
+	// NIC eth0 has carrier but no LLDP neighbor.
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 	for {
 		out, err := exec.CommandContext(ctx, "docker", "logs", cablecheckBooty).CombinedOutput()
@@ -175,5 +177,48 @@ func TestCableCheckHold(t *testing.T) {
 	}
 	if _, err := cablecheckExec(ctx, cablecheckBooty, "pidof", "booty"); err != nil {
 		t.Fatalf("BOOTy is not running while it holds: %v", err)
+	}
+	// LLDP_NEIGHBOR_WAIT: eth1 and eth2 have the leaf, the management NIC
+	// has none.
+	out, _ := exec.CommandContext(ctx, "docker", "logs", cablecheckBooty).CombinedOutput()
+	if !strings.Contains(string(out), `msg="no LLDP neighbor on NICs with carrier" nics=[eth0]`) {
+		t.Errorf("neighbor wait did not report exactly eth0 without a neighbor")
+	}
+}
+
+// BOOTy logs the lldpd leaf as neighbor of both NICs, with the port ID
+// subtype, the port description and the management addresses, and never
+// itself: it ignores the frames that it sends.
+func TestCableCheckReceive(t *testing.T) {
+	cablecheckStartBooty(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	var log string
+	for {
+		out, err := exec.CommandContext(ctx, "docker", "logs", cablecheckBooty).CombinedOutput()
+		log = string(out)
+		found := 0
+		for _, nic := range cablecheckNICs {
+			for _, line := range strings.Split(log, "\n") {
+				if strings.Contains(line, `msg="LLDP neighbor"`) && strings.Contains(line, "interface="+nic+" ") &&
+					strings.Contains(line, "systemName=leaf01") && strings.Contains(line, "portDescription="+nic) &&
+					strings.Contains(line, "portIDSubtype=") && !strings.Contains(line, "mgmtAddresses=[]") {
+					found++
+					break
+				}
+			}
+		}
+		if err == nil && found == len(cablecheckNICs) {
+			break
+		}
+		if ctx.Err() != nil {
+			t.Fatalf("BOOTy did not log the leaf on %v with port details:\n%s", cablecheckNICs, log)
+		}
+		time.Sleep(time.Second)
+	}
+	for _, line := range strings.Split(log, "\n") {
+		if strings.Contains(line, `msg="LLDP neighbor"`) && strings.Contains(line, "systemName=bare-minimal") {
+			t.Errorf("BOOTy reports its own frame as neighbor: %s", line)
+		}
 	}
 }

@@ -700,6 +700,38 @@ the flag across reboots. An opt-in that turns it off for BOOTy's run and
 back on before the handoff comes with the cable check (one
 implementation in `pkg/firmware/nic`).
 
+### LLDP receive
+
+With `LLDP_RECEIVE` (on by default) BOOTy keeps the latest neighbor of each
+physical NIC until its TTL ends and reports it in the inventory
+(`lldpNeighbors`). It ignores the frames that it sends itself (the packet
+socket also sees them). A neighbor has:
+
+| Field | TLV | Notes |
+|---|---|---|
+| `chassisID`, `chassisIDSubtype` | Chassis ID | A MAC renders as `aa:bb:cc:dd:ee:ff`, a network address as an IP. |
+| `portID`, `portIDSubtype` | Port ID | Junos sends the SNMP ifIndex as `local` port ID by default; the port name is then in `portDescription`. |
+| `portDescription` | Port Description | |
+| `systemName`, `description` | System Name, System Description | |
+| `capabilities`, `enabledCapabilities` | System Capabilities | `bridge`, `router`, `station`, ... |
+| `mgmtAddresses` | Management Address (all of them) | IPv4, IPv6 or MAC |
+| `vlan`, `vlanNames` | 802.1 Port VLAN ID, VLAN Name | |
+| `linkAggregation` | 802.1 or 802.3 Link Aggregation | supported, enabled, aggregated port ID |
+| `macPhy` | 802.3 MAC/PHY Configuration/Status | autonegotiation and the MAU type (RFC 4836) |
+| `maxFrameSize` | 802.3 Maximum Frame Size | |
+| `inventory` | LLDP-MED inventory | hardware, firmware and software revision, serial number, manufacturer, model, asset ID |
+| `firstSeen`, `lastSeen`, `changes` | | When the neighbor appeared and sent last; how often the neighbor of the NIC changed or came back after its TTL ran out. |
+
+Junos caveat: Junos sends the port name in the port description only when
+the interface has no description of its own; with a configured interface
+description, neither TLV names the port. `set protocols lldp
+port-id-subtype interface-name` on the leaf makes the port ID the port
+name.
+
+All strings are sanitized (control characters replaced, at most 255
+bytes). `LLDP_NEIGHBOR_WAIT` (check mode) waits until every NIC with
+carrier has a neighbor.
+
 ### LLDP identity profiles
 
 `LLDP_PROFILE` (YAML `network.lldp.profile`) selects the identity of the

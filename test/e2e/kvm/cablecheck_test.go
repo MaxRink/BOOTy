@@ -181,14 +181,15 @@ func requireHeldCableCheck(t *testing.T, out []byte, running bool, pcaps []strin
 	}
 }
 
-// The vars of the cable check ISO (hack/check-iso/vars): BOOTy keeps the
-// links and LLDP up after the checks until the VM is powered off; the test
-// powers it off after 75 s.
+// The vars of the cable check ISO (hack/check-iso/vars): BOOTy waits up to
+// 90 s for LLDP neighbors (there are none here), runs the checks and keeps
+// the links and LLDP up until the VM is powered off; the test powers it off
+// after 130 s.
 func TestCheckISOVarsHoldQEMU(t *testing.T) {
 	requireRoot(t)
 	qemuAvailable(t)
 	requireProvisionTools(t)
-	out, running, pcaps := runCableCheckVM(t, cablecheckBoot(t, checkISOVars(t)), 75*time.Second)
+	out, running, pcaps := runCableCheckVM(t, cablecheckBoot(t, checkISOVars(t)), 130*time.Second)
 	requireHeldCableCheck(t, out, running, pcaps)
 }
 
