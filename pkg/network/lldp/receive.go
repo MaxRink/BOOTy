@@ -194,9 +194,9 @@ var hasCarrier = func(iface string) bool {
 // WaitForNeighbors waits until every NIC with carrier has an LLDP
 // neighbor, or until timeout. It returns the NICs with carrier that have
 // none. A switch sends every 30 s, so a timeout of 90 s covers a lost
-// frame. Links come up a few seconds after the network setup, so while no
-// NIC has carrier it waits up to carrierSettle (at most the timeout) before
-// it judges.
+// frame. Links come up a few seconds after the network setup, so while a
+// NIC has no carrier it waits up to carrierSettle (at most the timeout)
+// before it judges; a port that stays down only costs that settle time.
 func WaitForNeighbors(ctx context.Context, ifaces []string, timeout time.Duration) []string {
 	start := time.Now()
 	settle := min(timeout, carrierSettle)
@@ -206,7 +206,8 @@ func WaitForNeighbors(ctx context.Context, ifaces []string, timeout time.Duratio
 	defer tick.Stop()
 	for {
 		missing := missingNeighbors(ifaces, Neighbors())
-		settled := slices.ContainsFunc(ifaces, hasCarrier) || time.Since(start) >= settle
+		allUp := !slices.ContainsFunc(ifaces, func(i string) bool { return !hasCarrier(i) })
+		settled := allUp || time.Since(start) >= settle
 		if len(missing) == 0 && settled || ctx.Err() != nil {
 			return missing
 		}

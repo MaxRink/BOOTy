@@ -6,6 +6,8 @@ import (
 	"encoding/binary"
 	"reflect"
 	"testing"
+
+	"github.com/google/gopacket/layers"
 )
 
 // The fixtures are LLDPDUs built TLV by TLV from IEEE 802.1AB-2016 (clause
@@ -249,5 +251,39 @@ func TestParseLLDPCapabilitiesTLV(t *testing.T) {
 	n = parseLLDP(cat(parts...), "eth0")
 	if n == nil || n.Capabilities != nil || n.EnabledCapabilities != nil {
 		t.Fatalf("without the TLV: %+v", n)
+	}
+}
+
+// The length thresholds of orgTLVSafe, one below and at each limit.
+func TestOrgTLVSafe(t *testing.T) {
+	o := func(oui layers.IEEEOUI, sub uint8, n int, first byte) layers.LLDPOrgSpecificTLV {
+		info := make([]byte, n)
+		if n > 0 {
+			info[0] = first
+		}
+		return layers.LLDPOrgSpecificTLV{OUI: oui, SubType: sub, Info: info}
+	}
+	civic := byte(layers.LLDPLocationFormatAddress)
+	for _, tt := range []struct {
+		name string
+		tlv  layers.LLDPOrgSpecificTLV
+		want bool
+	}{
+		{"VLAN name 2", o(layers.IEEEOUI8021, layers.LLDP8021SubtypeVLANName, 2, 0), false},
+		{"VLAN name 3", o(layers.IEEEOUI8021, layers.LLDP8021SubtypeVLANName, 3, 0), true},
+		{"protocol identity empty", o(layers.IEEEOUI8021, layers.LLDP8021SubtypeProtocolIdentity, 0, 0), false},
+		{"protocol identity length 3, 3 bytes", o(layers.IEEEOUI8021, layers.LLDP8021SubtypeProtocolIdentity, 3, 3), false},
+		{"protocol identity length 3, 4 bytes", o(layers.IEEEOUI8021, layers.LLDP8021SubtypeProtocolIdentity, 4, 3), true},
+		{"MDI power 3", o(layers.IEEEOUI8023, layers.LLDP8023SubtypeMDIPower, 3, 0), true},
+		{"MDI power 7", o(layers.IEEEOUI8023, layers.LLDP8023SubtypeMDIPower, 7, 0), false},
+		{"MDI power 8", o(layers.IEEEOUI8023, layers.LLDP8023SubtypeMDIPower, 8, 0), true},
+		{"civic location 4", o(layers.IEEEOUIMedia, uint8(layers.LLDPMediaTypeLocation), 4, civic), false},
+		{"civic location 5", o(layers.IEEEOUIMedia, uint8(layers.LLDPMediaTypeLocation), 5, civic), true},
+		{"ECS location 2", o(layers.IEEEOUIMedia, uint8(layers.LLDPMediaTypeLocation), 2, byte(layers.LLDPLocationFormatECS)), true},
+		{"other TLV", o(layers.IEEEOUI8023, layers.LLDP8023SubtypeMTU, 0, 0), true},
+	} {
+		if got := orgTLVSafe(tt.tlv); got != tt.want {
+			t.Errorf("%s: %v, want %v", tt.name, got, tt.want)
+		}
 	}
 }

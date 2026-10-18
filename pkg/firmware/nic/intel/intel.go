@@ -28,8 +28,7 @@ func NewWithCommander(log *slog.Logger, commander ethtool.Commander) *Manager {
 
 // DisableFWLLDP stops the firmware LLDP agent of an Intel NIC with the
 // flag of its driver (i40e disable-fw-lldp, ice fw-lldp-agent) through
-// nic.DisableFirmwareLLDP, which also remembers the value for
-// nic.RestoreFirmwareLLDP.
+// nic.DisableFirmwareLLDP. The flag is not put back.
 func (m *Manager) DisableFWLLDP(_ context.Context, iface string) error {
 	if iface == "" {
 		return fmt.Errorf("interface name required")

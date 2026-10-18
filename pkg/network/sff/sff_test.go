@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -327,5 +328,38 @@ func TestDecodeLatchedFlags(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got.Alarms, []string{"temperature high"}) || got.Warnings != nil {
 		t.Errorf("CMIS lane flags: alarms %v, warnings %v", got.Alarms, got.Warnings)
+	}
+}
+
+// The latched lane flags of SFF-8636 (bytes 9-14) and CMIS page 11h (here
+// byte 149, Rx power high alarm) also count only from the second read.
+func TestDecodeLatchedLaneFlags(t *testing.T) {
+	q := func() memory {
+		m := qsfp28()
+		m.set(0x50, 0, 11, 0x80) // lane 1 Tx bias high alarm
+		m.set(0x50, 0, 13, 0x40) // lane 1 Tx power low alarm
+		return m
+	}
+	got, err := Decode(q().reader(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Alarms, []string{"rx-power lane 2 low", "tx-bias lane 1 high", "tx-power lane 1 low"}) {
+		t.Fatalf("SFF-8636 lane flags not decoded: %v", got.Alarms)
+	}
+	if got, err = Decode(clearOnRead(t, q(), 0, 9, 10, 11, 12, 13, 14)); err != nil || got.Alarms != nil {
+		t.Errorf("SFF-8636 latched lane flags: alarms %v, %v", got.Alarms, err)
+	}
+
+	c := func() memory {
+		m := qsfpDD()
+		m.set(0x50, 0x11, 149, 0x01) // lane 1 Rx power high alarm
+		return m
+	}
+	if got, err = Decode(c().reader(t)); err != nil || !slices.Contains(got.Alarms, "rx-power lane 1 high") {
+		t.Fatalf("CMIS byte 149 not decoded: %v %v", got.Alarms, err)
+	}
+	if got, err = Decode(clearOnRead(t, c(), 0x11, 149)); err != nil || slices.Contains(got.Alarms, "rx-power lane 1 high") {
+		t.Errorf("CMIS latched byte 149: alarms %v, %v", got.Alarms, err)
 	}
 }

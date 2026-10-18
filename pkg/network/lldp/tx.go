@@ -229,7 +229,8 @@ func emitOn(ctx context.Context, iface string, info *Info, log *slog.Logger) {
 		log.Info("sending LLDP frames like networkd EmitLLDP=yes")
 	}
 	failed := false
-	for n := 0; ; n++ {
+	var fast fastInit
+	for {
 		frame, err := sendFrame(iface, info, Frame)
 		recordTX(iface, info, frame, err, time.Now())
 		if err != nil && !failed {
@@ -239,10 +240,7 @@ func emitOn(ctx context.Context, iface string, info *Info, log *slog.Logger) {
 		} else if err == nil {
 			failed = false
 		}
-		wait := txInterval
-		if n < txFastInit-1 {
-			wait = txFastInterval
-		}
+		wait := fast.next(frame, err)
 		select {
 		case <-ctx.Done():
 			// IEEE 802.1AB: a port that stops sending sends a shutdown
@@ -281,4 +279,24 @@ var sendFrame = func(iface string, info *Info, build func(string, net.HardwareAd
 		return nil, fmt.Errorf("send on %s: %w", iface, err)
 	}
 	return frame, nil
+}
+
+// fastInit counts the frames sent since the link came up: the first
+// txFastInit go out txFastInterval apart, then one every txInterval. A NIC
+// without carrier (frame nil, no error) starts over and is polled at the
+// fast interval, so its first frames go out as soon as the link is up,
+// like networkd after a carrier change.
+type fastInit struct{ sent int }
+
+func (f *fastInit) next(frame []byte, err error) time.Duration {
+	switch {
+	case err == nil && frame != nil:
+		f.sent++
+	case err == nil:
+		f.sent = 0
+	}
+	if f.sent < txFastInit {
+		return txFastInterval
+	}
+	return txInterval
 }

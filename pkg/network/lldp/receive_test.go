@@ -216,3 +216,28 @@ func TestWaitForNeighborsWaitsForCarrier(t *testing.T) {
 		t.Fatalf("no carrier: missing %v after %v", got, time.Since(start))
 	}
 }
+
+// On a host with two NICs, one with carrier and a neighbor does not end the
+// wait while the other one is still coming up.
+func TestWaitForNeighborsWaitsForEveryCarrier(t *testing.T) {
+	origCarrier, origSettle, origTick := hasCarrier, carrierSettle, waitTick
+	r := &receiver{started: time.Now(), neighbors: map[string]Neighbor{"eth0": {Interface: "eth0"}},
+		expires: map[string]time.Time{"eth0": time.Now().Add(time.Hour)}, log: slog.Default()}
+	current.Lock()
+	origR := current.r
+	current.r = r
+	current.Unlock()
+	t.Cleanup(func() {
+		hasCarrier, carrierSettle, waitTick = origCarrier, origSettle, origTick
+		current.Lock()
+		current.r = origR
+		current.Unlock()
+	})
+	carrierSettle, waitTick = 5*time.Second, 10*time.Millisecond
+	up := time.Now().Add(200 * time.Millisecond)
+	hasCarrier = func(iface string) bool { return iface == "eth0" || time.Now().After(up) }
+	got := WaitForNeighbors(context.Background(), []string{"eth0", "eth1"}, 300*time.Millisecond)
+	if !reflect.DeepEqual(got, []string{"eth1"}) {
+		t.Fatalf("missing = %v, want [eth1] (its carrier came up after 200 ms)", got)
+	}
+}
