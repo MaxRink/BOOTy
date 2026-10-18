@@ -570,6 +570,7 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 - gobgp: the Type-2 FDB entry follows the best live route of the MAC (MAC Mobility sequence number), and a MAC/IP withdraw keeps the MAC-only entry (RFC 7432) (#748)
 - lldp: LLDPDUs with a second Chassis ID, Port ID or TTL TLV are dropped (802.1AB) (#769)
 - lldp: a shutdown LLDPDU when the sending stops; LLDPDUs whose first TLVs are not Chassis ID, Port ID and TTL are dropped (802.1AB) (#754)
+- gobgp: the unnumbered Router Advertisements end with a final RA with lifetime 0 (RFC 4861) (#752)
 - GoBGP mode: an L3VNI provision VNI without `provision_gateway` (bm4x IPv6
   provisioning network) selects Type-5 only, instead of failing with
   `provision gateway is required for GoBGP VXLAN data plane` (#662).

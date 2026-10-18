@@ -54,10 +54,8 @@ const (
 	// defaultHopLimit is the default IPv6 Cur Hop Limit advertised in RAs.
 	defaultHopLimit = 64
 
-	// raLifetimeHi and raLifetimeLo encode the router lifetime of 1800s
-	// in big-endian format (0x0708 = 1800).
-	raLifetimeHi = 0x07
-	raLifetimeLo = 0x08
+	// raLifetime is the router lifetime of the periodic RAs in seconds.
+	raLifetime = 1800
 
 	// mandatedHopLimit is the hop limit mandated by RFC 4861 §6.1.2.
 	// FRR's zebra silently drops RAs with any other value.
@@ -253,6 +251,9 @@ func (u *UnderlayTier) Ready(ctx context.Context, timeout time.Duration) error {
 func (u *UnderlayTier) Teardown(_ context.Context) error {
 	if u.stopRA != nil {
 		close(u.stopRA)
+		// Wait, so the final RA with lifetime 0 is out before the
+		// handoff (kexec) can follow.
+		<-u.raDone
 		u.stopRA = nil
 	}
 	if u.stopRestart != nil {
@@ -1037,7 +1038,12 @@ func (u *UnderlayTier) announceUnderlayRoute(ctx context.Context) error {
 // FRR's BGP unnumbered peering requires zebra to receive an RA from the peer.
 // RFC 4861 §6.1.2 mandates Hop Limit = 255; receivers discard RAs with any
 // other value.
-func sendRouterAdvertisement(iface string) {
+func sendRouterAdvertisement(iface string) { raSend(iface, raLifetime) }
+
+// raSend sends one RA with the given router lifetime; tests replace it.
+var raSend = sendRA
+
+func sendRA(iface string, lifetime uint16) {
 	ifi, err := net.InterfaceByName(iface)
 	if err != nil {
 		return
@@ -1062,36 +1068,28 @@ func sendRouterAdvertisement(iface string) {
 		return
 	}
 
-	mac := ifi.HardwareAddr
+	dst := &net.IPAddr{IP: net.ParseIP("ff02::1"), Zone: iface} // all-nodes multicast
+	_, _ = conn.WriteTo(routerAdvertisement(ifi.HardwareAddr, lifetime), dst)
+}
 
-	// ICMPv6 Router Advertisement (RFC 4861 §4.2):
-	//   Type:           134
-	//   Code:           0
-	//   Checksum:       0 (kernel fills)
-	//   Cur Hop Limit:  64
-	//   Flags (M|O):    0
-	//   Router Lifetime: 1800s (big-endian: 0x0708)
-	//   Reachable Time: 0
-	//   Retrans Timer:  0
-	// Followed by Source Link-Layer Address option (RFC 4861 §4.6.1):
-	//   Type:   1 (Source Link-Layer Address)
-	//   Length: 1 (in units of 8 octets = 8 bytes total)
-	//   Link-Layer Address: 6 bytes MAC
+// routerAdvertisement builds the ICMPv6 Router Advertisement (RFC 4861
+// §4.2): type 134, code 0, checksum 0 (the kernel fills it), Cur Hop Limit
+// 64, no M or O flag, the router lifetime, reachable time and retrans timer
+// 0, and the Source Link-Layer Address option (§4.6.1: type 1, length 1 in
+// units of 8 octets, the MAC).
+func routerAdvertisement(mac net.HardwareAddr, lifetime uint16) []byte {
 	ra := make([]byte, 0, raPacketSize)
 	ra = append(ra,
 		icmpv6TypeRA, 0, 0, 0, // type, code, checksum (kernel fills)
-		defaultHopLimit,            // cur hop limit
-		0,                          // flags
-		raLifetimeHi, raLifetimeLo, // router lifetime = 1800s
+		defaultHopLimit,                   // cur hop limit
+		0,                                 // flags
+		byte(lifetime>>8), byte(lifetime), // router lifetime
 		0, 0, 0, 0, // reachable time
 		0, 0, 0, 0, // retrans timer
 		// Source Link-Layer Address option
 		1, 1, // type=1, length=1 (8 bytes)
 	)
-	ra = append(ra, mac...)
-
-	dst := &net.IPAddr{IP: net.ParseIP("ff02::1"), Zone: iface} // all-nodes multicast
-	_, _ = conn.WriteTo(ra, dst)
+	return append(ra, mac...)
 }
 
 // startPeriodicRA starts the RA goroutine. The goroutine gets the stop
@@ -1121,6 +1119,12 @@ func (u *UnderlayTier) sendPeriodicRA(stop <-chan struct{}) {
 	for {
 		select {
 		case <-stop:
+			// RFC 4861 §6.2.5: an interface that stops advertising SHOULD
+			// send a final RA with Router Lifetime 0, so no neighbor keeps
+			// BOOTy as a default router after the handoff.
+			for _, nic := range u.nics {
+				raSend(nic, 0)
+			}
 			return
 		case <-ticker.C:
 			for _, nic := range u.nics {
