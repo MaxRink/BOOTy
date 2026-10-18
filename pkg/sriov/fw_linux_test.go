@@ -13,6 +13,10 @@ import (
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netlink/nl"
 	"golang.org/x/sys/unix"
+
+	"github.com/telekom/BOOTy/pkg/firmware/nic"
+	"github.com/telekom/BOOTy/pkg/firmware/nic/ethtool"
+	netethtool "github.com/telekom/BOOTy/pkg/network/ethtool"
 )
 
 // fakeParams holds devlink parameters like bnxt_en and ice report them.
@@ -209,6 +213,44 @@ vf-vlan-pruning       : off
 `
 )
 
+// cmdPrivFlags serves the private flags from the fake "ethtool
+// --show-priv-flags" output and records a set as "ethtool --set-priv-flags",
+// so the tests keep the flag lists of real NICs.
+func cmdPrivFlags(cmd nic.Commander) ethtool.PrivFlagIO {
+	return ethtool.PrivFlagIO{
+		Get: func(iface string) ([]netethtool.Flag, error) {
+			out, err := cmd.CombinedOutput(context.Background(), "ethtool", "--show-priv-flags", iface)
+			if err != nil {
+				return nil, err
+			}
+			var flags []netethtool.Flag
+			for _, line := range strings.Split(string(out), "\n") {
+				name, val, ok := strings.Cut(line, ":")
+				if !ok || strings.HasPrefix(line, "Private flags") {
+					continue
+				}
+				flags = append(flags, netethtool.Flag{Name: strings.TrimSpace(name), On: strings.TrimSpace(val) == "on"})
+			}
+			return flags, nil
+		},
+		Set: func(iface, name string, on bool) error {
+			v := "off"
+			if on {
+				v = "on"
+			}
+			_, err := cmd.CombinedOutput(context.Background(), "ethtool", "--set-priv-flags", iface, name, v)
+			return err
+		},
+	}
+}
+
+func useCmdPrivFlags(t *testing.T) {
+	t.Helper()
+	orig := intelPrivFlags
+	t.Cleanup(func() { intelPrivFlags = orig })
+	intelPrivFlags = cmdPrivFlags
+}
+
 func intelCmd(iface, flags string) *fakeCmd {
 	return &fakeCmd{out: map[string]string{
 		"ethtool -i " + iface:                "driver: ice\nfirmware-version: 4.40 0x8001c967 1.3534.0\n",
@@ -217,6 +259,7 @@ func intelCmd(iface, flags string) *fakeCmd {
 }
 
 func TestIntelFlags(t *testing.T) {
+	useCmdPrivFlags(t)
 	ctx := context.Background()
 	want := &FirmwareSettings{FWLLDPAgent: ptr(false), MaxVFs: ptr(64), SRIOVEnabled: ptr(true), LinkType: "eth",
 		NVConfig: []Setting{{"X", "1"}}, DevlinkParams: []Setting{{"y", "1"}}}
@@ -238,7 +281,7 @@ func TestIntelFlags(t *testing.T) {
 		t.Fatalf("i40e read %+v %v", r, err)
 	}
 
-	for name, flags := range map[string]string{"no flag": "Private flags for ens2f0:\nlegacy-rx: off\n", "odd value": "fw-lldp-agent: maybe\n"} {
+	for name, flags := range map[string]string{"no flag": "Private flags for ens2f0:\nlegacy-rx: off\n"} {
 		r, err := NewIntelFlags(slog.Default(), intelCmd("ens2f0", flags)).Read(ctx, ice, &FirmwareSettings{FWLLDPAgent: ptr(true)})
 		if err != nil || len(r.Unsupported) != 1 {
 			t.Errorf("%s: %+v %v", name, r, err)
@@ -255,6 +298,7 @@ func TestIntelFlags(t *testing.T) {
 }
 
 func TestIntelFlagsApply(t *testing.T) {
+	useCmdPrivFlags(t)
 	ctx := context.Background()
 	for _, c := range []struct {
 		driver, iface string

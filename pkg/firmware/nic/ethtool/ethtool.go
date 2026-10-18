@@ -9,7 +9,18 @@ import (
 	"strings"
 
 	"github.com/telekom/BOOTy/pkg/firmware/nic"
+	netethtool "github.com/telekom/BOOTy/pkg/network/ethtool"
 )
+
+// PrivFlagIO reads and sets driver private flags. NetlinkPrivFlags (ethtool
+// netlink) is the one implementation; tests replace it.
+type PrivFlagIO struct {
+	Get func(iface string) ([]netethtool.Flag, error)
+	Set func(iface, name string, on bool) error
+}
+
+// NetlinkPrivFlags reads and sets private flags over ethtool netlink.
+var NetlinkPrivFlags = PrivFlagIO{Get: netethtool.PrivateFlags, Set: netethtool.SetPrivateFlag}
 
 // Commander is an alias for nic.Commander for backward compatibility.
 type Commander = nic.Commander
@@ -24,6 +35,7 @@ type Manager struct {
 	vendor    nic.Vendor
 	vendorID  string
 	commander Commander
+	flags     PrivFlagIO
 }
 
 // New creates an ethtool-based Manager for the given vendor.
@@ -31,7 +43,7 @@ func New(vendor nic.Vendor, vendorID string, log *slog.Logger) *Manager {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Manager{log: log, vendor: vendor, vendorID: vendorID, commander: OSCommander{}}
+	return &Manager{log: log, vendor: vendor, vendorID: vendorID, commander: OSCommander{}, flags: NetlinkPrivFlags}
 }
 
 // NewWithCommander creates an ethtool-based Manager with a custom Commander.
@@ -42,7 +54,13 @@ func NewWithCommander(vendor nic.Vendor, vendorID string, log *slog.Logger, cmd 
 	if cmd == nil {
 		cmd = OSCommander{}
 	}
-	return &Manager{log: log, vendor: vendor, vendorID: vendorID, commander: cmd}
+	return &Manager{log: log, vendor: vendor, vendorID: vendorID, commander: cmd, flags: NetlinkPrivFlags}
+}
+
+// WithPrivFlags replaces the private flag access (for tests).
+func (m *Manager) WithPrivFlags(io PrivFlagIO) *Manager {
+	m.flags = io
+	return m
 }
 
 // Vendor returns the NIC vendor this manager handles.
@@ -88,7 +106,8 @@ func (m *Manager) Apply(ctx context.Context, n *nic.Identifier, changes []nic.Fl
 	return nil
 }
 
-// CaptureViaEthtool captures metadata and private flags via ethtool.
+// CaptureViaEthtool captures the driver metadata via "ethtool -i" and the
+// private flags over ethtool netlink.
 func (m *Manager) CaptureViaEthtool(ctx context.Context, iface string, state *nic.FirmwareState) error {
 	out, err := m.commander.CombinedOutput(ctx, "ethtool", "-i", iface)
 	if err != nil {
@@ -111,36 +130,34 @@ func (m *Manager) CaptureViaEthtool(ctx context.Context, iface string, state *ni
 		}
 	}
 
-	out, err = m.commander.CombinedOutput(ctx, "ethtool", "--show-priv-flags", iface)
+	flags, err := m.flags.Get(iface)
 	if err != nil {
-		m.log.Debug("ethtool --show-priv-flags failed (optional)", "error", err)
+		m.log.Debug("private flags not read (optional)", "interface", iface, "error", err)
 		return nil
 	}
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.Contains(line, "Private flags for") {
-			continue
+	for _, f := range flags {
+		value := "off"
+		if f.On {
+			value = "on"
 		}
-		parts := strings.FieldsFunc(line, func(r rune) bool { return r == ':' })
-		if len(parts) != 2 {
-			continue
-		}
-		flagName := strings.TrimSpace(parts[0])
-		flagValue := strings.TrimSpace(parts[1])
-		state.Parameters[flagName] = nic.Parameter{
-			Name:     flagName,
-			Current:  flagValue,
-			ReadOnly: false,
-		}
+		state.Parameters[f.Name] = nic.Parameter{Name: f.Name, Current: value}
 	}
 	return nil
 }
 
-// ApplyViaEthtool sets a private flag via ethtool.
-func (m *Manager) ApplyViaEthtool(ctx context.Context, iface string, change nic.FlagChange) error {
-	out, err := m.commander.CombinedOutput(ctx, "ethtool", "--set-priv-flags", iface, change.Name, change.Value)
-	if err != nil {
-		return fmt.Errorf("ethtool set-priv-flags %s %s: %s: %w", iface, change.Name, string(out), err)
+// ApplyViaEthtool sets a private flag ("on" or "off") over ethtool
+// netlink.
+func (m *Manager) ApplyViaEthtool(_ context.Context, iface string, change nic.FlagChange) error {
+	var on bool
+	switch change.Value {
+	case "on":
+		on = true
+	case "off":
+	default:
+		return fmt.Errorf("private flag %s of %s: value %q, want on or off", change.Name, iface, change.Value)
+	}
+	if err := m.flags.Set(iface, change.Name, on); err != nil {
+		return fmt.Errorf("set private flag %s of %s: %w", change.Name, iface, err)
 	}
 	return nil
 }

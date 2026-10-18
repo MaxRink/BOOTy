@@ -8,7 +8,20 @@ import (
 
 	"github.com/telekom/BOOTy/pkg/firmware/nic"
 	"github.com/telekom/BOOTy/pkg/firmware/nic/ethtool"
+	netethtool "github.com/telekom/BOOTy/pkg/network/ethtool"
 )
+
+// netlinkFlags fakes the ethtool netlink private flags; sets collects the
+// flags set.
+func netlinkFlags(flags []netethtool.Flag, sets *[]string) ethtool.PrivFlagIO {
+	return ethtool.PrivFlagIO{
+		Get: func(string) ([]netethtool.Flag, error) { return flags, nil },
+		Set: func(iface, name string, on bool) error {
+			*sets = append(*sets, iface+" "+name)
+			return nil
+		},
+	}
+}
 
 func TestSupported(t *testing.T) {
 	m := New(nil)
@@ -87,6 +100,8 @@ hds                 : off
 		privFlagsOut: privFlagsOutput,
 	}
 	m := NewWithCommander(nil, mock)
+	var sets []string
+	m.WithPrivFlags(netlinkFlags([]netethtool.Flag{{Name: "disable-rrc"}, {Name: "gre-tunnel-lro", On: true}, {Name: "hds"}}, &sets))
 
 	nicID := &nic.Identifier{
 		PCIAddress: "0000:01:00.0",
@@ -151,6 +166,8 @@ func TestApply_Success(t *testing.T) {
 	trackMock := &trackingCommander{delegate: origMock}
 
 	m := NewWithCommander(nil, trackMock)
+	var sets []string
+	m.WithPrivFlags(netlinkFlags(nil, &sets))
 
 	nicID := &nic.Identifier{
 		PCIAddress: "0000:01:00.0",
@@ -167,8 +184,8 @@ func TestApply_Success(t *testing.T) {
 		t.Fatalf("Apply failed: %v", err)
 	}
 	appliedArgs = trackMock.args
-	if len(appliedArgs) == 0 {
-		t.Fatal("Apply did not invoke any commands")
+	if len(sets) != 1 || sets[0] != "eth0 disable-rrc" || len(appliedArgs) != 0 {
+		t.Fatalf("netlink sets %v, ethtool args %v; want the flag set over netlink only", sets, appliedArgs)
 	}
 }
 

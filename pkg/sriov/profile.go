@@ -10,6 +10,7 @@ import (
 	"net"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -458,6 +459,27 @@ func normalizeMAC(s string) string {
 		return hw.String()
 	}
 	return s
+}
+
+// FWLLDPAgentOwners returns the PF ports whose firmware LLDP agent a
+// profile sets (firmware.fwLLDPAgent): the profile owns that flag, so
+// BOOTy's default (network.lldp.disableFirmwareAgent) leaves it alone.
+// discover runs only when a profile sets the agent.
+func (c *Config) FWLLDPAgentOwners(discover func() ([]PF, error)) ([]string, error) {
+	if !slices.ContainsFunc(c.Profiles, func(p Profile) bool { return p.Firmware.FWLLDPAgent != nil }) {
+		return nil, nil
+	}
+	pfs, err := discover()
+	if err != nil {
+		return nil, err
+	}
+	var owners []string
+	for i := range pfs {
+		if slices.ContainsFunc(c.Profiles, func(p Profile) bool { return p.Firmware.FWLLDPAgent != nil && p.Match.Matches(&pfs[i]) }) {
+			owners = append(owners, pfs[i].Interface)
+		}
+	}
+	return owners, nil
 }
 
 // OwnsMellanoxVFs reports whether a profile sets the SR-IOV enable or the

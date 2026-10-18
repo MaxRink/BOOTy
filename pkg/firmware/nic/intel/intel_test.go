@@ -8,7 +8,20 @@ import (
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/firmware/nic"
+	"github.com/telekom/BOOTy/pkg/firmware/nic/ethtool"
+	netethtool "github.com/telekom/BOOTy/pkg/network/ethtool"
 )
+
+// netlinkFlags fakes the ethtool netlink private flags.
+func netlinkFlags(flags []netethtool.Flag, setErr error, sets *[]string) ethtool.PrivFlagIO {
+	return ethtool.PrivFlagIO{
+		Get: func(string) ([]netethtool.Flag, error) { return flags, nil },
+		Set: func(iface, name string, on bool) error {
+			*sets = append(*sets, fmt.Sprintf("%s %s %v", iface, name, on))
+			return setErr
+		},
+	}
+}
 
 func TestSupported(t *testing.T) {
 	m := New(nil)
@@ -71,6 +84,8 @@ func TestCapture_Success(t *testing.T) {
 		privFlagsOut: "Private flags for eth0:\ndisable-fw-lldp : off\nchannel-inline-flow-director : on\n",
 	}
 	m := NewWithCommander(nil, mock)
+	var sets []string
+	m.WithPrivFlags(netlinkFlags([]netethtool.Flag{{Name: "disable-fw-lldp"}, {Name: "channel-inline-flow-director", On: true}}, nil, &sets))
 
 	id := &nic.Identifier{
 		PCIAddress: "0000:01:00.0",
@@ -117,6 +132,8 @@ func TestCapture_EthtoolError(t *testing.T) {
 func TestApply_Success(t *testing.T) {
 	mock := &MockCommander{}
 	m := NewWithCommander(nil, mock)
+	var sets []string
+	m.WithPrivFlags(netlinkFlags(nil, nil, &sets))
 
 	id := &nic.Identifier{PCIAddress: "0000:01:00.0", Interface: "eth0", VendorID: "0x8086"}
 	changes := []nic.FlagChange{{Name: "disable-fw-lldp", Value: "on"}}
@@ -124,14 +141,16 @@ func TestApply_Success(t *testing.T) {
 	if err := m.Apply(context.Background(), id, changes); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
-	if len(mock.called) == 0 {
-		t.Fatal("Apply did not invoke ethtool")
+	if len(sets) != 1 || sets[0] != "eth0 disable-fw-lldp true" || len(mock.called) != 0 {
+		t.Fatalf("netlink sets %v, ethtool calls %v", sets, mock.called)
 	}
 }
 
 func TestApply_Error(t *testing.T) {
-	mock := &MockCommander{err: fmt.Errorf("permission denied")}
+	mock := &MockCommander{}
 	m := NewWithCommander(nil, mock)
+	var sets []string
+	m.WithPrivFlags(netlinkFlags(nil, fmt.Errorf("permission denied"), &sets))
 
 	id := &nic.Identifier{PCIAddress: "0000:01:00.0", Interface: "eth0", VendorID: "0x8086"}
 	changes := []nic.FlagChange{{Name: "x", Value: "on"}}
@@ -155,14 +174,17 @@ func TestApply_NoInterface(t *testing.T) {
 	}
 }
 
+// DisableFWLLDP goes through nic.DisableFirmwareLLDP (tested there with
+// the i40e and ice flags): a NIC without an Intel driver is left alone,
+// and no ethtool command runs.
 func TestDisableFWLLDP(t *testing.T) {
 	mock := &MockCommander{}
 	m := NewWithCommander(nil, mock)
 
-	if err := m.DisableFWLLDP(context.Background(), "eth0"); err != nil {
-		t.Fatalf("DisableFWLLDP: %v", err)
+	if err := m.DisableFWLLDP(context.Background(), ""); err == nil {
+		t.Fatal("DisableFWLLDP without an interface succeeded")
 	}
-	if len(mock.called) == 0 {
-		t.Fatal("DisableFWLLDP did not invoke ethtool")
+	if err := m.DisableFWLLDP(context.Background(), "booty-no-such-nic"); err != nil || len(mock.called) != 0 {
+		t.Fatalf("DisableFWLLDP: %v, ethtool calls %v", err, mock.called)
 	}
 }

@@ -14,15 +14,20 @@ import (
 // IntelFlags is the firmware backend of the Intel private flags: the
 // firmware LLDP and DCBX agent of ice (fw-lldp-agent) and i40e
 // (disable-fw-lldp). Intel documents the flag as kept in the NVM; it takes
-// effect at once. It reuses the ethtool manager of pkg/firmware/nic; the
-// netlink private-flag code of the cable check can replace it.
+// effect at once. It reuses the ethtool manager of pkg/firmware/nic, which
+// reads and sets the flag over ethtool netlink (pkg/network/ethtool).
 type IntelFlags struct {
 	m *ethtool.Manager
 }
 
-// NewIntelFlags returns the backend with the ethtool binary of the ramdisk.
+// intelPrivFlags is the private flag access of NewIntelFlags: ethtool
+// netlink. Tests serve the flags from the fake commander instead.
+var intelPrivFlags = func(nic.Commander) ethtool.PrivFlagIO { return ethtool.NetlinkPrivFlags }
+
+// NewIntelFlags returns the backend; cmd runs "ethtool -i" for the driver
+// and firmware version.
 func NewIntelFlags(log *slog.Logger, cmd nic.Commander) *IntelFlags {
-	return &IntelFlags{m: ethtool.NewWithCommander(nic.VendorIntel, "0x8086", log, cmd)}
+	return &IntelFlags{m: ethtool.NewWithCommander(nic.VendorIntel, "0x8086", log, cmd).WithPrivFlags(intelPrivFlags(cmd))}
 }
 
 // Name implements FirmwareBackend.

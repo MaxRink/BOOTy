@@ -10,7 +10,26 @@ import (
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/firmware/nic"
+	netethtool "github.com/telekom/BOOTy/pkg/network/ethtool"
 )
+
+// fakeFlags stands in for the ethtool netlink private flags.
+type fakeFlags struct {
+	flags  []netethtool.Flag
+	getErr error
+	setErr error
+	sets   []string
+}
+
+func (f *fakeFlags) io() PrivFlagIO {
+	return PrivFlagIO{
+		Get: func(string) ([]netethtool.Flag, error) { return f.flags, f.getErr },
+		Set: func(iface, name string, on bool) error {
+			f.sets = append(f.sets, fmt.Sprintf("%s %s %v", iface, name, on))
+			return f.setErr
+		},
+	}
+}
 
 type fakeCommander struct {
 	outputs map[string][]byte
@@ -44,13 +63,12 @@ func TestSupported(t *testing.T) {
 func TestCaptureParsesInfoAndPrivateFlags(t *testing.T) {
 	fake := &fakeCommander{
 		outputs: map[string][]byte{
-			"ethtool -i eth0":                []byte("driver: ixgbe\nfirmware-version: 1.2.3\nbus-info: 0000:01:00.0\n"),
-			"ethtool --show-priv-flags eth0": []byte("Private flags for eth0:\nflag_a: on\nflag_b: off\n"),
+			"ethtool -i eth0": []byte("driver: ixgbe\nfirmware-version: 1.2.3\nbus-info: 0000:01:00.0\n"),
 		},
 		errs: map[string]error{},
 	}
-
-	mgr := NewWithCommander(nic.VendorIntel, "0x8086", nil, fake)
+	flags := &fakeFlags{flags: []netethtool.Flag{{Name: "flag_a", On: true}, {Name: "flag_b"}}}
+	mgr := NewWithCommander(nic.VendorIntel, "0x8086", nil, fake).WithPrivFlags(flags.io())
 	state, err := mgr.Capture(context.Background(), &nic.Identifier{PCIAddress: "0000:01:00.0", Interface: "eth0", VendorID: "0x8086"})
 	if err != nil {
 		t.Fatalf("Capture() error: %v", err)
@@ -72,12 +90,10 @@ func TestCaptureIgnoresPrivateFlagsFailure(t *testing.T) {
 		outputs: map[string][]byte{
 			"ethtool -i eth0": []byte("driver: ixgbe\nfirmware-version: 1.2.3\n"),
 		},
-		errs: map[string]error{
-			"ethtool --show-priv-flags eth0": errors.New("unsupported"),
-		},
+		errs: map[string]error{},
 	}
-
-	mgr := NewWithCommander(nic.VendorIntel, "0x8086", nil, fake)
+	flags := &fakeFlags{getErr: errors.New("unsupported")}
+	mgr := NewWithCommander(nic.VendorIntel, "0x8086", nil, fake).WithPrivFlags(flags.io())
 	state, err := mgr.Capture(context.Background(), &nic.Identifier{Interface: "eth0", VendorID: "0x8086"})
 	if err != nil {
 		t.Fatalf("Capture() error: %v", err)
@@ -89,16 +105,16 @@ func TestCaptureIgnoresPrivateFlagsFailure(t *testing.T) {
 
 func TestApplyInvokesSetPrivFlags(t *testing.T) {
 	fake := &fakeCommander{outputs: map[string][]byte{}, errs: map[string]error{}}
-	mgr := NewWithCommander(nic.VendorIntel, "0x8086", nil, fake)
+	flags := &fakeFlags{}
+	mgr := NewWithCommander(nic.VendorIntel, "0x8086", nil, fake).WithPrivFlags(flags.io())
 
-	err := mgr.Apply(context.Background(), &nic.Identifier{Interface: "eth0", VendorID: "0x8086"}, []nic.FlagChange{{Name: "flag_a", Value: "on"}})
+	err := mgr.Apply(context.Background(), &nic.Identifier{Interface: "eth0", VendorID: "0x8086"},
+		[]nic.FlagChange{{Name: "flag_a", Value: "on"}, {Name: "flag_b", Value: "off"}})
 	if err != nil {
 		t.Fatalf("Apply() error: %v", err)
 	}
-
-	want := "ethtool --set-priv-flags eth0 flag_a on"
-	if len(fake.calls) == 0 || fake.calls[0] != want {
-		t.Fatalf("calls = %v, want first call %q", fake.calls, want)
+	if strings.Join(flags.sets, ";") != "eth0 flag_a true;eth0 flag_b false" || len(fake.calls) != 0 {
+		t.Fatalf("netlink sets %v, commands %v; want two netlink sets and no ethtool command", flags.sets, fake.calls)
 	}
 }
 
@@ -118,15 +134,8 @@ func TestCaptureValidatesInputs(t *testing.T) {
 }
 
 func TestApplyPropagatesCommandFailure(t *testing.T) {
-	fake := &fakeCommander{
-		outputs: map[string][]byte{
-			"ethtool --set-priv-flags eth0 flag_a on": []byte("permission denied"),
-		},
-		errs: map[string]error{
-			"ethtool --set-priv-flags eth0 flag_a on": errors.New("exit status 1"),
-		},
-	}
-	mgr := NewWithCommander(nic.VendorIntel, "0x8086", nil, fake)
+	flags := &fakeFlags{setErr: errors.New("permission denied")}
+	mgr := NewWithCommander(nic.VendorIntel, "0x8086", nil, &fakeCommander{}).WithPrivFlags(flags.io())
 
 	err := mgr.Apply(context.Background(), &nic.Identifier{Interface: "eth0", VendorID: "0x8086"}, []nic.FlagChange{{Name: "flag_a", Value: "on"}})
 	if err == nil {
@@ -136,7 +145,7 @@ func TestApplyPropagatesCommandFailure(t *testing.T) {
 		t.Fatalf("Apply() error = %q, want wrapped flag context", err.Error())
 	}
 	if !strings.Contains(err.Error(), "permission denied") {
-		t.Fatalf("Apply() error = %q, want command output", err.Error())
+		t.Fatalf("Apply() error = %q, want the netlink error", err.Error())
 	}
 }
 
@@ -153,22 +162,12 @@ func TestNewWithCommanderDefaults(t *testing.T) {
 }
 
 func TestApplyViaEthtoolFormatsError(t *testing.T) {
-	fake := &fakeCommander{
-		outputs: map[string][]byte{
-			"ethtool --set-priv-flags eth0 foo bar": []byte("bad flag"),
-		},
-		errs: map[string]error{
-			"ethtool --set-priv-flags eth0 foo bar": errors.New("exit status 2"),
-		},
-	}
-	mgr := NewWithCommander(nic.VendorIntel, "0x8086", nil, fake)
+	flags := &fakeFlags{}
+	mgr := NewWithCommander(nic.VendorIntel, "0x8086", nil, &fakeCommander{}).WithPrivFlags(flags.io())
 
 	err := mgr.ApplyViaEthtool(context.Background(), "eth0", nic.FlagChange{Name: "foo", Value: "bar"})
-	if err == nil {
-		t.Fatal("ApplyViaEthtool() error = nil, want non-nil")
-	}
-	if !strings.Contains(err.Error(), "ethtool set-priv-flags") {
-		t.Fatalf("ApplyViaEthtool() error = %q, want command context", err.Error())
+	if err == nil || !strings.Contains(err.Error(), "want on or off") || len(flags.sets) != 0 {
+		t.Fatalf("ApplyViaEthtool(bar) = %v, sets %v; want a value error and no set", err, flags.sets)
 	}
 }
 

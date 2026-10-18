@@ -26,15 +26,16 @@ func NewWithCommander(log *slog.Logger, commander ethtool.Commander) *Manager {
 	return &Manager{Manager: ethtool.NewWithCommander(nic.VendorIntel, "0x8086", log, commander)}
 }
 
-// DisableFWLLDP disables the firmware-managed LLDP agent on Intel ice NICs.
-func (m *Manager) DisableFWLLDP(ctx context.Context, iface string) error {
+// DisableFWLLDP stops the firmware LLDP agent of an Intel NIC with the
+// flag of its driver (i40e disable-fw-lldp, ice fw-lldp-agent) through
+// nic.DisableFirmwareLLDP, which also remembers the value for
+// nic.RestoreFirmwareLLDP.
+func (m *Manager) DisableFWLLDP(_ context.Context, iface string) error {
 	if iface == "" {
 		return fmt.Errorf("interface name required")
 	}
-	return m.ApplyViaEthtool(ctx, iface, nic.FlagChange{
-		Name:  "disable-fw-lldp",
-		Value: "on",
-	})
+	_, err := nic.DisableFirmwareLLDP(iface)
+	return err //nolint:wrapcheck // nic wraps its errors
 }
 
 // CriticalParams returns the list of critical Intel firmware parameters.

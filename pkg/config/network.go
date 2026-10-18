@@ -167,11 +167,26 @@ type LLDPConfig struct {
 	// emitLLDP (netplan "emit-lldp: true") NICs, in every network mode.
 	// Default: nil (on with the bm4x-cablecheck profile, else off)
 	EmitAll *bool `yaml:"emitAll,omitempty" json:"emitAll,omitempty"`
+
+	// DisableFirmwareAgent stops the firmware LLDP agent (and with it the
+	// firmware DCBX) of Intel NICs (i40e private flag disable-fw-lldp on,
+	// ice fw-lldp-agent off), which consumes the switch's LLDP frames, so
+	// the switch never sees the host. ice keeps the flag in the NVM; BOOTy
+	// does not put it back. false leaves the flag alone. An SR-IOV profile
+	// that sets firmware.fwLLDPAgent owns the flag of its ports.
+	// Default: nil (on; the legacy ramdisk never touches the flag)
+	DisableFirmwareAgent *bool `yaml:"disableFirmwareAgent,omitempty" json:"disableFirmwareAgent,omitempty"`
 }
 
 // EmitAllNICs reports whether BOOTy sends LLDP on every physical NIC.
 func (l LLDPConfig) EmitAllNICs() bool {
 	return BoolOr(l.EmitAll, l.Profile == lldp.ProfileBM4XCableCheck)
+}
+
+// DisableNICFirmwareLLDP reports whether BOOTy stops the firmware LLDP
+// agent of the NICs: network.lldp.disableFirmwareAgent, on by default.
+func (c *Config) DisableNICFirmwareLLDP() bool {
+	return BoolOr(c.Network.LLDP.DisableFirmwareAgent, true)
 }
 
 // BGPConfig holds BGP peering and tuning parameters.

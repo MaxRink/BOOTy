@@ -2,6 +2,8 @@ package sriov
 
 import (
 	"encoding/json"
+	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -315,5 +317,26 @@ func TestConfigDecodesStrictly(t *testing.T) {
 	}
 	if err := yaml.Unmarshal([]byte("unknown: 1\nsriov:\n  profles: []\n"), &parent); err == nil {
 		t.Fatal("lenient parent let an unknown sriov key through")
+	}
+}
+
+// A profile that sets firmware.fwLLDPAgent owns the flag of the ports it
+// matches; without such a profile the ports are not even discovered.
+func TestFWLLDPAgentOwners(t *testing.T) {
+	agent := true
+	pfs := []PF{{Interface: "ens1f0", Driver: "ice"}, {Interface: "ens1f1", Driver: "ice"}, {Interface: "ens2f0", Driver: "mlx5_core"}}
+	discovered := 0
+	discover := func() ([]PF, error) { discovered++; return pfs, nil }
+
+	c := &Config{Profiles: []Profile{{Name: "vfs", Match: Match{Driver: "ice"}, Firmware: FirmwareSettings{MaxVFs: ptr(8)}}}}
+	if got, err := c.FWLLDPAgentOwners(discover); err != nil || got != nil || discovered != 0 {
+		t.Fatalf("no fwLLDPAgent: %v %v, discovered %d", got, err, discovered)
+	}
+	c.Profiles = append(c.Profiles, Profile{Name: "agent", Match: Match{Interface: "ens1f1"}, Firmware: FirmwareSettings{FWLLDPAgent: &agent}})
+	if got, err := c.FWLLDPAgentOwners(discover); err != nil || !reflect.DeepEqual(got, []string{"ens1f1"}) {
+		t.Fatalf("owners %v %v, want [ens1f1]", got, err)
+	}
+	if _, err := c.FWLLDPAgentOwners(func() ([]PF, error) { return nil, errors.New("sysfs") }); err == nil {
+		t.Fatal("discover error not returned")
 	}
 }

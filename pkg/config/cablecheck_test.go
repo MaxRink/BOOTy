@@ -87,3 +87,37 @@ func TestValidateLLDPPortIDFormat(t *testing.T) {
 		t.Fatalf("portIDFormat = %q", cfg.Network.LLDP.PortIDFormat)
 	}
 }
+
+// The firmware LLDP agent is stopped only with the bm4x-cablecheck
+// profile unless disableFirmwareAgent says otherwise; a plain run keeps it
+// (ice keeps the setting across boots, and the legacy ramdisk never stops
+// it).
+func TestDisableNICFirmwareLLDP(t *testing.T) {
+	on, off := true, false
+	for _, tt := range []struct {
+		mode, profile string
+		value         *bool
+		want          bool
+	}{
+		// On by default in every mode: the agent consumes the switch's
+		// LLDP frames. false (the opt-out) leaves the flag alone.
+		{"check", "", nil, true},
+		{"check", "bm4x-cablecheck", nil, true},
+		{"check", "bm4x-cablecheck", &off, false},
+		{"provision", "", nil, true},
+		{"", "", nil, true},
+		{"provision", "", &off, false},
+		{"provision", "", &on, true},
+	} {
+		c := &Config{Mode: tt.mode}
+		c.Network.LLDP.Profile = tt.profile
+		c.Network.LLDP.DisableFirmwareAgent = tt.value
+		if got := c.DisableNICFirmwareLLDP(); got != tt.want {
+			t.Errorf("%+v: %v, want %v", tt, got, tt.want)
+		}
+	}
+	cfg, err := loadYAML(strings.NewReader("network:\n  lldp:\n    disableFirmwareAgent: false\n"), true)
+	if err != nil || cfg.DisableNICFirmwareLLDP() {
+		t.Fatalf("YAML network.lldp.disableFirmwareAgent false: %v", err)
+	}
+}

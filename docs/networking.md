@@ -388,6 +388,7 @@ rule of every key:
 | `BGP_GRACEFUL_RESTART`, `BGP_GRACEFUL_RESTART_TIME`, `BGP_ADDPATH_RX`, `BGP_SOFTWARE_VERSION` | none: `frr.conf` graceful restart and capability statements are rejected | `network.bgp.gracefulRestart`, `gracefulRestartTime`, `addPathReceive`, `softwareVersion` | native only; unset is the FRR default (for `BGP_SOFTWARE_VERSION`, of the `frr defaults` profile) |
 | `BGP_HOSTNAME` | none: FRR ignores the `frr.conf` `hostname` line and sends the system host name | `network.bgp.hostname` | native only; unset keeps the system host name |
 | `LLDP_RECEIVE` | none: the legacy ramdisk does not receive LLDP | `network.lldpReceive` | native only; unset is on |
+| `LLDP_DISABLE_FW_AGENT` | none: the legacy ramdisk never touches the flag | `network.lldp.disableFirmwareAgent` | native only; unset is on (a deliberate deviation, see below); `false` leaves the flag alone |
 | `LLDP_PROFILE`, `LLDP_PORT_ID_FORMAT`, `LLDP_EMIT_ALL` | none | `network.lldp.profile`, `network.lldp.portIDFormat`, `network.lldp.emitAll` | native only; unset is the networkd identity on the `LLDP_EMIT` NICs |
 | `IP_FORWARDING`, `IPV6_FORWARDING` | `frr.conf` `[no] ip[v6] forwarding` | `network.ipForwarding`, `network.ipv6Forwarding` | native wins |
 
@@ -727,6 +728,27 @@ network mode. `pkg/network/lldp/bm4x_match_test.go` ports the bm4x-api
 matching code to Go (the source lines are in the file) and runs it on
 BOOTy's frames; `TestCableCheckLLDP` (containerlab, an lldpd leaf) checks
 what a switch reports.
+
+Intel 700 and 800 series NICs run an LLDP agent in the firmware. While it
+runs, it consumes the LLDP frames of the switch, so the switch never sees
+the host, and the host's own frames do not go out reliably. BOOTy
+therefore stops it by default, in every mode, through the driver private
+flag over ethtool netlink: i40e `disable-fw-lldp` on, ice `fw-lldp-agent`
+off. It writes the flag only when the agent runs, and before the network
+setup, so a port reset of the driver cannot drop BGP sessions.
+
+This is a deliberate deviation from the legacy ramdisk, which never touches
+the flag. BOOTy does not put the flag back: ice keeps it in the NVM, so the
+agent also stays off for the installed OS. Side effects:
+
+- The firmware agent also runs DCBX. With the agent off the NIC does not
+  negotiate DCB with the switch; an OS that needs DCB then needs software
+  DCBX (for example lldpad), or the opt-out below.
+- `LLDP_DISABLE_FW_AGENT=false` (YAML `network.lldp.disableFirmwareAgent:
+  false`) is the opt-out: BOOTy does not touch the flag at all.
+- An SR-IOV profile that sets `firmware.fwLLDPAgent` owns the flag of the
+  ports it matches ([SR-IOV](sriov.md)). BOOTy's default leaves those ports
+  alone, and the profile's value applies with its drift handling.
 
 #### Port ID format
 
