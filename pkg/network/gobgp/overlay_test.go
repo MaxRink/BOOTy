@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -43,6 +44,14 @@ type mockOverlayNetlinkOps struct {
 	delErrOnCall    int
 	routeReplaceErr error
 	routeDelErr     error
+	nexthops        []fdbNexthop
+	nexthopDels     []uint32
+	fdbNhids        []string
+	fdbDels         []string
+	nexthopErr      error // NexthopReplace of a group fails
+	nexthopVTEPErr  error // NexthopReplace of a VTEP nexthop fails
+	nexthopDelErr   error
+	fdbNhidErr      error
 }
 
 func (m *mockOverlayNetlinkOps) LinkByName(name string) (netlink.Link, error) {
@@ -86,6 +95,29 @@ func (m *mockOverlayNetlinkOps) RouteReplace(route *netlink.Route) error {
 func (m *mockOverlayNetlinkOps) RouteDel(route *netlink.Route) error {
 	m.routeDels = append(m.routeDels, route)
 	return m.routeDelErr
+}
+
+func (m *mockOverlayNetlinkOps) NexthopReplace(nh fdbNexthop) error {
+	m.nexthops = append(m.nexthops, nh)
+	if nh.vtep == nil {
+		return m.nexthopErr
+	}
+	return m.nexthopVTEPErr
+}
+
+func (m *mockOverlayNetlinkOps) NexthopDel(id uint32) error {
+	m.nexthopDels = append(m.nexthopDels, id)
+	return m.nexthopDelErr
+}
+
+func (m *mockOverlayNetlinkOps) FDBNhidSet(_ int, mac net.HardwareAddr, nhid uint32) error {
+	m.fdbNhids = append(m.fdbNhids, fmt.Sprintf("%s nhid %d", mac, nhid))
+	return m.fdbNhidErr
+}
+
+func (m *mockOverlayNetlinkOps) FDBDel(_ int, mac net.HardwareAddr) error {
+	m.fdbDels = append(m.fdbDels, mac.String())
+	return nil
 }
 
 func TestNewVXLANUsesConfiguredNetplanLink(t *testing.T) {
@@ -4773,5 +4805,88 @@ func TestType5SharedGatewayFDBFailureKeepsTheNeighbor(t *testing.T) {
 	}
 	if dels := bridgeNeigh(m.dels, vtep); len(dels) != 0 {
 		t.Fatalf("a failed FDB set deleted the shared neighbor: %v", dels)
+	}
+}
+
+// TestType2ESIAliasingAndMassWithdraw checks the remote Ethernet segment
+// handling of FRR (bgpd/bgp_evpn_mh.c, zebra/zebra_evpn_mh.c): a MAC with a
+// non-reserved ESI is installed through the FDB nexthop group of the VTEPs
+// that sent both EAD routes for the ES (RFC 7432 sections 9.2.2, 14.1.2),
+// not before; an EAD withdraw moves every MAC of the ES at once, and the
+// last VTEP gone removes them (section 17.3).
+func TestType2ESIAliasingAndMassWithdraw(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{}
+	o := &OverlayTier{
+		cfg:        &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
+		log:        slog.Default(),
+		netlinkOps: mock,
+	}
+	esi := &apipb.EthernetSegmentIdentifier{Type: 0, Value: []byte{0, 0x11, 0x22, 0x33, 0x44, 0x55, 0, 0, 1}}
+	rd := func(n uint32) *apipb.RouteDistinguisher { return buildRouteDistinguisher(65000, n) }
+	ead := func(vtep string, perES, withdraw bool) {
+		tag := uint32(0)
+		if perES {
+			tag = maxET
+		}
+		n := uint32(1)
+		if vtep == "10.0.0.2" {
+			n = 2
+		}
+		if withdraw {
+			vtep = "" // a withdraw may come without next hop
+		}
+		o.handleType1Route(&apipb.EVPNEthernetAutoDiscoveryRoute{Rd: rd(n), Esi: esi, EthernetTag: tag}, vtep, false, withdraw)
+	}
+	lastGroup := func() []uint32 {
+		for i := len(mock.nexthops) - 1; i >= 0; i-- {
+			if mock.nexthops[i].vtep == nil {
+				return mock.nexthops[i].group
+			}
+		}
+		return nil
+	}
+
+	o.handleType2Route(&apipb.EVPNMACIPAdvertisementRoute{Rd: rd(1), Esi: esi, MacAddress: "aa:bb:cc:00:00:01"}, "10.0.0.1", 0, false)
+	o.handleType2Route(&apipb.EVPNMACIPAdvertisementRoute{Rd: rd(1), MacAddress: "aa:bb:cc:00:00:02"}, "10.0.0.1", 0, false)
+	if len(mock.fdbNhids) != 0 || len(mock.sets) != 1 {
+		t.Fatalf("before EAD routes: nhid entries %v, VTEP entries %d; want only the single-homed MAC", mock.fdbNhids, len(mock.sets))
+	}
+
+	ead("10.0.0.1", false, false) // EAD-per-EVI alone does not activate the VTEP
+	if len(mock.fdbNhids) != 0 {
+		t.Fatalf("installed with EAD-per-EVI only: %v", mock.fdbNhids)
+	}
+	ead("10.0.0.1", true, false)
+	g := o.esGroups[esiKey(esi)]
+	if len(mock.fdbNhids) != 1 || mock.fdbNhids[0] != fmt.Sprintf("aa:bb:cc:00:00:01 nhid %d", g.id) {
+		t.Fatalf("after both EAD routes: nhid entries %v, want the MAC via group %d", mock.fdbNhids, g.id)
+	}
+
+	ead("10.0.0.2", true, false)
+	ead("10.0.0.2", false, false)
+	if got := lastGroup(); len(got) != 2 {
+		t.Fatalf("aliasing: group members %v, want both VTEPs", got)
+	}
+	if len(mock.fdbNhids) != 1 {
+		t.Fatalf("the MAC entry changed when a VTEP joined: %v", mock.fdbNhids)
+	}
+
+	ead("10.0.0.1", true, true) // mass withdraw of the advertising VTEP
+	if got := lastGroup(); len(got) != 1 || got[0] != o.vtepNexthops["10.0.0.2"] {
+		t.Fatalf("after the EAD-per-ES withdraw of 10.0.0.1: group %v, want only 10.0.0.2", got)
+	}
+	if len(mock.fdbDels) != 0 {
+		t.Fatalf("the MAC was removed while 10.0.0.2 still has the ES: %v", mock.fdbDels)
+	}
+
+	ead("10.0.0.2", true, true)
+	if len(mock.fdbDels) != 1 || mock.fdbDels[0] != "aa:bb:cc:00:00:01" {
+		t.Fatalf("no active VTEP left: FDB deletes %v, want the MAC", mock.fdbDels)
+	}
+	if !slices.Contains(mock.nexthopDels, g.id) || len(o.vtepNexthops) != 0 {
+		t.Fatalf("group %d and VTEP nexthops not deleted: deletes %v, left %v", g.id, mock.nexthopDels, o.vtepNexthops)
+	}
+	if len(mock.dels) != 0 {
+		t.Fatalf("the single-homed MAC was touched: %v", mock.dels)
 	}
 }
