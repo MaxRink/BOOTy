@@ -271,16 +271,16 @@ func TestEmitEndsWithShutdownFrame(t *testing.T) {
 	orig := sendFrame
 	t.Cleanup(func() { sendFrame = orig })
 	ttls := make(chan uint16, 16)
-	sendFrame = func(iface string, info *Info, build func(string, net.HardwareAddr, *Info) ([]byte, error)) error {
+	sendFrame = func(iface string, info *Info, build func(string, net.HardwareAddr, *Info) ([]byte, error)) ([]byte, error) {
 		b, err := build(iface, net.HardwareAddr{2, 0, 0, 0, 0, 1}, info)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		l, _ := gopacket.NewPacket(b, layers.LayerTypeEthernet, gopacket.Default).Layer(layers.LayerTypeLinkLayerDiscovery).(*layers.LinkLayerDiscovery)
 		if l != nil {
 			ttls <- l.TTL
 		}
-		return nil
+		return b, nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	wait := Emit(ctx, []string{"eth0"}, &Info{MachineID: "m", SystemName: "host1"}, slog.Default())

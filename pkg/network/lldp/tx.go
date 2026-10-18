@@ -230,7 +230,9 @@ func emitOn(ctx context.Context, iface string, info *Info, log *slog.Logger) {
 	}
 	failed := false
 	for n := 0; ; n++ {
-		if err := sendFrame(iface, info, Frame); err != nil && !failed {
+		frame, err := sendFrame(iface, info, Frame)
+		recordTX(iface, info, frame, err, time.Now())
+		if err != nil && !failed {
 			// Log once; the NIC may come back (carrier, rename).
 			log.Warn("LLDP frame not sent", "error", err)
 			failed = true
@@ -245,7 +247,7 @@ func emitOn(ctx context.Context, iface string, info *Info, log *slog.Logger) {
 		case <-ctx.Done():
 			// IEEE 802.1AB: a port that stops sending sends a shutdown
 			// LLDPDU, so the switch does not keep BOOTy for the TTL.
-			if err := sendFrame(iface, info, ShutdownFrame); err != nil {
+			if _, err := sendFrame(iface, info, ShutdownFrame); err != nil {
 				log.Debug("LLDP shutdown frame not sent", "error", err)
 			}
 			return
@@ -254,28 +256,29 @@ func emitOn(ctx context.Context, iface string, info *Info, log *slog.Logger) {
 	}
 }
 
-// sendFrame sends the frame that build makes for the NIC; tests replace it.
-var sendFrame = func(iface string, info *Info, build func(string, net.HardwareAddr, *Info) ([]byte, error)) error {
+// sendFrame sends the frame that build makes for the NIC and returns it;
+// nil when the NIC has no carrier. Tests replace it.
+var sendFrame = func(iface string, info *Info, build func(string, net.HardwareAddr, *Info) ([]byte, error)) ([]byte, error) {
 	ifi, err := net.InterfaceByName(iface)
 	if err != nil {
-		return fmt.Errorf("interface %s: %w", iface, err)
+		return nil, fmt.Errorf("interface %s: %w", iface, err)
 	}
 	if info.carrierOnly() && ifi.Flags&net.FlagRunning == 0 {
-		return nil // no carrier: send once the link is up
+		return nil, nil // no carrier: send once the link is up
 	}
 	frame, err := build(iface, ifi.HardwareAddr, info)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	fd, err := unix.Socket(unix.AF_PACKET, unix.SOCK_RAW, 0)
 	if err != nil {
-		return fmt.Errorf("raw socket: %w", err)
+		return nil, fmt.Errorf("raw socket: %w", err)
 	}
 	defer func() { _ = unix.Close(fd) }()
 	addr := &unix.SockaddrLinklayer{Protocol: htons(0x88cc), Ifindex: ifi.Index, Halen: 6}
 	copy(addr.Addr[:], nearestBridge)
 	if err := unix.Sendto(fd, frame, 0, addr); err != nil {
-		return fmt.Errorf("send on %s: %w", iface, err)
+		return nil, fmt.Errorf("send on %s: %w", iface, err)
 	}
-	return nil
+	return frame, nil
 }

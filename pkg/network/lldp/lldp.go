@@ -41,6 +41,8 @@ func Listen(ctx context.Context, iface string, timeout time.Duration) (*Neighbor
 
 		neighbor := readNeighbor(fd, buf, iface)
 		if neighbor != nil {
+			neighbor.FirstSeen = time.Now()
+			neighbor.LastSeen = neighbor.FirstSeen
 			slog.Info("LLDP neighbor discovered",
 				"interface", iface,
 				"chassisID", neighbor.ChassisID,

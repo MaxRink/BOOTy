@@ -42,6 +42,23 @@ func Receive(ctx context.Context, ifaces []string, log *slog.Logger) {
 	current.Lock()
 	current.r = r
 	current.Unlock()
+	// The state file exists from the start and stays fresh without frames,
+	// so "booty lldp status" tells "no neighbor yet" from "not running"
+	// (a file older than 75 s).
+	writeState(time.Now())
+	refresh := stateRefresh
+	go func() {
+		tick := time.NewTicker(refresh)
+		defer tick.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case now := <-tick.C:
+				writeState(now)
+			}
+		}
+	}()
 	for _, iface := range ifaces {
 		go r.receiveOn(ctx, iface)
 	}
@@ -96,6 +113,7 @@ func (r *receiver) receiveOn(ctx context.Context, iface string) {
 	for ctx.Err() == nil {
 		if nb := r.read(fd, buf, iface); nb != nil {
 			r.record(nb, time.Now())
+			writeState(time.Now())
 		}
 	}
 }

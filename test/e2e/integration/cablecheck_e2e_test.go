@@ -385,3 +385,62 @@ func atoi(s string) int {
 	_, _ = fmt.Sscan(strings.TrimSpace(s), &n)
 	return n
 }
+
+// The rescue shell diagnosis: "booty lldp neighbors" shows the leaf on
+// both NICs from the live state of the running BOOTy, "booty lldp status"
+// what BOOTy sends; with BOOTy stopped, neighbors captures the leaf frames
+// itself. BOOTy runs again afterwards.
+func TestCableCheckDiagnosis(t *testing.T) {
+	cablecheckStartBooty(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	var out string
+	for {
+		var err error
+		out, err = cablecheckExec(ctx, cablecheckBooty, "/usr/local/bin/booty", "lldp", "neighbors")
+		if err == nil && strings.Contains(out, "Interface: eth1 ") && strings.Contains(out, "Interface: eth2 ") &&
+			strings.Contains(out, "System name:   leaf01") && strings.Contains(out, "Port descr:    eth1") {
+			break
+		}
+		if ctx.Err() != nil {
+			t.Fatalf("booty lldp neighbors: %v\n%s", err, out)
+		}
+		time.Sleep(time.Second)
+	}
+
+	out, err := cablecheckExec(ctx, cablecheckBooty, "/usr/local/bin/booty", "lldp", "status", "--json")
+	var state struct {
+		Transmit []struct {
+			Interface string
+			Profile   string
+			Frames    int
+			Frame     *struct {
+				SystemName    string `json:"systemName"`
+				PortIDSubtype string `json:"portIDSubtype"`
+			}
+		}
+	}
+	if err != nil || json.Unmarshal([]byte(out), &state) != nil {
+		t.Fatalf("booty lldp status --json: %v\n%s", err, out)
+	}
+	sending := 0
+	for _, tx := range state.Transmit {
+		if (tx.Interface == "eth1" || tx.Interface == "eth2") && tx.Profile == "bm4x-cablecheck" && tx.Frames > 0 &&
+			tx.Frame != nil && tx.Frame.SystemName == "bare-minimal" && tx.Frame.PortIDSubtype == "mac" {
+			sending++
+		}
+	}
+	if sending != 2 {
+		t.Errorf("status shows %d of eth1, eth2 sending the bm4x frame:\n%s", sending, out)
+	}
+
+	// Standalone: stop BOOTy; the switch sends every 30 s.
+	if _, err := cablecheckExec(ctx, cablecheckBooty, "sh", "-c", "kill $(pidof booty)"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cablecheckStartBooty(t) })
+	out, err = cablecheckExec(ctx, cablecheckBooty, "/usr/local/bin/booty", "lldp", "neighbors", "--capture", "40s", "--json")
+	if err != nil || strings.Count(out, `"systemName": "leaf01"`) != 2 {
+		t.Fatalf("booty lldp neighbors without BOOTy: %v\n%s", err, out)
+	}
+}

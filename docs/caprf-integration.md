@@ -494,6 +494,10 @@ An explicit `RESCUE_MODE` wins over `FAILURE_ACTION` for a failed provision.
 `FAILURE_ACTION` alone decides a failed deprovision and a failure before or
 outside a mode. `RESCUE_MODE` has no effect there.
 
+In the rescue shell, `booty lldp neighbors` and `booty lldp status` show
+the LLDP neighbors and what BOOTy sends, without `lldpcli`; see
+[LLDP diagnosis](networking.md#lldp-diagnosis-in-the-rescue-shell).
+
 For `shell` and `wait`, BOOTy installs `RESCUE_SSH_PUBKEY` for root, sets
 `RESCUE_PASSWORD_HASH`, starts `dropbear` if the ramdisk has it, and mounts
 the disks when `RESCUE_AUTO_MOUNT=true`.

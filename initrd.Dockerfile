@@ -403,6 +403,8 @@ COPY --from=lvm /LVM2.2.03.27/tools/lvm sbin/
 RUN for cmd in pvcreate vgs vgcreate lvcreate; do ln -sf lvm "sbin/${cmd}"; done
 COPY --from=sfdisk /util-linux/sfdisk.static bin/sfdisk
 COPY --from=dev /go/src/github.com/telekom/BOOTy/init .
+# "booty lldp ..." and other commands in the rescue shell run the agent binary.
+RUN ln -sf ../init bin/booty
 RUN mkdir -p usr/lib/booty
 COPY --from=dev /go/src/github.com/telekom/BOOTy/esp-sync usr/lib/booty/booty-esp-sync
 COPY --from=efi-fallback /out/ usr/lib/booty/efi/
@@ -577,6 +579,8 @@ RUN cp /usr/bin/growpart bin/growpart
 
 # BOOTy init binary (static, CGO-enabled)
 COPY --from=dev /go/src/github.com/telekom/BOOTy/init .
+# "booty lldp ..." and other commands in the rescue shell run the agent binary.
+RUN ln -sf ../init bin/booty
 RUN mkdir -p usr/lib/booty
 COPY --from=dev /go/src/github.com/telekom/BOOTy/esp-sync usr/lib/booty/booty-esp-sync
 
@@ -656,6 +660,8 @@ COPY --from=busybox /build/initramfs/bin/growpart bin/growpart
 
 # BOOTy init binary (with GoBGP compiled in)
 COPY --from=dev /go/src/github.com/telekom/BOOTy/init .
+# "booty lldp ..." and other commands in the rescue shell run the agent binary.
+RUN ln -sf ../init bin/booty
 RUN mkdir -p usr/lib/booty
 COPY --from=dev /go/src/github.com/telekom/BOOTy/esp-sync usr/lib/booty/booty-esp-sync
 COPY --from=efi-fallback /out/ usr/lib/booty/efi/
@@ -822,6 +828,8 @@ RUN mkdir -p bin sbin dev proc run sys tmp etc && \
 # them, so a ramdisk with FRR never lacks them.
 COPY hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
 COPY --from=micro-dev /go/src/github.com/telekom/BOOTy/init .
+# "booty lldp ..." and other commands in the rescue shell run the agent binary.
+RUN ln -sf ../init bin/booty
 RUN mkdir -p etc/ssl/certs && cp /etc/ssl/certs/ca-certificates.crt etc/ssl/certs/
 
 # Package micro initramfs

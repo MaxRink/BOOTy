@@ -590,3 +590,27 @@ func TestDockerfileShipsFRRUsers(t *testing.T) {
 		}
 	}
 }
+
+// Every flavor has /bin/booty, a relative link to the BOOTy binary /init
+// (CI rejects links that dangle outside the ramdisk), so the documented
+// rescue shell commands ("booty lldp neighbors") work.
+func TestDockerfileFlavorsLinkBootyCommand(t *testing.T) {
+	data, err := os.ReadFile("initrd.Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(data), "\n")
+	copies := 0
+	for i, l := range lines {
+		if !strings.HasPrefix(l, "COPY --from=") || !strings.HasSuffix(l, "/BOOTy/init .") {
+			continue
+		}
+		copies++
+		if i+2 >= len(lines) || lines[i+2] != "RUN ln -sf ../init bin/booty" {
+			t.Errorf("line %d: %q is not followed by the /bin/booty link", i+1, l)
+		}
+	}
+	if copies < 4 { // default, slim, gobgp, micro
+		t.Fatalf("found %d BOOTy /init copies, want one per flavor", copies)
+	}
+}

@@ -732,6 +732,29 @@ All strings are sanitized (control characters replaced, at most 255
 bytes). `LLDP_NEIGHBOR_WAIT` (check mode) waits until every NIC with
 carrier has a neighbor.
 
+### LLDP diagnosis in the rescue shell
+
+The BOOTy binary is also the diagnosis command, so the ramdisk needs no
+`lldpd` or `lldpcli`. Every flavor links `/bin/booty` to the BOOTy binary
+`/init`:
+
+| Command | Shows | Like |
+|---|---|---|
+| `booty lldp neighbors` | per NIC: chassis ID and port ID with their subtypes, port description, system name and description, capabilities, management addresses, port VLAN, VLAN names, link aggregation, 802.3 MAC/PHY, maximum frame size, LLDP-MED inventory, the age of the last frame, the TTL and the neighbor changes | `lldpcli show neighbors detail` |
+| `booty lldp status` | per NIC that BOOTy sends on: the profile, the announce level, the number of frames, the time of the last one and its TLVs, or why it was not sent (for example no carrier) | `lldpcli show interfaces`, `show chassis` |
+
+`--json` prints JSON (the inventory form of the neighbors). The running
+BOOTy keeps its LLDP state in `/run/booty/lldp.json` (`--state`); only its
+LLDP senders and receivers write it: at the start, after each sent and
+each received frame (at most once per second) and every 30 s while the
+receiver runs. A capture shows the time of each captured frame. When BOOTy is not running or
+the file is older than 75 s, `neighbors` listens on every physical NIC
+itself for `--capture` (default `35s`; switches send every 30 s) and
+`status` fails. The command runs only when BOOTy is not PID 1, so words on
+the kernel command line never start it. `TestCableCheckDiagnosis` (lab)
+runs both commands against a running BOOTy and the capture after BOOTy
+stopped.
+
 ### LLDP identity profiles
 
 `LLDP_PROFILE` (YAML `network.lldp.profile`) selects the identity of the

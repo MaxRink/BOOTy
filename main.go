@@ -109,6 +109,12 @@ type provisionHandoffOps struct {
 }
 
 func main() {
+	// "booty lldp ..." is the LLDP diagnosis command of the rescue shell.
+	// PID 1 is the agent: the kernel passes unknown command line words to
+	// init as arguments.
+	if len(os.Args) > 1 && os.Args[1] == "lldp" && os.Getpid() != 1 {
+		os.Exit(lldp.CLI(os.Args[2:], os.Stdout, os.Stderr, lldp.CLIDeps{NICs: network.DetectPhysicalNICsContext}))
+	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
 
 	// Ensure PATH includes standard binary directories. As PID 1 in an
