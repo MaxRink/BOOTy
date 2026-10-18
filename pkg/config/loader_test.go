@@ -529,6 +529,7 @@ func TestLoadFullYAMLReference(t *testing.T) {
 		{"Network.Overlay.BridgeSTP", *cfg.Network.Overlay.BridgeSTP, false},
 		{"Network.NoAcceptRA", cfg.Network.NoAcceptRA, "ens1f0np0,ens1f1np1"},
 		{"Network.EmitLLDP", cfg.Network.EmitLLDP, "ens1f0np0,ens1f1np1"},
+		{"Network.LLDPReceive", showBool(cfg.Network.LLDPReceive), "false"},
 		{"Network.IPForwarding", fmt.Sprint(*cfg.Network.IPForwarding, *cfg.Network.IPv6Forwarding), "false false"},
 		{"Network.BGP.ASN", cfg.Network.BGP.ASN, uint32(65001)},
 		{"Network.BGP.PeerMode", cfg.Network.BGP.PeerMode, "unnumbered"},

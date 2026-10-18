@@ -4,6 +4,7 @@ package inventory
 import (
 	"time"
 
+	"github.com/telekom/BOOTy/pkg/network/lldp"
 	"github.com/telekom/BOOTy/pkg/sriov"
 )
 
@@ -17,6 +18,8 @@ type HardwareInventory struct {
 	NICs         []NICInfo     `json:"nics"`
 	PCIDevices   []PCIDevice   `json:"pciDevices,omitempty"`
 	Accelerators []Accelerator `json:"accelerators,omitempty"`
+	// LLDPNeighbors are the switches seen on the physical NICs.
+	LLDPNeighbors []lldp.Neighbor `json:"lldpNeighbors,omitempty"`
 }
 
 // SystemInfo holds DMI system identification data.

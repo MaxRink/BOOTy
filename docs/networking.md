@@ -347,6 +347,7 @@ rule of every key:
 | `ACCEPT_RA_OFF`, `LLDP_EMIT` | netplan ethernet `accept-ra: false`, `emit-lldp: true` | `network.noAcceptRA`, `network.emitLLDP` | list replaces |
 | `BGP_GRACEFUL_RESTART`, `BGP_GRACEFUL_RESTART_TIME`, `BGP_ADDPATH_RX`, `BGP_SOFTWARE_VERSION` | none: `frr.conf` graceful restart and capability statements are rejected | `network.bgp.gracefulRestart`, `gracefulRestartTime`, `addPathReceive`, `softwareVersion` | native only; unset is the FRR default (for `BGP_SOFTWARE_VERSION`, of the `frr defaults` profile) |
 | `BGP_HOSTNAME` | none: FRR ignores the `frr.conf` `hostname` line and sends the system host name | `network.bgp.hostname` | native only; unset keeps the system host name |
+| `LLDP_RECEIVE` | none: the legacy ramdisk does not receive LLDP | `network.lldpReceive` | native only; unset is on |
 | `IP_FORWARDING`, `IPV6_FORWARDING` | `frr.conf` `[no] ip[v6] forwarding` | `network.ipForwarding`, `network.ipv6Forwarding` | native wins |
 
 ### Strict input and the accepted grammar
@@ -515,7 +516,7 @@ Both stacks:
   default routing table. `VRF_TABLE_ID` defaults to 1000. GoBGP replaces
   table 1 with 1000 and logs a warning.
 
-### BGP capabilities
+### BGP capabilities and LLDP
 
 The OPEN message of GoBGP has the capabilities that FRR 10 sends with the
 bm4x template (`TestProdTplOpenCapabilities` compares the leaf and route
@@ -592,6 +593,38 @@ and no N bit, so graceful restart does not apply and the routes go at
 once, as in FRR. When BOOTy restarts BGP (BFD down, the end of the run),
 its capability has no address family tuples, so the leaf removes BOOTy's
 routes at once, the same as for the legacy FRR.
+
+LLDP: like systemd-networkd with netplan `emit-lldp: true` (systemd 249,
+`TestProdTplLLDPLikeNetworkd` compares the frames on the same leaf),
+BOOTy sends on the `LLDP_EMIT` NICs: chassis ID the machine ID (locally
+assigned; like systemd on the legacy ramdisk, BOOTy creates a random one
+per boot, kept in `/run/booty/machine-id`; it never uses or writes
+`/etc/machine-id`, so no ID is shared by hosts or written into the
+provisioned OS), port ID the interface name, TTL 120 s, system name the
+hostname, and the capabilities station, bridge and router (station
+enabled). With `LLDP_RECEIVE` (on by default) BOOTy also listens on every
+physical NIC, logs each new or changed neighbor and adds the current
+neighbors to the hardware inventory report; the legacy ramdisk only
+sends. The receive joins the LLDP multicast groups (01:80:c2:00:00:0e,
+:03 and :00) like networkd and lldpd, which a NIC that is not
+promiscuous needs; the lab veths pass LLDP without them, so the lab does
+not show it (a root test checks the membership). It drops BOOTy's own
+frames that come back (our source MAC or chassis ID). It keeps one
+neighbor per NIC: a second chassis on the same link replaces the first.
+The inventory runs seconds after the receive starts, so while no
+neighbor is known it waits until the receive has run for 30 s, one
+transmit interval of lldpd and networkd.
+
+Intel ice and i40e NICs run an LLDP agent in firmware that takes the
+LLDP frames before the host sees them, and on ice it also blocks the
+frames the host sends. The legacy ramdisk does not switch the agent off
+(networkd `emit-lldp` only, no `ethtool --set-priv-flags`), so BOOTy does
+not either: on those NICs LLDP receive and send may see nothing. Turning
+the agent off (`disable-fw-lldp`) also turns off firmware DCBX, which
+RoCE and PFC in the installed OS may need, and some NVM versions keep
+the flag across reboots. An opt-in that turns it off for BOOTy's run and
+back on before the handoff comes with the cable check (one
+implementation in `pkg/firmware/nic`).
 
 ## GoBGP peer modes
 

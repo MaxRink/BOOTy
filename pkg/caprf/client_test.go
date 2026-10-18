@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -3034,5 +3035,22 @@ func TestParseVarsSecureEraseFallback(t *testing.T) {
 	}
 	if got := cfg.Provision.Disk.SecureEraseFallback; got != "wipe" {
 		t.Fatalf("SecureEraseFallback = %q, want wipe", got)
+	}
+}
+
+// LLDP_RECEIVE sets network.lldpReceive; unset keeps it nil (on).
+func TestParseVarsLLDPReceive(t *testing.T) {
+	for in, want := range map[string]string{"LLDP_RECEIVE=false\n": "false", "LLDP_RECEIVE=true\n": "true", "": "nil"} {
+		cfg, err := ParseVars(strings.NewReader(in))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := "nil"
+		if v := cfg.Network.LLDPReceive; v != nil {
+			got = strconv.FormatBool(*v)
+		}
+		if got != want {
+			t.Errorf("%q: LLDPReceive = %s, want %s", in, got, want)
+		}
 	}
 }

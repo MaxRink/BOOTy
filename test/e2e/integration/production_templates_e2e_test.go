@@ -37,6 +37,8 @@ const (
 	prodtplNative = "clab-booty-prodtpl-lab-native"
 	// prodtplNativeVRF has VRF_NAME but no BGP_NEIGHBOR_VRF.
 	prodtplNativeVRF = "clab-booty-prodtpl-lab-native-vrf"
+	// prodtplNetworkd runs systemd-networkd as the LLDP reference.
+	prodtplNetworkd = "clab-booty-prodtpl-lab-networkd"
 
 	prodtplASN     = 4210000017
 	prodtplLocalAS = 65501

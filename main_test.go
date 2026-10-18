@@ -2391,3 +2391,28 @@ func TestSetBGPHostname(t *testing.T) {
 		t.Fatalf("sethostname calls = %q", got)
 	}
 }
+
+// LLDP_RECEIVE is on by default, and false switches the receive off.
+func TestLLDPReceiveEnabled(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	if !lldpReceiveEnabled(cfg) {
+		t.Fatal("LLDP receive is off by default")
+	}
+	cfg.Network.LLDPReceive = new(false)
+	if lldpReceiveEnabled(cfg) {
+		t.Fatal("LLDP_RECEIVE=false keeps the receive on")
+	}
+}
+
+// The network setup starts the LLDP receive only with LLDP_RECEIVE on
+// (the flow needs a network, so the source is checked).
+func TestLLDPReceiveStartGated(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(src), "startLLDPReceive(ctx)") != 1 ||
+		!strings.Contains(string(src), "if lldpReceiveEnabled(cfg) {\n\t\tstartLLDPReceive(ctx)\n\t}") {
+		t.Fatal("startLLDPReceive is not called once, behind lldpReceiveEnabled")
+	}
+}

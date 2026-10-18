@@ -143,6 +143,12 @@ topology:
       env:
         BOOTY_NO_REBOOT: "1"
 
+    # systemd-networkd with EmitLLDP=yes, the LLDP reference: lldp0 to the
+    # leaf (frame compared with BOOTy's), lldp1 to BOOTy (LLDP receive).
+    networkd:
+      kind: linux
+      image: booty-networkd-test:latest
+
     caprf-mock:
       kind: linux
       image: nginx:alpine
@@ -169,3 +175,5 @@ topology:
     - endpoints: ["leaf01:eth8", "native:ens1f1np1"]
     - endpoints: ["leaf01:eth9", "native-vrf:ens1f0np0"]
     - endpoints: ["leaf01:eth10", "native-vrf:ens1f1np1"]
+    - endpoints: ["leaf01:eth11", "networkd:lldp0"]
+    - endpoints: ["booty:lldp1", "networkd:lldp1"]

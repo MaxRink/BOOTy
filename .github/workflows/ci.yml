@@ -1213,6 +1213,7 @@ jobs:
             sudo modprobe netdevsim
           fi
           sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestNetdevsim' ./pkg/sriov/ 2>&1 | tee -a linux-e2e-logs/go-test.log
+          sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestOpenRXGroupsAndOwnFrames' ./pkg/network/lldp/ 2>&1 | tee -a linux-e2e-logs/go-test.log
           if grep -E '^[[:space:]]*--- SKIP:' linux-e2e-logs/go-test.log; then
             echo "::error::linux e2e tests skipped in CI"
             exit 1
@@ -1700,6 +1701,9 @@ jobs:
       - name: Build GoBGP test image
         run: test/e2e/clab/docker-build-retry.sh -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
 
+      - name: Build networkd test image
+        run: test/e2e/clab/docker-build-retry.sh -t booty-networkd-test:latest -f test/e2e/clab/networkd-test.Dockerfile test/e2e/clab
+
       - name: Install ContainerLab
         run: test/e2e/clab/install-containerlab.sh "${CONTAINERLAB_VERSION}"
 
@@ -1748,6 +1752,8 @@ jobs:
             TestProdTplRRRestart \
             TestProdTplLLDP \
             TestProdTplOpenCapabilities \
+            TestProdTplLLDPLikeNetworkd \
+            TestProdTplLLDPReceive \
             TestProdTplRFC5549Routes \
             TestProdTplEBGPWithoutPolicy \
             TestProdTplLongOutageNewLinkLocal \
@@ -1768,7 +1774,7 @@ jobs:
         timeout-minutes: 5
         run: |
           mkdir -p prodtpl-logs
-          for node in leaf01 dcgw01 dcgw02 shadow booty native native-vrf tester caprf-mock caprf6; do
+          for node in leaf01 dcgw01 dcgw02 shadow booty native native-vrf tester networkd caprf-mock caprf6; do
             name="clab-booty-prodtpl-lab-${node}"
             timeout 30 sudo docker logs "${name}" > "prodtpl-logs/${node}.log" 2>&1 || true
             {
@@ -1829,6 +1835,9 @@ jobs:
       - name: Build GoBGP test image
         run: test/e2e/clab/docker-build-retry.sh -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
 
+      - name: Build networkd test image
+        run: test/e2e/clab/docker-build-retry.sh -t booty-networkd-test:latest -f test/e2e/clab/networkd-test.Dockerfile test/e2e/clab
+
       - name: Install ContainerLab
         run: test/e2e/clab/install-containerlab.sh "${CONTAINERLAB_VERSION}"
 
@@ -1877,6 +1886,8 @@ jobs:
             TestProdTplRRRestart \
             TestProdTplLLDP \
             TestProdTplOpenCapabilities \
+            TestProdTplLLDPLikeNetworkd \
+            TestProdTplLLDPReceive \
             TestProdTplRFC5549Routes \
             TestProdTplEBGPWithoutPolicy \
             TestProdTplLongOutageNewLinkLocal \
@@ -1959,6 +1970,9 @@ jobs:
       - name: Build GoBGP test image
         run: test/e2e/clab/docker-build-retry.sh -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
 
+      - name: Build networkd test image
+        run: test/e2e/clab/docker-build-retry.sh -t booty-networkd-test:latest -f test/e2e/clab/networkd-test.Dockerfile test/e2e/clab
+
       - name: Install ContainerLab
         run: test/e2e/clab/install-containerlab.sh "${CONTAINERLAB_VERSION}"
 
@@ -2007,6 +2021,8 @@ jobs:
             TestProdTplRRRestart \
             TestProdTplLLDP \
             TestProdTplOpenCapabilities \
+            TestProdTplLLDPLikeNetworkd \
+            TestProdTplLLDPReceive \
             TestProdTplRFC5549Routes \
             TestProdTplEBGPWithoutPolicy \
             TestProdTplLongOutageNewLinkLocal \

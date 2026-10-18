@@ -56,6 +56,7 @@ func (m *mockCommander) setResult(key string, output []byte, err error) {
 }
 
 type mockProvider struct {
+	inventory        []byte // the last ReportInventory
 	statuses         []statusReport
 	configs          []*config.MachineConfig
 	firmwareReports  [][]byte
@@ -97,7 +98,10 @@ func (p *mockProvider) FetchCommands(_ context.Context) ([]config.Command, error
 
 func (p *mockProvider) AcknowledgeCommand(_ context.Context, _, _, _ string) error { return nil }
 
-func (p *mockProvider) ReportInventory(_ context.Context, _ []byte) error { return nil }
+func (p *mockProvider) ReportInventory(_ context.Context, data []byte) error {
+	p.inventory = data
+	return nil
+}
 
 func newTestConfigurator(t *testing.T, cmd *mockCommander) *Configurator {
 	t.Helper()

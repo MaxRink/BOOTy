@@ -30,6 +30,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/disk"
 	"github.com/telekom/BOOTy/pkg/firmware"
 	"github.com/telekom/BOOTy/pkg/image"
+	"github.com/telekom/BOOTy/pkg/network/lldp"
 	networkpersist "github.com/telekom/BOOTy/pkg/network/persist"
 )
 
@@ -2638,6 +2639,28 @@ func TestCollectInventoryDisabled(t *testing.T) {
 
 	if err := o.collectInventory(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// The inventory reports the LLDP neighbors and gives the receive one
+// switch transmit interval when none is known yet.
+func TestCollectInventoryLLDPNeighbors(t *testing.T) {
+	prev := lldpNeighbors
+	t.Cleanup(func() { lldpNeighbors = prev })
+	var wait time.Duration
+	lldpNeighbors = func(_ context.Context, w time.Duration) []lldp.Neighbor {
+		wait = w
+		return []lldp.Neighbor{{ChassisID: "leaf01", PortID: "eth1", Interface: "ens1f0np0", TTL: 120}}
+	}
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Inventory.Enabled = true
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, cfg, provider)
+	if err := o.collectInventory(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if wait != 30*time.Second || !strings.Contains(string(provider.inventory), `"lldpNeighbors":[{"chassisID":"leaf01"`) {
+		t.Fatalf("wait %s, inventory %s; want 30 s and the neighbor", wait, provider.inventory)
 	}
 }
 

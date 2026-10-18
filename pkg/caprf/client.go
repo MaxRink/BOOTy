@@ -1745,6 +1745,7 @@ func applyOptionalBoolVar(cfg *config.MachineConfig, key, value string) (bool, e
 		"BGP_GRACEFUL_RESTART":       &cfg.Network.BGP.GracefulRestart,
 		"BGP_ADDPATH_RX":             &cfg.Network.BGP.AddPathReceive,
 		"BGP_SOFTWARE_VERSION":       &cfg.Network.BGP.SoftwareVersion,
+		"LLDP_RECEIVE":               &cfg.Network.LLDPReceive,
 		"OOB_EFI_VAR":                &cfg.Telemetry.OOBEFIVar,
 	}[key]; ok {
 		// A typo must not silently pick a value, so only booleans parse.

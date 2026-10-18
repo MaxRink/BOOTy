@@ -31,6 +31,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/inventory"
 	"github.com/telekom/BOOTy/pkg/kexec"
 	"github.com/telekom/BOOTy/pkg/network"
+	"github.com/telekom/BOOTy/pkg/network/lldp"
 	networkpersist "github.com/telekom/BOOTy/pkg/network/persist"
 	"github.com/telekom/BOOTy/pkg/oob"
 	"github.com/telekom/BOOTy/pkg/rescue"
@@ -426,6 +427,15 @@ func (o *Orchestrator) reportInit(ctx context.Context) error {
 	return o.provider.ReportStatus(ctx, config.StatusInit, message)
 }
 
+// lldpNeighbors reads the LLDP neighbors for the inventory; tests replace
+// it. lldpInventoryWait is one transmit interval of the switch (lldpd and
+// networkd: 30 s): the inventory runs seconds after the receive started,
+// so it waits that long when no neighbor is known yet.
+var (
+	lldpNeighbors     = lldp.NeighborsWithin
+	lldpInventoryWait = 30 * time.Second
+)
+
 func (o *Orchestrator) collectInventory(ctx context.Context) error {
 	if !o.cfg.Provision.Inventory.Enabled {
 		o.log.Info("Hardware inventory collection disabled, skipping")
@@ -438,6 +448,7 @@ func (o *Orchestrator) collectInventory(ctx context.Context) error {
 		return nil // non-fatal
 	}
 
+	inv.LLDPNeighbors = lldpNeighbors(ctx, lldpInventoryWait)
 	data, err := json.Marshal(inv)
 	if err != nil {
 		o.log.Warn("Failed to marshal hardware inventory", "error", err)
@@ -448,7 +459,8 @@ func (o *Orchestrator) collectInventory(ctx context.Context) error {
 		"cpus", len(inv.CPUs),
 		"disks", len(inv.Disks),
 		"nics", len(inv.NICs),
-		"pci_devices", len(inv.PCIDevices))
+		"pci_devices", len(inv.PCIDevices),
+		"lldp_neighbors", len(inv.LLDPNeighbors))
 
 	if err := o.provider.ReportInventory(ctx, data); err != nil {
 		o.log.Warn("Failed to report hardware inventory", "error", err)

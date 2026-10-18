@@ -32,6 +32,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/frr"
 	"github.com/telekom/BOOTy/pkg/network/gobgp"
+	"github.com/telekom/BOOTy/pkg/network/lldp"
 	"github.com/telekom/BOOTy/pkg/network/netplan"
 	"github.com/telekom/BOOTy/pkg/network/vlan"
 	"github.com/telekom/BOOTy/pkg/oob"
@@ -743,6 +744,9 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 	if err != nil {
 		return nil, &provision.CodedError{Code: provision.CodeNetworkSetup, Err: err}
 	}
+	if lldpReceiveEnabled(cfg) {
+		startLLDPReceive(ctx)
+	}
 	connectivityTarget := cfg.Transport.InitURL
 	if connectivityTarget == "" {
 		connectivityTarget = cfg.Transport.SuccessURL
@@ -984,6 +988,22 @@ func networkWait(cfg *config.MachineConfig) (int, time.Duration) {
 }
 
 // setupNetworkMode detects and configures the appropriate network mode.
+// lldpReceiveEnabled is LLDP_RECEIVE, on by default.
+func lldpReceiveEnabled(cfg *config.MachineConfig) bool {
+	return config.BoolOr(cfg.Network.LLDPReceive, true)
+}
+
+// startLLDPReceive logs and records the LLDP neighbors of every physical
+// NIC for the rest of the run. The legacy ramdisk only sends LLDP.
+func startLLDPReceive(ctx context.Context) {
+	nics, err := network.DetectPhysicalNICsContext(ctx)
+	if err != nil || len(nics) == 0 {
+		slog.Warn("LLDP receive not started: no physical NICs", "error", err)
+		return
+	}
+	lldp.Receive(ctx, nics, slog.With("component", "lldp"))
+}
+
 // defaultNICWaitSeconds is the wait for configured NICs without
 // NIC_WAIT_SECONDS.
 const defaultNICWaitSeconds = 30

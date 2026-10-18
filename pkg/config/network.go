@@ -105,6 +105,10 @@ type NetworkConfig struct {
 	// systemd-networkd with netplan "emit-lldp: true" (GoBGP).
 	EmitLLDP string `yaml:"emitLLDP" json:"emitLLDP"`
 
+	// LLDPReceive listens for LLDP frames on every physical NIC, logs the
+	// neighbors and adds them to the inventory report. Unset (nil) means on.
+	LLDPReceive *bool `yaml:"lldpReceive,omitempty" json:"lldpReceive,omitempty"`
+
 	// IPForwarding and IPv6Forwarding set the forwarding sysctls (GoBGP).
 	// Unset (nil) means the frr.conf "[no] ip[v6] forwarding", else IPv4 on
 	// and IPv6 off, like the legacy ramdisk.

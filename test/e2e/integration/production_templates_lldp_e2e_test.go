@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
@@ -114,4 +115,98 @@ func TestProdTplLLDP(t *testing.T) {
 			}
 		}
 	}
+}
+
+// prodtplLLDPTLVs lists the TLV types of a frame in their order, so an
+// extra or missing TLV shows.
+func prodtplLLDPTLVs(frame []byte) string {
+	pkt := gopacket.NewPacket(frame, layers.LayerTypeEthernet, gopacket.Default)
+	l, _ := pkt.Layer(layers.LayerTypeLinkLayerDiscovery).(*layers.LinkLayerDiscovery)
+	if l == nil {
+		return "none"
+	}
+	types := []string{"1", "2", "3"} // chassis ID, port ID, TTL
+	for _, v := range l.Values {
+		types = append(types, fmt.Sprint(uint8(v.Type)))
+	}
+	return strings.Join(types, ",")
+}
+
+// prodtplNodeLLDP returns the MAC of a NIC, the machine ID and the hostname
+// of a lab container.
+func prodtplNodeLLDP(t *testing.T, container, nic string) (mac, id, host string) {
+	t.Helper()
+	idFile := "/run/booty/machine-id"
+	if container == prodtplNetworkd {
+		idFile = "/etc/machine-id"
+	}
+	var out [3]string
+	for i, args := range [][]string{{"cat", "/sys/class/net/" + nic + "/address"}, {"cat", idFile}, {"hostname"}} {
+		o, err := prodtplExec(context.Background(), container, args...)
+		if err != nil {
+			t.Fatalf("%s %v: %v", container, args, err)
+		}
+		out[i] = strings.TrimSpace(o)
+	}
+	return out[0], out[1], out[2]
+}
+
+// BOOTy sends the frame that systemd-networkd 249 sends with
+// EmitLLDP=yes: on the same leaf, the frame of the networkd node and the
+// frame of BOOTy are the same once the MAC, the machine ID, the interface
+// name and the hostname are replaced, with the same TLVs in the same
+// order.
+func TestProdTplLLDPLikeNetworkd(t *testing.T) {
+	norm := func(frame []byte, mac, id, nic, host string) string {
+		r := strings.NewReplacer(mac, "MAC", id, "MACHINE-ID", nic, "IFNAME", host, "HOSTNAME")
+		return r.Replace(prodtplLLDPView(frame)) + " tlvs=" + prodtplLLDPTLVs(frame)
+	}
+	capture := func(port string) []byte {
+		ctx, cancel := context.WithTimeout(context.Background(), prodtplTimeout)
+		defer cancel()
+		frame, err := prodtplLLDPFrame(ctx, port)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return frame
+	}
+	mac, id, host := prodtplNodeLLDP(t, prodtplNetworkd, "lldp0")
+	want := norm(capture("eth11"), mac, id, "lldp0", host)
+	nic := prodtplUplinks[0]
+	mac, id, host = prodtplNodeLLDP(t, prodtplBooty, nic)
+	if got := norm(capture(prodtplBootyNode.leafPorts[0]), mac, id, nic, host); got != want {
+		t.Errorf("BOOTy LLDP frame differs from networkd:\n  booty    %s\n  networkd %s", got, want)
+	}
+}
+
+// BOOTy receives LLDP on every physical NIC (LLDP_RECEIVE, on by
+// default): it logs the networkd node on lldp1 with its machine ID as
+// chassis ID, its port and its hostname.
+func TestProdTplLLDPReceive(t *testing.T) {
+	_, id, host := prodtplNodeLLDP(t, prodtplNetworkd, "lldp1")
+	want := []string{`msg="LLDP neighbor"`, "interface=lldp1", "chassisID=" + id, "portID=lldp1", "systemName=" + host}
+	ctx, cancel := context.WithTimeout(context.Background(), prodtplTimeout)
+	defer cancel()
+	for {
+		out, err := exec.CommandContext(ctx, "docker", "logs", prodtplBooty).CombinedOutput()
+		for _, line := range strings.Split(string(out), "\n") {
+			if containsAll(line, want) {
+				return
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("BOOTy did not log the networkd LLDP neighbor %v (%v)", want, err)
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
+func containsAll(s string, parts []string) bool {
+	for _, p := range parts {
+		if !strings.Contains(s, p) {
+			return false
+		}
+	}
+	return true
 }

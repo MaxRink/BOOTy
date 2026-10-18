@@ -96,6 +96,8 @@ network:
   noAcceptRA: "ens1f0np0,ens1f1np1"
   # emitLLDP (LLDP_EMIT): NICs that send LLDP like systemd-networkd.
   emitLLDP: "ens1f0np0,ens1f1np1"
+  # lldpReceive (LLDP_RECEIVE): listen for LLDP on every physical NIC; default true
+  lldpReceive: false
   # ipForwarding / ipv6Forwarding (IP_FORWARDING, IPV6_FORWARDING): the
   # forwarding sysctls (GoBGP).
   ipForwarding: false

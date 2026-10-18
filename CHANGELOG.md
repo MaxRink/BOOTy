@@ -275,6 +275,10 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   nht resolve-via-default` (off with datacenter). The FQDN capability
   carries the system host name like FRR; the new key `BGP_HOSTNAME` (YAML
   `network.bgp.hostname`) sets it.
+- BOOTy receives LLDP on every physical NIC, logs each new or changed
+  neighbor and reports the current neighbors in the hardware inventory
+  (`lldpNeighbors`). New key `LLDP_RECEIVE` (YAML `network.lldpReceive`, on by
+  default); the legacy ramdisk only sends LLDP.
 - GoBGP mode applies the netplan device settings of the provision VXLAN device,
   the bridge and the NICs like systemd-networkd (MTU, MAC, learning, ARP proxy,
   hairpin, link-local, `accept-ra`), and `frr.conf` `[no] ip[v6] forwarding`.
