@@ -391,7 +391,7 @@ rule of every key:
 | `BGP_HOSTNAME` | none: FRR ignores the `frr.conf` `hostname` line and sends the system host name | `network.bgp.hostname` | native only; unset keeps the system host name |
 | `LLDP_RECEIVE` | none: the legacy ramdisk does not receive LLDP | `network.lldpReceive` | native only; unset is on |
 | `LLDP_DISABLE_FW_AGENT` | none: the legacy ramdisk never touches the flag | `network.lldp.disableFirmwareAgent` | native only; unset is on (a deliberate deviation, see below); `false` leaves the flag alone |
-| `LLDP_PROFILE`, `LLDP_PORT_ID_FORMAT`, `LLDP_EMIT_ALL` | none | `network.lldp.profile`, `network.lldp.portIDFormat`, `network.lldp.emitAll` | native only; unset is the networkd identity on the `LLDP_EMIT` NICs |
+| `LLDP_PROFILE`, `LLDP_PORT_ID_FORMAT`, `LLDP_EMIT_ALL`, `LLDP_ANNOUNCE` | none | `network.lldp.profile`, `network.lldp.portIDFormat`, `network.lldp.emitAll`, `network.lldp.announce` | native only; unset is the networkd identity and TLVs on the `LLDP_EMIT` NICs |
 | `IP_FORWARDING`, `IPV6_FORWARDING` | `frr.conf` `[no] ip[v6] forwarding` | `network.ipForwarding`, `network.ipv6Forwarding` | native wins |
 
 ### Strict input and the accepted grammar
@@ -783,6 +783,35 @@ agent also stays off for the installed OS. Side effects:
 - An SR-IOV profile that sets `firmware.fwLLDPAgent` owns the flag of the
   ports it matches ([SR-IOV](sriov.md)). BOOTy's default leaves those ports
   alone, and the profile's value applies with its drift handling.
+
+### LLDP announce levels
+
+`LLDP_ANNOUNCE` (YAML `network.lldp.announce`) adds TLVs for operators
+(`show lldp neighbors detail` on the switch) and the switch LLDP-MIB. Each
+level has the TLVs of the one before. The identity profile is separate:
+`bm4x-cablecheck` keeps its port ID and system name at every level.
+
+| TLV | `parity` (default) | `standard` | `full` |
+|---|---|---|---|
+| Chassis ID, port ID, TTL, system name, capabilities | as networkd | the same | the same |
+| System description | `PRETTY_HOSTNAME` when set | `BOOTy <version> mode=<mode>` | adds `product=<vendor_product> uuid=<DMI UUID>` |
+| Port description | none (bm4x profile: interface name) | `<interface> <driver> <PCI address>` | the same |
+| Management address | none | up to 4 IPs of the NIC (link-local first) and its MAC, with the ifIndex | the same |
+| 802.3 MAC/PHY configuration/status | none | autonegotiation supported and enabled, as the driver reports it; MAU type 0 (unknown) | the same |
+| 802.3 maximum frame size | none | MTU + 18 | the same |
+| LLDP-MED capabilities and inventory | none | none | endpoint class I; hardware revision (DMI board version), firmware revision (BIOS version), software revision (BOOTy version), serial number, manufacturer, model, asset ID, each at most 32 bytes |
+
+Without an IEEE OUI that Telekom owns, BOOTy sends no organizationally
+specific TLVs of its own; the extra host data goes into the system
+description. `full` sends the DMI serial number to the switch, which the
+check result and the inventory leave out; [cable
+check](cable-check.md#host-identity-what-goes-where) has both decisions. TIA-1057
+has an endpoint send LLDP-MED TLVs only after it heard LLDP-MED from the
+network device. BOOTy sends them at once with `full`, as lldpd does with
+`-M`, so a switch that never starts LLDP-MED still gets the inventory; a
+strict MED switch may ignore them. With every string at its limit, a frame has about
+1.2 KB (`TestFrameBudget`), below the 1500-byte LLDPDU limit.
+`TestCableCheckAnnounce` checks that lldpd decodes the `full` TLVs.
 
 #### Port ID format
 

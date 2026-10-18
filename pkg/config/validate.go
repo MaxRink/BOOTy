@@ -152,6 +152,9 @@ func (c *Config) validatePrimaryEnums() []string {
 			return validateEnumLower(c.Network.Mode, "network.mode", "gobgp", "frr", "static", "dhcp", "links")
 		},
 		func() string {
+			return validateEnum(c.Network.LLDP.Announce, "network.lldp.announce (LLDP_ANNOUNCE)", lldp.AnnounceParity, lldp.AnnounceStandard, lldp.AnnounceFull)
+		},
+		func() string {
 			return validateEnum(c.Network.LLDP.Profile, "network.lldp.profile (LLDP_PROFILE)", lldp.ProfileNetworkd, lldp.ProfileBM4XCableCheck)
 		},
 		func() string { return validateLLDPPortIDFormat(&c.Network.LLDP) },

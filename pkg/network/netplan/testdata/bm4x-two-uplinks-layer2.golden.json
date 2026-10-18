@@ -316,6 +316,7 @@
   ],
   "LLDPProfile": "",
   "LLDPPortIDFormat": "",
+  "LLDPAnnounce": "",
   "LLDPEmitAll": false,
   "IPForwarding": false,
   "IPv6Forwarding": null,

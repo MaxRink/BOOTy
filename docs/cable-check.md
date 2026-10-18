@@ -148,6 +148,24 @@ Jackson writes for the Lombok getters `getBActual` and `getBExpected` of
 `ConnectionEntry`; verify them against a real bm4x job output before bm4x
 reads this report.
 
+## Host identity: what goes where
+
+Two decisions keep the machine serial number out of the default data:
+
+| Data | Default check result and inventory | LLDP `parity`, `standard` | LLDP `full` (opt-in) |
+|---|---|---|---|
+| Hostname | yes (`host.hostname`, diff `a.hostname`) | as the system name (`networkd` profile) | the same |
+| Product, DMI UUID | yes (`host.product`, `host.uuid`) | no | in the system description |
+| DMI serial number | no | no | LLDP-MED inventory |
+
+- The check result document (`linkcheck.Host`) and the hardware inventory
+  leave the serial number out. CAPRF and bm4x know it already, and the
+  documents go to more receivers (logs, sinks) than the switch.
+- `LLDP_ANNOUNCE=full` sends the serial number, the product and the UUID
+  to the switch, for operators on the switch CLI and in the LLDP-MIB. It is
+  opt-in; `parity` (the default) and `standard` send none of them. See
+  [LLDP announce levels](networking.md#lldp-announce-levels).
+
 ## Hold
 
 `CHECK_HOLD` (YAML `check.hold`) controls what check mode does after the

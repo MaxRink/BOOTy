@@ -131,6 +131,8 @@ func TestFrameNetworkdGolden(t *testing.T) {
 		for _, profile := range []string{"", ProfileNetworkd} {
 			info := tt.info
 			info.Profile = profile
+			info.Announce = map[string]string{"": "", ProfileNetworkd: AnnounceParity}[profile]
+			info.System = testSystem // only standard and full send it
 			b, err := Frame(tt.ifname, mac, &info)
 			if err != nil {
 				t.Fatal(err)

@@ -54,6 +54,10 @@ type Info struct {
 	// CarrierOnly skips NICs without carrier instead of trying to send
 	// (LLDP_EMIT_ALL). The bm4x-cablecheck profile always does.
 	CarrierOnly bool
+	// Announce is the announce level; "" is AnnounceParity. System is the
+	// host data that the standard and full levels send.
+	Announce string
+	System   System
 }
 
 func (i *Info) carrierOnly() bool {
@@ -64,7 +68,7 @@ func (i *Info) carrierOnly() bool {
 // hostname like systemd. Without a machine ID (it could not be written)
 // the frames use the NIC MAC as chassis ID, a BOOTy extension.
 func SystemInfo() Info {
-	info := Info{MachineID: machineID()}
+	info := Info{MachineID: machineID(), System: readSystem()}
 	info.SystemName, _ = os.Hostname()
 	if b, err := os.ReadFile("/etc/machine-info"); err == nil {
 		for _, l := range strings.Split(string(b), "\n") {
@@ -131,6 +135,9 @@ func Frame(ifname string, mac net.HardwareAddr, info *Info) ([]byte, error) {
 		values = append(values, tlv(layers.LLDPTLVSysDescription, info.PrettyHostname))
 	}
 	values = append(values, layers.LinkLayerDiscoveryValue{Type: layers.LLDPTLVSysCapabilities, Length: 4, Value: caps})
+	if info.Announce == AnnounceStandard || info.Announce == AnnounceFull {
+		values = announce(values, ifname, mac, info)
+	}
 	return frame(ifname, mac, info, txTTL, values)
 }
 

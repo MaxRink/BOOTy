@@ -1309,7 +1309,7 @@ func (u *UnderlayTier) startLLDP() {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	info := lldp.SystemInfo()
-	info.Profile, info.PortIDFormat = u.cfg.LLDPProfile, u.cfg.LLDPPortIDFormat
+	info.Profile, info.PortIDFormat, info.Announce = u.cfg.LLDPProfile, u.cfg.LLDPPortIDFormat, u.cfg.LLDPAnnounce
 	wait := lldp.Emit(ctx, u.cfg.EmitLLDP, &info, u.log.With("component", "lldp"))
 	u.stopLLDP = func() {
 		cancel()

@@ -129,6 +129,7 @@ type Config struct {
 	EmitLLDP         []string
 	LLDPProfile      string
 	LLDPPortIDFormat string
+	LLDPAnnounce     string
 	IPForwarding     *bool
 	IPv6Forwarding   *bool
 	// InstallRoutes runs the FIB writer, like zebra.
@@ -221,6 +222,7 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		EmitLLDP:             emitLLDP(netCfg),
 		LLDPProfile:          netCfg.LLDPProfile,
 		LLDPPortIDFormat:     netCfg.LLDPPortIDFormat,
+		LLDPAnnounce:         netCfg.LLDPAnnounce,
 		IPForwarding:         netCfg.IPForwarding,
 		IPv6Forwarding:       netCfg.IPv6Forwarding,
 		RouteMaps:            netCfg.BGPRouteMaps,

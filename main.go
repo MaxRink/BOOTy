@@ -945,6 +945,8 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 		return noopNetworkMode{}, func() {}, nil
 	}
 
+	lldp.SetRunMode(cfg.Mode) // for the system description of LLDP_ANNOUNCE
+
 	// Before the network setup: a driver may reset the port when the flag
 	// changes, which would drop BGP sessions set up before.
 	if cfg.DisableNICFirmwareLLDP() {
@@ -1299,7 +1301,7 @@ func startLLDPEmitAll(ctx context.Context, l *config.LLDPConfig) {
 		return
 	}
 	info := lldp.SystemInfo()
-	info.Profile, info.PortIDFormat = l.Profile, l.PortIDFormat
+	info.Profile, info.PortIDFormat, info.Announce = l.Profile, l.PortIDFormat, l.Announce
 	info.CarrierOnly = true
 	lldp.Emit(ctx, nics, &info, slog.With("component", "lldp"))
 }
@@ -1492,6 +1494,7 @@ func networkConfigFromMachineConfig(cfg *config.MachineConfig) *network.Config {
 		EmitLLDP:                splitList(cfg.Network.EmitLLDP),
 		LLDPProfile:             cfg.Network.LLDP.Profile,
 		LLDPPortIDFormat:        cfg.Network.LLDP.PortIDFormat,
+		LLDPAnnounce:            cfg.Network.LLDP.Announce,
 		LLDPEmitAll:             cfg.Network.LLDP.EmitAllNICs(),
 		IPForwarding:            cfg.Network.IPForwarding,
 		IPv6Forwarding:          cfg.Network.IPv6Forwarding,

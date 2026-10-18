@@ -6,11 +6,12 @@ import (
 )
 
 func TestCableCheckVars(t *testing.T) {
-	cfg, err := ParseVars(strings.NewReader("LLDP_PROFILE=bm4x-cablecheck\nLLDP_EMIT_ALL=false\n"))
+	cfg, err := ParseVars(strings.NewReader("LLDP_PROFILE=bm4x-cablecheck\nLLDP_EMIT_ALL=false\nLLDP_ANNOUNCE=full\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Network.LLDP.Profile != "bm4x-cablecheck" || cfg.Network.LLDP.EmitAll == nil || *cfg.Network.LLDP.EmitAll {
+	if cfg.Network.LLDP.Profile != "bm4x-cablecheck" || cfg.Network.LLDP.EmitAll == nil || *cfg.Network.LLDP.EmitAll ||
+		cfg.Network.LLDP.Announce != "full" {
 		t.Fatalf("lldp = %+v", cfg.Network.LLDP)
 	}
 	cfg, err = ParseVars(strings.NewReader("LLDP_PROFILE=bm4x-cablecheck\nLLDP_PORT_ID_FORMAT=mac-string-dotted\n"))

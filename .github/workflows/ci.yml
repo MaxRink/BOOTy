@@ -1774,7 +1774,8 @@ jobs:
             TestCableCheckHold \
             TestCableCheckReceive \
             TestCableCheckLabVars \
-            TestCableCheckDiff; do
+            TestCableCheckDiff \
+            TestCableCheckAnnounce; do
             if ! grep -q "^--- PASS: ${expected} " e2e-cablecheck.log; then
               echo "::error::${expected} did not pass"
               exit 1

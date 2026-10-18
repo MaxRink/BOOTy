@@ -219,3 +219,18 @@ func TestValidateCablingCheck(t *testing.T) {
 		t.Error("unknown expectedCabling key accepted")
 	}
 }
+
+func TestValidateLLDPAnnounce(t *testing.T) {
+	for _, a := range []string{"", "parity", "standard", "full"} {
+		c := &Config{}
+		c.Network.LLDP.Announce = a
+		if err := c.Validate(); err != nil {
+			t.Errorf("announce %q: %v", a, err)
+		}
+	}
+	c := &Config{}
+	c.Network.LLDP.Announce = "verbose"
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), `network.lldp.announce (LLDP_ANNOUNCE) "verbose"`) {
+		t.Fatalf("Validate = %v, want an LLDP_ANNOUNCE error", err)
+	}
+}

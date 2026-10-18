@@ -1399,6 +1399,7 @@ func applyNetworkStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"NETWORK_MODE":        &cfg.Network.Mode,
 		"LLDP_PROFILE":        &cfg.Network.LLDP.Profile,
 		"LLDP_PORT_ID_FORMAT": &cfg.Network.LLDP.PortIDFormat,
+		"LLDP_ANNOUNCE":       &cfg.Network.LLDP.Announce,
 		"VRF_NAME":            &cfg.Network.VRF.Name,
 		"vrf_name":            &cfg.Network.VRF.Name,
 		"BGP_PEER_MODE":       &cfg.Network.BGP.PeerMode,

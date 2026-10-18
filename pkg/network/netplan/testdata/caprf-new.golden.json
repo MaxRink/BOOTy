@@ -139,6 +139,7 @@
   "EmitLLDP": null,
   "LLDPProfile": "",
   "LLDPPortIDFormat": "",
+  "LLDPAnnounce": "",
   "LLDPEmitAll": false,
   "IPForwarding": null,
   "IPv6Forwarding": null,

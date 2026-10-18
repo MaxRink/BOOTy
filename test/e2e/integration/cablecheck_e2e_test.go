@@ -323,3 +323,65 @@ func TestCableCheckDiff(t *testing.T) {
 		t.Errorf("leaf01 at 10000 Mb/s full duplex on %d of eth1, eth2: %s", leaf, b)
 	}
 }
+
+// With LLDP_ANNOUNCE=full (lab vars), the leaf decodes the BOOTy system
+// description, the link-local management address, the maximum frame size
+// (MTU + 18), the autonegotiation status and the LLDP-MED inventory.
+func TestCableCheckAnnounce(t *testing.T) {
+	cablecheckStartBooty(t)
+	mtu, err := cablecheckExec(context.Background(), cablecheckBooty, "cat", "/sys/class/net/eth1/mtu")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got string
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	for {
+		out, err := cablecheckExec(ctx, cablecheckLeaf, "lldpcli", "-f", "json0", "show", "neighbors", "details", "ports", "eth1")
+		got = out
+		var doc struct {
+			LLDP []struct {
+				Interface []struct {
+					Chassis []struct {
+						Descr  []struct{ Value string } `json:"descr"`
+						MgmtIP []struct{ Value string } `json:"mgmt-ip"`
+					} `json:"chassis"`
+					Port []struct {
+						MFS     []struct{ Value string } `json:"mfs"`
+						Autoneg []struct {
+							Supported bool `json:"supported"`
+						} `json:"auto-negotiation"`
+					} `json:"port"`
+					MED []struct {
+						Inventory []struct {
+							Software []struct{ Value string } `json:"software"`
+						} `json:"inventory"`
+					} `json:"lldp-med"`
+				} `json:"interface"`
+			} `json:"lldp"`
+		}
+		if err == nil && json.Unmarshal([]byte(out), &doc) == nil && len(doc.LLDP) > 0 && len(doc.LLDP[0].Interface) > 0 {
+			i := doc.LLDP[0].Interface[0]
+			ok := len(i.Chassis) > 0 && len(i.Chassis[0].Descr) > 0 && strings.HasPrefix(i.Chassis[0].Descr[0].Value, "BOOTy ") &&
+				strings.Contains(i.Chassis[0].Descr[0].Value, "mode=check") &&
+				len(i.Chassis[0].MgmtIP) > 0 && strings.HasPrefix(i.Chassis[0].MgmtIP[0].Value, "fe80::") &&
+				len(i.Port) > 0 && len(i.Port[0].MFS) > 0 && i.Port[0].MFS[0].Value == fmt.Sprint(atoi(mtu)+18) &&
+				len(i.Port[0].Autoneg) > 0 && i.Port[0].Autoneg[0].Supported &&
+				len(i.MED) > 0 && len(i.MED[0].Inventory) > 0 && len(i.MED[0].Inventory[0].Software) > 0 &&
+				strings.HasPrefix(i.MED[0].Inventory[0].Software[0].Value, "BOOTy ")
+			if ok {
+				return
+			}
+		}
+		if ctx.Err() != nil {
+			t.Fatalf("leaf does not show the full announce TLVs (MTU %s):\n%s", strings.TrimSpace(mtu), got)
+		}
+		time.Sleep(time.Second)
+	}
+}
+
+func atoi(s string) int {
+	n := 0
+	_, _ = fmt.Sscan(strings.TrimSpace(s), &n)
+	return n
+}

@@ -194,6 +194,7 @@ type Config struct {
 	// sender, so the network stacks then send nothing themselves.
 	LLDPProfile      string
 	LLDPPortIDFormat string
+	LLDPAnnounce     string
 	LLDPEmitAll      bool
 	// IPForwarding and IPv6Forwarding set the forwarding sysctls; nil keeps
 	// the GoBGP default: IPv4 on, IPv6 off (the kernel default the legacy
