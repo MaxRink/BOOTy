@@ -541,6 +541,7 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   flavor now ships root, frr and frrvty, and the default build checks that
   frr resolves with the frrvty group (#794).
 - gobgp: a Type-3 route adds a BUM entry only with PMSI tunnel type ingress replication, like FRR (RFC 8365)
+- gobgp: a Type-2 IP that is also a Type-5 gateway keeps one bridge neighbor entry owned by the Type-2 route, the Type-5 entry comes back after the last Type-2 withdraw, and equal Type-2 routes of an IP take the lowest MAC (#784)
 - bfd: a detection time without packets forgets the remote discriminator in every state, and the peer's Demand mode stops the periodic packets (RFC 5880) (#749)
 - gobgp: a BFD Down in the second a BGP session came up does not reset it, like
   bgpd; a route reflector with `update-source` re-keys BFD when its side comes

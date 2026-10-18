@@ -146,6 +146,9 @@ type OverlayTier struct {
 	// for each IP of a Type-2 MAC/IP route, like zebra installs remote
 	// neighbors on the SVI of an L2VNI.
 	type2Neigh map[string]string
+	// type2IPMACs indexes the MACs with a live MAC/IP route of each IP, so
+	// an update looks only at the routes of its IP.
+	type2IPMACs map[string]map[string]struct{}
 	// type5GatewayMAC tracks Type-5 gateway IP → router MAC mappings so
 	// withdrawals without extended communities can still delete the neighbor.
 	// type5GatewayMu serializes gateway MAC/reference updates and the refcount
@@ -323,7 +326,7 @@ func (o *OverlayTier) Teardown(_ context.Context) error {
 	o.type2Stopped = true
 	o.removeType2FDB()
 	o.removeType2Neighbors()
-	o.type2Paths, o.type2FDB, o.type2Neigh = nil, nil, nil
+	o.type2Paths, o.type2FDB, o.type2Neigh, o.type2IPMACs = nil, nil, nil, nil
 	o.type2Mu.Unlock()
 
 	if o.gatewayFDB != nil {
@@ -1090,14 +1093,7 @@ func (o *OverlayTier) applyType5GatewayIPPath(p *type5Path, gw, vtepIP net.IP) (
 func (o *OverlayTier) type2HasIP(ip net.IP) bool {
 	o.type2Mu.Lock()
 	defer o.type2Mu.Unlock()
-	for _, paths := range o.type2Paths {
-		for _, p := range paths {
-			if p.ip.Equal(ip) {
-				return true
-			}
-		}
-	}
-	return false
+	return len(o.type2IPMACs[ip.String()]) > 0
 }
 
 // resolveType5Gateway installs or removes the Type-5 routes whose gateway
@@ -1335,18 +1331,32 @@ func (o *OverlayTier) setType5GatewayNeighbor(
 	if fdb == nil {
 		return false
 	}
-	if err := o.netlinkOps.NeighSet(neigh); err != nil {
-		o.log.Warn("failed to install type-5 gateway neighbor", "ip", gw, "mac", routerMAC, "error", err)
-		return false
+	// Lock order: type5PathsMu, type5GatewayMu, then type2Mu. The
+	// reference is stored under type2Mu, so a Type-2 withdraw of gw sees it.
+	o.type2Mu.Lock()
+	shared := o.type2OwnsNeighbor(gw)
+	if !shared {
+		if err := o.netlinkOps.NeighSet(neigh); err != nil {
+			o.type2Mu.Unlock()
+			o.log.Warn("failed to install type-5 gateway neighbor", "ip", gw, "mac", routerMAC, "error", err)
+			return false
+		}
 	}
 	if err := o.netlinkOps.NeighSet(fdb); err != nil {
-		o.log.Warn("failed to install type-5 gateway FDB entry", "vtep", vtep, "mac", routerMAC, "error", err)
-		if delErr := o.netlinkOps.NeighDel(neigh); delErr != nil {
-			o.log.Debug("failed to roll back type-5 gateway neighbor", "ip", gw, "mac", routerMAC, "error", delErr)
+		if !shared {
+			if delErr := o.netlinkOps.NeighDel(neigh); delErr != nil {
+				o.log.Debug("failed to roll back type-5 gateway neighbor", "ip", gw, "mac", routerMAC, "error", delErr)
+			}
 		}
+		o.type2Mu.Unlock()
+		o.log.Warn("failed to install type-5 gateway FDB entry", "vtep", vtep, "mac", routerMAC, "error", err)
 		return false
 	}
-	o.replaceType5GatewayRef(link, prefix, gw, vtep, routerMAC)
+	oldRef, oldOK := o.storeType5GatewayRef(prefix, gw, vtep, routerMAC)
+	o.type2Mu.Unlock()
+	if oldOK && !sameType5GatewayRef(oldRef, newType5GatewayRef(gw, vtep, routerMAC)) {
+		o.deleteType5GatewayRefLocked(link, oldRef)
+	}
 	o.log.Info("installed type-5 gateway neighbor and FDB entry", "ip", gw, "vtep", vtep, "mac", routerMAC)
 	return true
 }
@@ -1419,14 +1429,12 @@ func (o *OverlayTier) clearType5GatewayNeighbor(link netlink.Link, prefix string
 	}
 }
 
-func (o *OverlayTier) replaceType5GatewayRef(link netlink.Link, prefix string, gw, vtep net.IP, routerMAC net.HardwareAddr) {
+func (o *OverlayTier) storeType5GatewayRef(prefix string, gw, vtep net.IP, routerMAC net.HardwareAddr) (type5GatewayRef, bool) {
 	ref := newType5GatewayRef(gw, vtep, routerMAC)
 	oldRef, oldOK := o.loadType5GatewayRef(prefix)
 	o.type5GatewayRefs.Store(prefix, ref)
 	o.type5GatewayMAC.Store(ref.gateway, append(net.HardwareAddr(nil), routerMAC...))
-	if oldOK && !sameType5GatewayRef(oldRef, ref) {
-		o.deleteType5GatewayRefLocked(link, oldRef)
-	}
+	return oldRef, oldOK
 }
 
 func (o *OverlayTier) deleteType5GatewayRefLocked(link netlink.Link, ref type5GatewayRef) bool {
@@ -1442,12 +1450,19 @@ func (o *OverlayTier) deleteType5GatewayRefLocked(link netlink.Link, ref type5Ga
 	deleteGateway := !o.hasType5GatewayRef(ref.gateway)
 	deleteFDB := !o.hasType5GatewayFDBRef(ref.vtep, ref.routerMAC)
 	if deleteGateway {
-		if neigh := buildType5GatewayNeighbor(link, gw, ref.routerMAC); neigh == nil {
+		o.type2Mu.Lock()
+		switch neigh := buildType5GatewayNeighbor(link, gw, ref.routerMAC); {
+		case neigh == nil:
 			deleted = false
-		} else if err := o.netlinkOps.NeighDel(neigh); err != nil {
-			o.log.Debug("failed to delete type-5 gateway neighbor", "ip", gw, "mac", ref.routerMAC, "error", err)
-			deleted = false
+		case o.type2OwnsNeighbor(gw):
+			// The entry is the one of a Type-2 route now; it stays.
+		default:
+			if err := o.netlinkOps.NeighDel(neigh); err != nil {
+				o.log.Debug("failed to delete type-5 gateway neighbor", "ip", gw, "mac", ref.routerMAC, "error", err)
+				deleted = false
+			}
 		}
+		o.type2Mu.Unlock()
 	}
 	if deleteFDB {
 		if fdb := o.buildType5GatewayFDB(vtep, ref.routerMAC); fdb == nil {
@@ -1711,7 +1726,7 @@ func (o *OverlayTier) handleType2Update(route *apipb.EVPNMACIPAdvertisementRoute
 		return
 	}
 	if withdraw {
-		delete(o.type2Paths[macStr], key)
+		o.forgetType2Path(macStr, key, ip)
 	} else {
 		o.rememberType2Path(macStr, key, type2Path{vtep: remoteIP, seq: mm.seq, sticky: mm.sticky, ip: ip})
 	}
@@ -1734,15 +1749,7 @@ func (o *OverlayTier) handleType2Update(route *apipb.EVPNMACIPAdvertisementRoute
 // holds type2Mu.
 func (o *OverlayTier) syncType2Neighbor(ip net.IP) {
 	ipStr := ip.String()
-	var best *type2Path
-	var bestMAC string
-	for mac, paths := range o.type2Paths {
-		for _, p := range paths {
-			if p.ip.Equal(ip) && (best == nil || p.better(*best)) {
-				best, bestMAC = &p, mac
-			}
-		}
-	}
+	bestMAC := o.bestType2MAC(ip)
 	installed := o.type2Neigh[ipStr]
 	if bestMAC == installed {
 		return
@@ -1753,11 +1760,19 @@ func (o *OverlayTier) syncType2Neighbor(ip net.IP) {
 		return
 	}
 	if bestMAC == "" {
+		delete(o.type2Neigh, ipStr)
+		// The kernel keys the entry by IP only: when a Type-5 route still
+		// uses ip as its gateway, its entry comes back instead.
+		if rmac := o.type5GatewayNeighborMAC(ip); rmac != nil {
+			if err := o.netlinkOps.NeighSet(buildType5GatewayNeighbor(link, ip.To4(), rmac)); err != nil {
+				o.log.Warn("failed to restore type-5 gateway neighbor", "ip", ip, "mac", rmac, "error", err)
+			}
+			return
+		}
 		mac, _ := net.ParseMAC(installed)
 		if err := o.netlinkOps.NeighDel(type2Neighbor(link, ip, mac)); err != nil {
 			o.log.Debug("failed to delete type-2 neighbor", "ip", ip, "mac", installed, "error", err)
 		}
-		delete(o.type2Neigh, ipStr)
 		return
 	}
 	mac, _ := net.ParseMAC(bestMAC)
@@ -1770,6 +1785,23 @@ func (o *OverlayTier) syncType2Neighbor(ip net.IP) {
 		o.type2Neigh = map[string]string{}
 	}
 	o.type2Neigh[ipStr] = bestMAC
+}
+
+// bestType2MAC returns the MAC of the best live MAC/IP route with ip, ""
+// for none. Equal routes (a duplicate IP from one VTEP with the same
+// sequence number) take the lowest MAC, so map order does not move the
+// entry. The caller holds type2Mu.
+func (o *OverlayTier) bestType2MAC(ip net.IP) string {
+	var best *type2Path
+	var bestMAC string
+	for mac := range o.type2IPMACs[ip.String()] {
+		for _, p := range o.type2Paths[mac] {
+			if p.ip.Equal(ip) && (best == nil || p.better(*best) || (!best.better(p) && mac < bestMAC)) {
+				best, bestMAC = &p, mac
+			}
+		}
+	}
+	return bestMAC
 }
 
 // type2Neighbor is the bridge neighbor entry of a remote MAC/IP route,
@@ -1787,6 +1819,40 @@ func type2Neighbor(link netlink.Link, ip net.IP, mac net.HardwareAddr) *netlink.
 		IP:           ip,
 		HardwareAddr: mac,
 	}
+}
+
+// type5GatewayNeighborMAC returns the router MAC of the Type-5 gateway
+// neighbor entry for an IPv4 ip, nil when no Type-5 route uses it. The
+// caller holds type2Mu; the Type-5 side updates its references under
+// type2Mu too.
+func (o *OverlayTier) type5GatewayNeighborMAC(ip net.IP) net.HardwareAddr {
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return nil
+	}
+	key := gatewayKey(ip4)
+	if !o.hasType5GatewayRef(key) {
+		return nil
+	}
+	if v, ok := o.type5GatewayMAC.Load(key); ok {
+		if mac, ok := v.(net.HardwareAddr); ok && len(mac) == ethernetMACLength {
+			return mac
+		}
+	}
+	return nil
+}
+
+// type2OwnsNeighbor reports a Type-2 neighbor entry for the Type-5 gateway
+// gw. Both owners use the same kernel entry (bridge and IP, NeighDel
+// ignores the MAC), and the Type-2 one, a real IP to MAC binding, wins.
+// An IPv4-mapped gateway is an IPv6 entry of its own. The caller holds
+// type2Mu.
+func (o *OverlayTier) type2OwnsNeighbor(gw net.IP) bool {
+	if isMappedGateway(gw) {
+		return false
+	}
+	_, ok := o.type2Neigh[gw.String()]
+	return ok
 }
 
 // removeType2Neighbors deletes the neighbor entries of the Type-2 routes.
@@ -1816,6 +1882,37 @@ func (o *OverlayTier) rememberType2Path(mac, key string, p type2Path) {
 		o.type2Paths[mac] = map[string]type2Path{}
 	}
 	o.type2Paths[mac][key] = p
+	if p.ip == nil {
+		return
+	}
+	if o.type2IPMACs == nil {
+		o.type2IPMACs = map[string]map[string]struct{}{}
+	}
+	ipStr := p.ip.String()
+	if o.type2IPMACs[ipStr] == nil {
+		o.type2IPMACs[ipStr] = map[string]struct{}{}
+	}
+	o.type2IPMACs[ipStr][mac] = struct{}{}
+}
+
+// forgetType2Path removes a withdrawn Type-2 path, and the MAC from the
+// index of ip when no other route of the MAC has ip. The caller holds
+// type2Mu.
+func (o *OverlayTier) forgetType2Path(mac, key string, ip net.IP) {
+	delete(o.type2Paths[mac], key)
+	if ip == nil {
+		return
+	}
+	for _, p := range o.type2Paths[mac] {
+		if p.ip.Equal(ip) {
+			return
+		}
+	}
+	ipStr := ip.String()
+	delete(o.type2IPMACs[ipStr], mac)
+	if len(o.type2IPMACs[ipStr]) == 0 {
+		delete(o.type2IPMACs, ipStr)
+	}
 }
 
 // syncType2FDB points the FDB entry of mac at its best live route, or
