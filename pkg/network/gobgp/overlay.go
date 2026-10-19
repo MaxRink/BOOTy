@@ -869,14 +869,7 @@ func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 
 	switch {
 	case nlri.GetEvpnIpPrefix() != nil:
-		route := nlri.GetEvpnIpPrefix()
-		routerMAC, err := extractRouterMAC(p)
-		routerMACValid := true
-		if err != nil {
-			o.log.Debug("type-5 route with invalid router MAC", "error", err)
-			routerMACValid = false
-		}
-		o.handleType5RouteWithRouterMACState(route, vtep, routerMAC, routerMACValid, withdraw)
+		o.processType5Update(p, nlri.GetEvpnIpPrefix(), vtep, withdraw)
 	case nlri.GetEvpnMacadv() != nil:
 		if o.cfg.EnableL2 {
 			o.handleType2Update(nlri.GetEvpnMacadv(), vtep, macMobilityOf(p), withdraw)
@@ -904,6 +897,55 @@ func (o *OverlayTier) handleType3Path(p *apipb.Path, route *apipb.EVPNInclusiveM
 	o.handleType3Route(route, vtep, withdraw)
 }
 
+// processType5Update applies the receive rules of a Type-5 path and hands
+// it on. An unusable update is a withdraw of its route key.
+func (o *OverlayTier) processType5Update(p *apipb.Path, route *apipb.EVPNIPPrefixRoute, vtep string, withdraw bool) {
+	routerMAC, err := extractRouterMAC(p)
+	converted := false
+	if reason := type5Unusable(route, err); reason != "" && !withdraw {
+		// The update replaces the path of the same route key, so the
+		// old path goes too, as for a withdraw (RFC 7606 section 2).
+		o.log.Warn("type-5 route treated as withdraw", "prefix", route.GetIpPrefix(), "len", route.GetIpPrefixLen(),
+			"vtep", vtep, "reason", reason)
+		withdraw, converted = true, true
+	}
+	if err != nil {
+		routerMAC = nil
+	}
+	o.handleType5Update(route, vtep, routerMAC, err == nil, withdraw, converted)
+}
+
+// type5Unusable returns why a received Type-5 route must not be used, or
+// "" when BOOTy can install it. The rules follow FRR process_type5_route
+// (bgpd/bgp_evpn.c) and zebra, which is BOOTy's behavior reference, and
+// RFC 9136 sections 3.1 and 3.2 where they agree (docs/rfc-compliance.md
+// lists each choice):
+//   - ESI and gateway IP both set: treat as withdraw (FRR and RFC).
+//   - A multicast or broadcast router MAC: treat as withdraw, also with a
+//     gateway IP (FRR; the RFC asks the same for an invalid MAC). A zero
+//     router MAC counts as absent (FRR).
+//   - Label 0 without a gateway IP: not installable. FRR accepts the route
+//     in BGP, but zebra sees a VNI that differs from the L3VNI and installs
+//     such a nexthop only on a single VXLAN device, which BOOTy does not
+//     use; the RFC treats it as withdraw when it has no overlay index.
+//   - An ESI overlay index with a label: installed through the BGP next
+//     hop, like FRR (the RFC asks for a Type-1 resolution first).
+func type5Unusable(route *apipb.EVPNIPPrefixRoute, macErr error) string {
+	esi := route.GetEsi()
+	esiSet := esi.GetType() != 0 || slices.ContainsFunc(esi.GetValue(), func(b byte) bool { return b != 0 })
+	gw := net.ParseIP(route.GetGwAddress())
+	gwSet := gw != nil && !gw.IsUnspecified()
+	switch {
+	case macErr != nil:
+		return "invalid router MAC: " + macErr.Error()
+	case esiSet && gwSet:
+		return "both ESI and gateway IP are set"
+	case !gwSet && route.GetLabel() == 0:
+		return "label is zero without a gateway IP overlay index"
+	}
+	return ""
+}
+
 // handleType5Route installs or removes a kernel route for an IP prefix
 // received via EVPN Type-5 (IP Prefix) route. This is how BOOTy learns
 // the default route (and any other prefixes) from the fabric.
@@ -917,6 +959,20 @@ func (o *OverlayTier) handleType5RouteWithRouterMACState(
 	routerMAC net.HardwareAddr,
 	routerMACValid bool,
 	withdraw bool,
+) {
+	o.handleType5Update(route, vtep, routerMAC, routerMACValid, withdraw, false)
+}
+
+// handleType5Update is handleType5RouteWithRouterMACState for an update that
+// may have been converted to a withdraw (RFC 7606 treat-as-withdraw): its
+// attributes are the invalid ones, so the withdraw uses the tracked path.
+func (o *OverlayTier) handleType5Update(
+	route *apipb.EVPNIPPrefixRoute,
+	vtep string,
+	routerMAC net.HardwareAddr,
+	routerMACValid bool,
+	withdraw bool,
+	converted bool,
 ) {
 	// Skip routes originated by this node (e.g., reflected back by the RR).
 	// Installing our own route would override the connected route and break
@@ -940,7 +996,7 @@ func (o *OverlayTier) handleType5RouteWithRouterMACState(
 	prefix, key := dst.String(), type5PathKey(route)
 	if withdraw {
 		// Always processed, so no route of ours stays behind.
-		o.withdrawType5Path(prefix, key, route, vtep, routerMAC)
+		o.withdrawType5Path(prefix, key, route, vtep, routerMAC, converted)
 		return
 	}
 	if o.isBlackhole(prefix) {
@@ -1005,11 +1061,22 @@ func (o *OverlayTier) addType5Path(prefix string, path *type5Path) {
 // withdrawType5Path removes a path. If it was the installed one, the route
 // moves to a remaining path, or is deleted when none can be installed.
 // The caller holds type5PathsMu.
-func (o *OverlayTier) withdrawType5Path(prefix, key string, route *apipb.EVPNIPPrefixRoute, vtep string, routerMAC net.HardwareAddr) {
+func (o *OverlayTier) withdrawType5Path(prefix, key string, route *apipb.EVPNIPPrefixRoute, vtep string, routerMAC net.HardwareAddr,
+	converted bool,
+) {
 	old, tracked := o.type5Paths[prefix][key]
-	installedRoute := route
-	if tracked {
-		installedRoute = old.route
+	switch {
+	case tracked:
+		// Tear down what the tracked path installed: a converted update
+		// carries the invalid attributes (gateway, router MAC), and a
+		// withdraw may carry none.
+		route, vtep = old.route, old.vtep
+		if converted || len(old.routerMAC) != 0 {
+			routerMAC = old.routerMAC
+		}
+	case converted:
+		// Nothing of this route key is installed.
+		return
 	}
 	remaining := o.forgetType5Path(prefix, key)
 	active, known := o.type5Active[prefix]
@@ -1037,7 +1104,7 @@ func (o *OverlayTier) withdrawType5Path(prefix, key string, route *apipb.EVPNIPP
 		o.removeType5Prefix(state)
 		return
 	}
-	if type5OverlayGateway(installedRoute) != nil {
+	if type5OverlayGateway(route) != nil {
 		// Installed without gateway state: the neighbor entry of the
 		// gateway IP belongs to its Type-2 route.
 		o.deleteType5KernelRoute(state)
@@ -2275,6 +2342,10 @@ func parseRouterMAC(routerMAC string) (net.HardwareAddr, error) {
 	if len(mac) != ethernetMACLength {
 		return nil, fmt.Errorf("parse router MAC %s: expected 48-bit MAC, got %d bytes", routerMAC, len(mac))
 	}
+	// RFC 9136 section 3.2: a broadcast, multicast or zero MAC is invalid.
+	if mac[0]&1 != 0 || bytes.Equal(mac, make(net.HardwareAddr, ethernetMACLength)) {
+		return nil, fmt.Errorf("router MAC %s is not a unicast MAC", routerMAC)
+	}
 	return mac, nil
 }
 
@@ -2398,6 +2469,9 @@ func routerMACInCommunities(communities []*apipb.ExtendedCommunity) (net.Hardwar
 		rmac := c.GetRouterMac()
 		if rmac == nil {
 			continue
+		}
+		if m, err := net.ParseMAC(rmac.GetMac()); err == nil && bytes.Equal(m, make(net.HardwareAddr, ethernetMACLength)) {
+			return nil, nil // FRR: a zero router MAC is no router MAC
 		}
 		mac, err := parseRouterMAC(rmac.GetMac())
 		if err != nil {
