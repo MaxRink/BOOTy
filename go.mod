@@ -9,6 +9,7 @@ require (
 	github.com/google/go-containerregistry v0.22.1
 	github.com/google/go-tpm v0.9.8
 	github.com/google/gopacket v1.1.19
+	github.com/gopacket/gopacket v1.7.4
 	github.com/klauspost/compress v1.20.3
 	github.com/osrg/gobgp/v4 v4.10.0
 	github.com/pierrec/lz4/v4 v4.1.33
@@ -62,3 +63,9 @@ require (
 // GoBGP 4.10.0 plus the BOOTy fixes; why, and when to drop it:
 // docs/networking.md#gobgp-version-and-fork
 replace github.com/osrg/gobgp/v4 => github.com/MaxRink/gobgp/v4 v4.10.0-booty.10
+
+// gopacket 1.7.4 and netlink 1.3.1 plus the BOOTy fixes; why, and when to
+// drop them: docs/dependency-forks.md
+replace github.com/gopacket/gopacket => github.com/MaxRink/gopacket v1.7.4-booty.2
+
+replace github.com/vishvananda/netlink => github.com/MaxRink/netlink v1.3.1-booty.1

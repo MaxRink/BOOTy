@@ -12,6 +12,9 @@ updates:
       # upstream bump would not change the build. Move the fork tag by hand:
       # docs/networking.md#gobgp-version-and-fork
       - dependency-name: github.com/osrg/gobgp/v4
+      # Same for the gopacket and netlink forks: docs/dependency-forks.md
+      - dependency-name: github.com/gopacket/gopacket
+      - dependency-name: github.com/vishvananda/netlink
 
   - package-ecosystem: docker
     # Dockerfile discovery is not recursive. List each independent context so

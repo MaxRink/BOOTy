@@ -6,8 +6,6 @@ import (
 	"encoding/binary"
 	"reflect"
 	"testing"
-
-	"github.com/google/gopacket/layers"
 )
 
 // The fixtures are LLDPDUs built TLV by TLV from IEEE 802.1AB-2016 (clause
@@ -174,7 +172,7 @@ func TestIDString(t *testing.T) {
 // bm4xRepro is a frame from the review that crashed BOOTy (PID 1): an 802.1
 // VLAN name TLV with 2 data bytes. gopacket checks 2 bytes and reads from
 // byte 3.
-// It has no TTL TLV, so the 802.1AB order check drops it before decoding;
+// It has no TTL TLV, so the decoder drops it (802.1AB TLV order);
 // bm4xReproTTL is the same frame with a TTL TLV, which reaches the org TLV
 // decoders.
 const (
@@ -182,8 +180,9 @@ const (
 	bm4xReproTTL = "\x02\x03000\x04\x0200\x06\x02\x00\x78\xfe\x06\x00\x80\xc2\x0300\x00\x00"
 )
 
-// Org TLVs that gopacket's decoders would read past the end of are
-// skipped; the rest of the frame still decodes.
+// Org TLVs that gopacket's decoders read past the end of (gopacket fork,
+// docs/dependency-forks.md) give an error, not a panic; the rest of the
+// frame still decodes.
 func TestParseLLDPShortOrgTLVs(t *testing.T) {
 	if n := parseLLDP([]byte(bm4xRepro), "eth0"); n != nil {
 		t.Fatalf("repro without TTL: %+v, want dropped", n)
@@ -193,9 +192,12 @@ func TestParseLLDPShortOrgTLVs(t *testing.T) {
 	}
 	base := nxosFrame[: len(nxosFrame)-2 : len(nxosFrame)-2] // without the end TLV; appends copy
 	for name, bad := range map[string][]byte{
-		"802.1 VLAN name, 2 bytes":          org(oui8021, 3, 0x00, 0x0a),
-		"802.1 protocol identity, short":    org(oui8021, 4, 0x05, 0x01),
-		"802.1 protocol identity, empty":    org(oui8021, 4),
+		"802.1 VLAN name, 2 bytes":       org(oui8021, 3, 0x00, 0x0a),
+		"802.1 protocol identity, short": org(oui8021, 4, 0x05, 0x01),
+		"802.1 protocol identity, empty": org(oui8021, 4),
+		// gopacket v1.7.4 reads 8 bytes here: one past the TLV, within the
+		// slice capacity, so it does not panic and the case passes there
+		// too. It stays to pin that the 802.3 fields after it still decode.
 		"802.3 MDI power, 7 bytes":          org(oui8023, 2, 0x0f, 0x01, 0x03, 0x00, 0x00, 0x00, 0x00),
 		"MED civic location, 3 bytes after": org(ouiMED, 3, 0x02, 0x00, 0x55, 0x53),
 	} {
@@ -251,39 +253,5 @@ func TestParseLLDPCapabilitiesTLV(t *testing.T) {
 	n = parseLLDP(cat(parts...), "eth0")
 	if n == nil || n.Capabilities != nil || n.EnabledCapabilities != nil {
 		t.Fatalf("without the TLV: %+v", n)
-	}
-}
-
-// The length thresholds of orgTLVSafe, one below and at each limit.
-func TestOrgTLVSafe(t *testing.T) {
-	o := func(oui layers.IEEEOUI, sub uint8, n int, first byte) layers.LLDPOrgSpecificTLV {
-		info := make([]byte, n)
-		if n > 0 {
-			info[0] = first
-		}
-		return layers.LLDPOrgSpecificTLV{OUI: oui, SubType: sub, Info: info}
-	}
-	civic := byte(layers.LLDPLocationFormatAddress)
-	for _, tt := range []struct {
-		name string
-		tlv  layers.LLDPOrgSpecificTLV
-		want bool
-	}{
-		{"VLAN name 2", o(layers.IEEEOUI8021, layers.LLDP8021SubtypeVLANName, 2, 0), false},
-		{"VLAN name 3", o(layers.IEEEOUI8021, layers.LLDP8021SubtypeVLANName, 3, 0), true},
-		{"protocol identity empty", o(layers.IEEEOUI8021, layers.LLDP8021SubtypeProtocolIdentity, 0, 0), false},
-		{"protocol identity length 3, 3 bytes", o(layers.IEEEOUI8021, layers.LLDP8021SubtypeProtocolIdentity, 3, 3), false},
-		{"protocol identity length 3, 4 bytes", o(layers.IEEEOUI8021, layers.LLDP8021SubtypeProtocolIdentity, 4, 3), true},
-		{"MDI power 3", o(layers.IEEEOUI8023, layers.LLDP8023SubtypeMDIPower, 3, 0), true},
-		{"MDI power 7", o(layers.IEEEOUI8023, layers.LLDP8023SubtypeMDIPower, 7, 0), false},
-		{"MDI power 8", o(layers.IEEEOUI8023, layers.LLDP8023SubtypeMDIPower, 8, 0), true},
-		{"civic location 4", o(layers.IEEEOUIMedia, uint8(layers.LLDPMediaTypeLocation), 4, civic), false},
-		{"civic location 5", o(layers.IEEEOUIMedia, uint8(layers.LLDPMediaTypeLocation), 5, civic), true},
-		{"ECS location 2", o(layers.IEEEOUIMedia, uint8(layers.LLDPMediaTypeLocation), 2, byte(layers.LLDPLocationFormatECS)), true},
-		{"other TLV", o(layers.IEEEOUI8023, layers.LLDP8023SubtypeMTU, 0, 0), true},
-	} {
-		if got := orgTLVSafe(tt.tlv); got != tt.want {
-			t.Errorf("%s: %v, want %v", tt.name, got, tt.want)
-		}
 	}
 }

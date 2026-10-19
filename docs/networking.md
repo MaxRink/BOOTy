@@ -533,6 +533,9 @@ on purpose although they are not in the templates:
 
 ## GoBGP version and fork
 
+BOOTy's other dependency forks (gopacket, netlink) are listed in
+[Dependency forks](dependency-forks.md).
+
 GoBGP mode embeds GoBGP 4.10.0 through a fork tag:
 `replace github.com/osrg/gobgp/v4 => github.com/MaxRink/gobgp/v4 v4.10.0-booty.10`
 in `go.mod`. The tag is v4.10.0 with thirteen fixes and four features. Do

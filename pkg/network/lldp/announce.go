@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/google/gopacket/layers"
+	"github.com/gopacket/gopacket/layers"
 
 	"github.com/telekom/BOOTy/pkg/buildinfo"
 	"github.com/telekom/BOOTy/pkg/network/ethtool"

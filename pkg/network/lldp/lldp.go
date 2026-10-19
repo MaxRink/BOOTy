@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/gopacket/layers"
 	"golang.org/x/sys/unix"
 )
 
@@ -179,39 +178,6 @@ func DiscoverAll(ctx context.Context, ifaces []string, timeout time.Duration) []
 		}
 	}
 	return neighbors
-}
-
-// mandatoryTLVsFirst reports whether the LLDPDU starts with the Chassis ID,
-// Port ID and TTL TLVs, in this order and each within the data, and has
-// no second instance of them before the End TLV (IEEE 802.1AB; gopacket
-// would let a second TTL TLV overwrite the first).
-func mandatoryTLVsFirst(data []byte) bool {
-	for _, want := range []layers.LLDPTLVType{layers.LLDPTLVChassisID, layers.LLDPTLVPortID, layers.LLDPTLVTTL} {
-		if len(data) < 2 {
-			return false
-		}
-		typ := layers.LLDPTLVType(data[0] >> 1)
-		n := int(data[0]&1)<<8 | int(data[1])
-		if typ != want || len(data) < 2+n || (typ == layers.LLDPTLVTTL && n < 2) {
-			return false
-		}
-		data = data[2+n:]
-	}
-	for len(data) >= 2 {
-		typ := layers.LLDPTLVType(data[0] >> 1)
-		n := int(data[0]&1)<<8 | int(data[1])
-		switch typ {
-		case layers.LLDPTLVEnd:
-			return true
-		case layers.LLDPTLVChassisID, layers.LLDPTLVPortID, layers.LLDPTLVTTL:
-			return false
-		}
-		if len(data) < 2+n {
-			return true // truncated: the decoder rejects it
-		}
-		data = data[2+n:]
-	}
-	return true
 }
 
 const maxLLDPFieldLen = 255

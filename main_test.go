@@ -2848,6 +2848,46 @@ func TestEmitLLDPOnNetplanNICsHotplug(t *testing.T) {
 	}
 }
 
+// followLLDPMatches subscribes again after a netlink receive error. The
+// netlink fork (docs/dependency-forks.md) closes the socket of the ended
+// subscription; netlink 1.3.1 kept it open until ctx ended, one per error.
+func TestFollowLLDPMatchesResubscribeClosesSocket(t *testing.T) {
+	origSub := lldpLinkSubscribe
+	t.Cleanup(func() { lldpLinkSubscribe = origSub })
+	var subscriptions atomic.Int32
+	lldpLinkSubscribe = func(ch chan<- netlink.LinkUpdate, done <-chan struct{}, opts netlink.LinkSubscribeOptions) error {
+		subscriptions.Add(1)
+		opts.ReceiveTimeout = &unix.Timeval{Usec: 1000} // Receive fails with EAGAIN
+		return netlink.LinkSubscribeWithOptions(ch, done, opts)
+	}
+	openFDs := func() int {
+		fds, err := os.ReadDir("/proc/self/fd")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(fds)
+	}
+	before := openFDs()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	followLLDPMatches(ctx, nil, func(string) bool { return true }, func([]string) {}, slog.New(slog.DiscardHandler))
+	for deadline := time.Now().Add(10 * time.Second); subscriptions.Load() < 4; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("%d subscriptions in 10 s, want 4", subscriptions.Load())
+		}
+	}
+	// At most the current subscription's socket is open.
+	var open int
+	for deadline := time.Now().Add(2 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if open = openFDs() - before; open <= 1 || time.Now().After(deadline) {
+			break
+		}
+	}
+	if open > 1 {
+		t.Fatalf("%d file descriptors open after %d subscriptions, want at most 1", open, subscriptions.Load())
+	}
+}
+
 // A native EMIT_LLDP list replaces the netplan values, also match blocks.
 func TestMergeNetplanConfigEmitLLDPMatches(t *testing.T) {
 	src := &network.Config{EmitLLDPMatches: []network.LinkMatch{{Name: "en*"}}}
