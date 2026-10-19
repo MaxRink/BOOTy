@@ -289,7 +289,6 @@ func TestParseRouteDistinguisher(t *testing.T) {
 	}
 }
 
-// mustRD marshals an RD for the tests.
 // testRD is the RD 65000:n for tests that need distinct RDs.
 func testRD(n uint32) *apipb.RouteDistinguisher {
 	rd, err := parseRouteDistinguisher(fmt.Sprintf("65000:%d", n))
@@ -299,6 +298,7 @@ func testRD(n uint32) *apipb.RouteDistinguisher {
 	return rd
 }
 
+// mustRD marshals an RD for the tests.
 func mustRD(t *testing.T, rd string) *apipb.RouteDistinguisher {
 	t.Helper()
 	a, err := parseRouteDistinguisher(rd)

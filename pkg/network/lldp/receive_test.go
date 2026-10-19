@@ -325,6 +325,7 @@ func keepCurrent(t *testing.T) {
 // the registration: a slow NIC detection does not shorten it.
 func TestNeighborsWithinCountsFromListen(t *testing.T) {
 	keepCurrent(t)
+	testState(t, 0) // listen writes the state file
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	release := make(chan struct{})
