@@ -182,6 +182,13 @@ jobs:
             setup: ""
             # Three QEMU runs with the guest RTC in 2001.
             go_timeout: 25m
+          # Provisions from zlib and zstd qcow2 images without qemu-img.
+          - scenario: qcow2-image
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestProvisionQCOW2ImageQEMU$"
+            privileged: true
+            setup: ""
           - scenario: disk-wipe
             qemu_extra: ""
             test_tag: e2e

@@ -1121,9 +1121,9 @@ func (o *Orchestrator) validateImageStreamingPrerequisites(ctx context.Context, 
 	if image.IsOCIReference(bestURL) {
 		return nil
 	}
-	// Fail closed: without a probe BOOTy does not know whether the image
-	// is qcow2 and needs qemu-img, and finding out after the wipe leaves
-	// the host without an OS. A transient probe error gets retries first.
+	// Fail closed: an image source that cannot be read is found before the
+	// wipe, not after it, which would leave the host without an OS. A
+	// transient probe error gets retries first.
 	var format image.Format
 	var err error
 	for attempt := 1; ; attempt++ {

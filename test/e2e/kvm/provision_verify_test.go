@@ -200,3 +200,52 @@ func readProvisionedFile(t *testing.T, rootMount, relPath string) string {
 	}
 	return string(data)
 }
+
+// TestProvisionQCOW2ImageQEMU provisions from compressed qcow2 images
+// (zlib and zstd clusters). The test ramdisk has no qemu-img: BOOTy
+// converts qcow2 in process. The provisioned root must carry the hostname.
+func TestProvisionQCOW2ImageQEMU(t *testing.T) {
+	requireRoot(t)
+	qemuAvailable(t)
+	requireProvisionTools(t)
+	requireDiskInspectTools(t)
+
+	for _, tt := range []struct {
+		name string
+		opts []string
+	}{
+		{"zlib", []string{"-c"}},
+		{"zstd extended L2", []string{"-c", "-o", "compression_type=zstd,extended_l2=on"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			hostname := "qcow2-" + strings.ReplaceAll(tt.name, " ", "-")
+			rawDisk := createTestDiskImage(t, 512)
+			qcow2Image := filepath.Join(t.TempDir(), "image.qcow2")
+			args := append([]string{"convert", "-f", "raw", "-O", "qcow2"}, tt.opts...)
+			run(t, "convert image to qcow2", "qemu-img", append(args, rawDisk, qcow2Image)...)
+			baseURL := startImageServer(t, qcow2Image)
+
+			targetDisk := filepath.Join(t.TempDir(), "target.qcow2")
+			run(t, "create target disk", "qemu-img", "create", "-f", "qcow2", targetDisk, "2G")
+			initramfs := buildProvisionInitramfs(t, map[string]string{
+				"HOSTNAME":                  hostname,
+				"IMAGE_ALLOW_INSECURE_HTTP": "true",
+				// The server path is /image.gz; BOOTy finds qcow2 by its magic.
+				"IMAGE":       baseURL + "/image.gz",
+				"MODE":        "provision",
+				"DISK_DEVICE": "/dev/vda",
+			})
+			output := runQEMUProvision(t, findKernel(t), initramfs, targetDisk, 5*time.Minute)
+			t.Logf("QEMU output tail:\n%s", tail(output, 3000))
+			if !strings.Contains(string(output), "qcow2 conversion complete") {
+				t.Fatalf("no in-process qcow2 conversion in the output; tail:\n%s", tail(output, 3000))
+			}
+
+			rootMount, cleanup := mountQcow2(t, targetDisk)
+			defer cleanup()
+			if got := strings.TrimSpace(readProvisionedFile(t, rootMount, "etc/hostname")); got != hostname {
+				t.Errorf("hostname: got %q, want %q", got, hostname)
+			}
+		})
+	}
+}

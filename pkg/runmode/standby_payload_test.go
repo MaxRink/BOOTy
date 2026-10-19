@@ -384,7 +384,7 @@ func TestStandbyRejectsCommandThatNeedsAMissingPayload(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "split"), []byte("frr qemu-img ipmitool\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "split"), []byte("frr ipmitool\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	orig := payload.Dir
@@ -393,7 +393,7 @@ func TestStandbyRejectsCommandThatNeedsAMissingPayload(t *testing.T) {
 
 	ran := false
 	mode, provider := payloadStandby(t, []config.Command{
-		{ID: "p1", Type: "provision", Payload: []byte("IMAGE=https://images.example.com/os.qcow2\n")},
+		{ID: "p1", Type: "provision", Payload: []byte("WATCHDOG_ENABLE=true\nWATCHDOG_IPMI_FALLBACK=true\n")},
 		{ID: "r1", Type: "reboot"},
 	}, func(*config.MachineConfig) error { ran = true; return nil })
 

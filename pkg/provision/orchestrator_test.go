@@ -529,7 +529,8 @@ func TestValidateImageSourceConfiguredRejectsInvalidSources(t *testing.T) {
 	}
 }
 
-func TestValidateProvisionInputsRejectsQCOW2WithoutQemuImg(t *testing.T) {
+// BOOTy converts qcow2 in process: a qcow2 image needs no qemu-img.
+func TestValidateProvisionInputsAllowsQCOW2WithoutQemuImg(t *testing.T) {
 	srv := newTestImageServer(t, append([]byte{0x51, 0x46, 0x49, 0xfb}, []byte("qcow2 payload")...))
 	defer srv.Close()
 	t.Setenv("PATH", t.TempDir())
@@ -539,31 +540,8 @@ func TestValidateProvisionInputsRejectsQCOW2WithoutQemuImg(t *testing.T) {
 	cfg.Provision.Image.URLs = []string{srv.URL + "/node.qcow2"}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
 
-	err := o.validateProvisionInputs(context.Background())
-	if err == nil {
-		t.Fatal("expected qcow2 prerequisite error")
-	}
-	if !strings.Contains(err.Error(), "before destructive storage") ||
-		!strings.Contains(err.Error(), "qemu-img") {
-		t.Fatalf("error = %q, want pre-wipe qemu-img context", err.Error())
-	}
-}
-
-func TestValidateProvisionInputsRejectsQCOW2ByNameWithoutQemuImg(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
-
-	cfg := &config.MachineConfig{}
-	cfg.Provision.TargetOS = config.TargetOSLinux
-	cfg.Provision.Image.URLs = []string{"https://127.0.0.1:1/node.qcow2.gz"}
-	o := newTestOrchestrator(t, cfg, &mockProvider{})
-
-	err := o.validateProvisionInputs(context.Background())
-	if err == nil {
-		t.Fatal("expected qcow2 prerequisite error")
-	}
-	if !strings.Contains(err.Error(), "before destructive storage") ||
-		!strings.Contains(err.Error(), "qemu-img") {
-		t.Fatalf("error = %q, want pre-wipe qemu-img context", err.Error())
+	if err := o.validateProvisionInputs(context.Background()); err != nil {
+		t.Fatalf("expected qcow2 image preflight to pass, got %v", err)
 	}
 }
 
@@ -582,8 +560,7 @@ func TestValidateProvisionInputsAllowsRawWithoutQemuImg(t *testing.T) {
 	}
 }
 
-// An image that can not be probed stops the run before the wipe: BOOTy
-// would not know whether it needs qemu-img.
+// An image that can not be probed stops the run before the wipe.
 func TestValidateProvisionInputsFailsClosedOnTransientProbeFailure(t *testing.T) {
 	origDelay := probeRetryDelay
 	t.Cleanup(func() { probeRetryDelay = origDelay })

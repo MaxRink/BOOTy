@@ -3,19 +3,13 @@
 package image
 
 import (
-	"bytes"
 	"context"
-	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"syscall"
-
-	exec "github.com/telekom/BOOTy/pkg/executil"
-	"github.com/telekom/BOOTy/pkg/payload"
 )
 
 const (
@@ -32,9 +26,9 @@ func init() {
 }
 
 // ConvertQCOW2 downloads a qcow2 image to a tmpfs ramdisk, converts it to raw
-// using qemu-img, and streams the result to the target device.
+// in process, and streams the result to the target device.
 //
-// The flow is: download → tmpfs → qemu-img convert -f qcow2 -O raw → dd to device.
+// The flow is: download → tmpfs → qcow2 to raw → dd to device.
 // The ramdisk is cleaned up after conversion.
 func ConvertQCOW2(ctx context.Context, url, device string, opts ...StreamOpts) error {
 	var opt StreamOpts
@@ -77,6 +71,9 @@ func ConvertQCOW2FromReader(ctx context.Context, src io.Reader, sourceName, devi
 		return fmt.Errorf("writing qcow2 image: %w", err)
 	}
 
+	if err := checkQCOW2FitsDevice(qcow2Path, device); err != nil {
+		return err
+	}
 	if err := convertQCOW2ToRaw(ctx, qcow2Path, rawPath); err != nil {
 		return fmt.Errorf("converting qcow2 to raw: %w", err)
 	}
@@ -148,37 +145,60 @@ func writeImageToFile(src io.Reader, dest string) error {
 	return nil
 }
 
-func requireQCOW2Converter() (string, error) {
-	if err := payload.Require(payload.QemuImg); err != nil {
-		return "", fmt.Errorf("qcow2 conversion: %w", err)
-	}
-	qemuImg, err := exec.LookPath("qemu-img")
+// convertQCOW2ToRaw converts the qcow2 image src to the raw file dst in
+// process (qcow2raw.go), like `qemu-img convert -f qcow2 -O raw`.
+func convertQCOW2ToRaw(ctx context.Context, src, dst string) error {
+	slog.Info("converting qcow2 to raw", "src", src, "dst", dst)
+	in, err := os.Open(src) //nolint:gosec // controlled ramdisk path
 	if err != nil {
-		return "", fmt.Errorf("qemu-img not found (install qemu-utils): %w", errors.Join(payload.ErrMissing, err))
+		return fmt.Errorf("open qcow2 image: %w", err)
 	}
-	return qemuImg, nil
+	defer func() { _ = in.Close() }()
+	out, err := os.Create(dst) //nolint:gosec // controlled ramdisk path
+	if err != nil {
+		return fmt.Errorf("create raw image: %w", err)
+	}
+	if err := qcow2ToRaw(ctx, in, out); err != nil {
+		_ = out.Close()
+		_ = os.Remove(dst)
+		return fmt.Errorf("qcow2 to raw: %w", err)
+	}
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("close raw image: %w", err)
+	}
+	slog.Info("qcow2 conversion complete")
+	return nil
 }
 
-// convertQCOW2ToRaw runs qemu-img convert to transform qcow2 to raw.
-func convertQCOW2ToRaw(ctx context.Context, src, dst string) error {
-	qemuImg, err := requireQCOW2Converter()
+// checkQCOW2FitsDevice fails, before the conversion, when the virtual size
+// of the qcow2 image is larger than the target device. A regular file as
+// target (tests) has no fixed size and is not checked.
+func checkQCOW2FitsDevice(qcow2Path, device string) error {
+	fi, err := os.Stat(device)
+	if err != nil || fi.Mode()&os.ModeDevice == 0 {
+		return nil //nolint:nilerr // the write reports a missing device
+	}
+	src, err := os.Open(qcow2Path) //nolint:gosec // controlled ramdisk path
+	if err != nil {
+		return fmt.Errorf("open qcow2 image: %w", err)
+	}
+	defer func() { _ = src.Close() }()
+	h, err := readQCOW2Header(src)
 	if err != nil {
 		return err
 	}
-
-	if err := rejectQCOW2ExternalFiles(src); err != nil {
-		return err
+	dev, err := os.Open(device) //nolint:gosec // device from config
+	if err != nil {
+		return fmt.Errorf("open target device %s: %w", device, err)
 	}
-
-	slog.Info("converting qcow2 to raw", "src", src, "dst", dst)
-	cmd := exec.CommandContext(ctx, qemuImg, "convert", "-f", "qcow2", "-O", "raw", src, dst) //nolint:gosec // controlled paths
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("qemu-img convert: %w", err)
+	defer func() { _ = dev.Close() }()
+	size, err := dev.Seek(0, io.SeekEnd)
+	if err != nil {
+		return fmt.Errorf("size of target device %s: %w", device, err)
 	}
-
-	slog.Info("qcow2 conversion complete")
+	if h.size > uint64(size) { //nolint:gosec // a size is not negative
+		return fmt.Errorf("qcow2 virtual size %d bytes is larger than the target device %s (%d bytes)", h.size, device, size)
+	}
 	return nil
 }
 
@@ -192,44 +212,6 @@ const qcow2HeaderLen = 80
 // qcow2IncompatExternalData is the incompatible feature bit for an external
 // data file.
 const qcow2IncompatExternalData = 1 << 2
-
-// rejectQCOW2ExternalFiles reads the qcow2 header and fails for an image
-// that names a backing file or an external data file. qemu-img convert, and
-// qemu-img info in the QEMU that BOOTy ships, would open that file from the
-// initramfs or the network and copy it into the raw image. The header is
-// parsed in process, so nothing is opened before the check.
-func rejectQCOW2ExternalFiles(path string) error {
-	f, err := os.Open(path) //nolint:gosec // controlled ramdisk path
-	if err != nil {
-		return fmt.Errorf("open qcow2 image: %w", err)
-	}
-	defer func() { _ = f.Close() }()
-
-	header := make([]byte, qcow2HeaderLen)
-	n, err := io.ReadFull(f, header)
-	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
-		return fmt.Errorf("read qcow2 header: %w", err)
-	}
-	return checkQCOW2Header(header[:n])
-}
-
-func checkQCOW2Header(header []byte) error {
-	if len(header) < 72 || !bytes.Equal(header[:4], qcow2Magic) {
-		return fmt.Errorf("not a valid qcow2 header")
-	}
-	if binary.BigEndian.Uint64(header[8:16]) != 0 {
-		return fmt.Errorf("qcow2 image has a backing file; only self-contained images are supported")
-	}
-	if binary.BigEndian.Uint32(header[4:8]) >= 3 {
-		if len(header) < qcow2HeaderLen {
-			return fmt.Errorf("qcow2 v3 header is truncated")
-		}
-		if binary.BigEndian.Uint64(header[72:80])&qcow2IncompatExternalData != 0 {
-			return fmt.Errorf("qcow2 image has an external data file; only self-contained images are supported")
-		}
-	}
-	return nil
-}
 
 // streamRawToDevice streams a raw image file to a block device.
 func streamRawToDevice(rawPath, device string, opt StreamOpts) error {

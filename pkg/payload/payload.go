@@ -1,5 +1,5 @@
-// Package payload checks the optional ramdisk payloads (FRR, qemu-img,
-// ipmitool). A split build ships them as extra cpio archives that the boot
+// Package payload checks the optional ramdisk payloads (FRR, ipmitool).
+// A split build ships them as extra cpio archives that the boot
 // loader loads after the base initrd, only for the runs that need them
 // (docs/proposal-ramdisk-split.md).
 //
@@ -24,7 +24,6 @@ import (
 // Payload names.
 const (
 	FRR      = "frr"
-	QemuImg  = "qemu-img"
 	IPMITool = "ipmitool"
 )
 

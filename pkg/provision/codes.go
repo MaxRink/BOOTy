@@ -124,7 +124,7 @@ var failureCodes = []FailureCode{
 
 	{"BOOTY-WDT-001", ClassEnvironment, AnyStep, "A step made no progress within its watchdog budget; the hardware watchdog resets the host."},
 
-	{"BOOTY-PAY-001", ClassConfig, AnyStep, "The vars need a ramdisk payload (FRR, qemu-img or ipmitool) that the ramdisk does not have: the boot loader did not load its archive, or the flavor has no such tool."},
+	{"BOOTY-PAY-001", ClassConfig, AnyStep, "The vars need a ramdisk payload (FRR or ipmitool) that the ramdisk does not have: the boot loader did not load its archive, or the flavor has no such tool."},
 	{"BOOTY-PAY-002", ClassPermanent, "check-payloads", "A ramdisk payload archive is from another BOOTy build or architecture than the base ramdisk."},
 }
 

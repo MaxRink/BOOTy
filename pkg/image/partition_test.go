@@ -3,6 +3,7 @@
 package image
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -119,66 +120,15 @@ func TestDownloadAndPrepareRawRejectsUnsupportedVMwareContainer(t *testing.T) {
 	}
 }
 
-func TestConvertPreparedQCOW2RequiresQemuImg(t *testing.T) {
+// convertPreparedQCOW2 converts in process: no qemu-img on PATH.
+func TestConvertPreparedQCOW2(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-
-	_, err := convertPreparedQCOW2(context.Background(), writeRawChecksumFixture(
-		t,
-		append([]byte{0x51, 0x46, 0x49, 0xfb}, []byte("qcow2 payload")...),
-	))
-	if err == nil {
-		t.Fatal("expected qemu-img prerequisite error")
-	}
-	if !strings.Contains(err.Error(), "qemu-img") {
-		t.Fatalf("error = %q, want qemu-img context", err.Error())
-	}
-}
-
-func TestConvertPreparedQCOW2UsesQemuImg(t *testing.T) {
-	dir := t.TempDir()
-	qemuImg := filepath.Join(dir, "qemu-img")
-	script := `#!/bin/sh
-src=
-dst=
-shift
-while [ "$#" -gt 0 ]; do
-	case "$1" in
-		-f|-O)
-			shift 2
-			;;
-		-*)
-			shift
-			;;
-		*)
-			if [ -z "$src" ]; then
-				src="$1"
-			else
-				dst="$1"
-			fi
-			shift
-			;;
-	esac
-done
-cp "$src" "$dst"
-`
-	if err := os.WriteFile(qemuImg, []byte(script), 0o755); err != nil {
-		t.Fatalf("write fake qemu-img: %v", err)
-	}
-	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
-
-	// A v3 qcow2 header without backing or external data file.
-	payload := append([]byte{0x51, 0x46, 0x49, 0xfb, 0, 0, 0, 3}, make([]byte, 96)...)
-	payload = append(payload, []byte("qcow2 payload")...)
-	source := writeRawChecksumFixture(t, payload)
+	data := pattern(512, 3)
+	f := qcow2Fixture{version: 3, clusterBits: 9, size: 512, clusters: []testCluster{{kind: "data", data: data}}}
+	source := writeRawChecksumFixture(t, f.build(t))
 	converted, err := convertPreparedQCOW2(context.Background(), source)
 	if err != nil {
 		t.Fatalf("convertPreparedQCOW2: %v", err)
-	}
-	if converted == source {
-		t.Fatal("expected converted raw path to differ from qcow2 source")
-	}
-	if strings.HasSuffix(converted, ".raw.raw") {
-		t.Fatalf("converted path = %q, want no .raw.raw suffix", converted)
 	}
 	if want := strings.TrimSuffix(source, filepath.Ext(source)) + ".converted.raw"; converted != want {
 		t.Fatalf("converted path = %q, want %q", converted, want)
@@ -187,8 +137,8 @@ cp "$src" "$dst"
 	if err != nil {
 		t.Fatalf("read converted fixture: %v", err)
 	}
-	if string(got) != string(payload) {
-		t.Fatalf("converted content = %q, want %q", got, payload)
+	if !bytes.Equal(got, data) {
+		t.Fatal("converted content differs from the guest data")
 	}
 	if _, err := os.Stat(source); !os.IsNotExist(err) {
 		t.Fatalf("source was not removed after conversion: %v", err)

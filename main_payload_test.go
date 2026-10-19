@@ -46,8 +46,8 @@ func TestCheckPayloads(t *testing.T) {
 		code   string
 	}{
 		{name: "raw image, no watchdog", set: func(*config.MachineConfig) {}},
-		{name: "qcow2 without qemu-img", set: qcow2, code: provision.CodePayloadMissing},
-		{name: "qcow2 with qemu-img", loaded: []string{"qemu-img"}, set: qcow2},
+		// BOOTy converts qcow2 in process.
+		{name: "qcow2 image", set: qcow2},
 		{name: "IPMI fallback without ipmitool", set: ipmi, code: provision.CodePayloadMissing},
 		{name: "IPMI fallback with ipmitool", loaded: []string{"ipmitool"}, set: ipmi},
 		{name: "payload of another build", loaded: []string{"ipmitool"}, build: "b2", set: ipmi, code: "BOOTY-PAY-002"},
@@ -68,7 +68,7 @@ func TestCheckPayloads(t *testing.T) {
 		}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			splitRamdisk(t, "frr qemu-img ipmitool", tt.loaded...)
+			splitRamdisk(t, "frr ipmitool", tt.loaded...)
 			if tt.build != "" {
 				Build = tt.build
 			}
@@ -85,7 +85,7 @@ func TestCheckPayloads(t *testing.T) {
 // FRR mode on a split ramdisk without the FRR archive fails with the
 // payload code instead of falling back to DHCP.
 func TestSetupNetworkModeFRRWithoutPayload(t *testing.T) {
-	splitRamdisk(t, "frr qemu-img ipmitool")
+	splitRamdisk(t, "frr ipmitool")
 	cfg := &config.MachineConfig{}
 	cfg.Network.BGP.ASN = 65000
 	cfg.Network.EVPN.UnderlayIP = "10.0.0.1"
@@ -99,7 +99,7 @@ func TestSetupNetworkModeFRRWithoutPayload(t *testing.T) {
 // The network setup error keeps the payload code instead of the generic
 // network setup code (provision.WithCode in setupNetworkAndTokenFlow).
 func TestSetupNetworkAndTokenFlowKeepsThePayloadCode(t *testing.T) {
-	splitRamdisk(t, "frr qemu-img ipmitool")
+	splitRamdisk(t, "frr ipmitool")
 	cfg := &config.MachineConfig{}
 	cfg.Network.BGP.ASN = 65000
 	cfg.Network.EVPN.UnderlayIP = "10.0.0.1"

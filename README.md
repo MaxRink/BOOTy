@@ -186,7 +186,7 @@ The `initrd.Dockerfile` supports multiple build targets via `--target`:
 | `split` | see below | as the default | as the default | The default ramdisk as a base archive plus one archive per optional payload |
 
 The `split` target writes `base.cpio.zst`, one archive per payload
-(`frr.cpio.zst`, `qemu-img.cpio.zst`, `ipmitool.cpio.zst`), the `vmlinuz`
+(`frr.cpio.zst`, `ipmitool.cpio.zst`), the `vmlinuz`
 whose modules the base carries, and `SHA256SUMS` over all of them. The boot
 loader loads the base and, after it, only the payloads that the run needs.
 The kernel unpacks them over each other (ISOLINUX
@@ -196,7 +196,6 @@ The kernel unpacks them over each other (ISOLINUX
 | Payload | Load it for |
 |---|---|
 | `frr` | FRR network mode (`asn_server` with `underlay_ip` or `underlay_subnet`, no `NETWORK_MODE=gobgp`) |
-| `qemu-img` | a qcow2 image |
 | `ipmitool` | `WATCHDOG_ENABLE` with `WATCHDOG_IPMI_FALLBACK` |
 
 Each payload archive carries `/etc/booty/payloads/<name>` with the build
@@ -767,7 +766,7 @@ export MODE="dry-run"
 ```
 
 `DRY_RUN=true` has the same effect. The checks are: config validation, image
-reachability, image prerequisites such as `qemu-img` for QCOW2 sources, image
+reachability, image prerequisites, image
 checksum format, image signature settings, image mode, disk detection, NIC
 link state, EFI variable access, health checks, and an inventory probe. BOOTy
 sends a text summary of all results in the status message: an error status
@@ -1452,7 +1451,7 @@ ldd /usr/sbin/your-binary
 The default flavor bundles, among others: `mdadm`, `wipefs`, `sfdisk`,
 `sgdisk`, `growpart`, `e2fsck`, `resize2fs`, `xfs_growfs`, `xfs_repair`,
 `btrfs`, `parted`, `kpartx`, `lvm`, `lsblk`, `blkid`, `hdparm`, `nvme`,
-`qemu-img`, `gpgv`, `mstconfig`, `mstflint`, `ethtool`, `dropbear`,
+`gpgv`, `mstconfig`, `mstflint`, `ethtool`, `dropbear`,
 `efibootmgr`. See `initrd.Dockerfile` for the full list per flavor. No flavor
 ships `lldpd` or `lldpcli`: `booty lldp neighbors` and `booty lldp status`
 show the LLDP state (docs/networking.md, LLDP diagnosis in the rescue shell).

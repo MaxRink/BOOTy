@@ -166,7 +166,7 @@ func wipeLeadingSectors(device string) {
 // convertQCOW2Hook is set by the linux build to call ConvertQCOW2FromReader.
 // On non-linux platforms, qcow2 conversion is unsupported.
 var convertQCOW2Hook = func(_ context.Context, _ io.Reader, _, _ string, _ StreamOpts) error {
-	return fmt.Errorf("qcow2 conversion requires linux (tmpfs ramdisk + qemu-img)")
+	return fmt.Errorf("qcow2 conversion requires linux (tmpfs ramdisk)")
 }
 
 // openAndDecompress opens the image source, detects compression, and returns

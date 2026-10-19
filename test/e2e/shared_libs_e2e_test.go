@@ -104,7 +104,7 @@ func TestDefaultSharedLibsResolveE2E(t *testing.T) {
 		"sbin/blkid", "bin/losetup",
 		"sbin/mkfs.ext4", "sbin/mkfs.vfat",
 		"sbin/xfs_growfs", "bin/btrfs", "bin/parted", "bin/sgdisk",
-		"bin/partprobe", "bin/partx", "bin/qemu-img",
+		"bin/partprobe", "bin/partx",
 		// EFI
 		"bin/efibootmgr",
 		// System
@@ -134,7 +134,7 @@ func TestGoBGPSharedLibsResolveE2E(t *testing.T) {
 		"sbin/blkid", "bin/losetup",
 		"sbin/mkfs.ext4", "sbin/mkfs.vfat",
 		"sbin/xfs_growfs", "bin/btrfs", "bin/parted", "bin/sgdisk",
-		"bin/partprobe", "bin/partx", "bin/qemu-img",
+		"bin/partprobe", "bin/partx",
 		// EFI
 		"bin/efibootmgr",
 		// System

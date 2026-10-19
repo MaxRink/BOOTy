@@ -142,12 +142,13 @@ provision or deprovision that names its disk, after "network ready".
 | ipmitool without FreeIPMI | measured | 1.15 MB | rejected: loses the `-I free` interface |
 | Drop `vtysh` | measured | 2.05 MB | rejected: FRR mode and its diagnostics use it |
 | Merge `booty-esp-sync` into `init` | measured | 0.62 MB | rejected: it is installed on the target as its own binary |
+| qcow2 to raw in BOOTy instead of `qemu-img` (glib, liburing, libaio, libnuma) | yes | default 1.30 MB, gobgp 1.30 MB, split `qemu-img.cpio.zst` 1.36 MB | done, #815 |
 | Duplicate files (`ipmi_msghandler`, `ipmi_devintf` in two module dirs) | measured | under 1 KB after compression | not worth it |
 | Kernel `quiet` or `loglevel=5` on the ISO | estimated | 2 to 8 s of console output on hardware | not done: hides kernel messages that operators and the ISO tests read (Secure Boot state) |
 | GRUB `timeout=0` (UEFI) | no | 1 s | not done: removes the chance to edit the kernel command line |
 | Faster first retries of the connectivity check (1 s ticker) | no | about 0.4 s on average when the route comes up late | open |
 | DHCP single-NIC settle (3 s, same NIC wait as #760) | no | 3 s for single-NIC DHCP hosts | open: the wait guards the containerlab fabric |
-| Optional payloads as a second initrd | no | FRR 4.2 MB, qemu-img 2.3 MB, ipmitool 1.3 MB | open, see proposal-artifact-size.md |
+| Optional payloads as a second initrd | yes | FRR 4.8 MB, ipmitool 1.3 MB | done, #782 (`split` target); qemu-img is no payload since #815 |
 
 The CI size budgets (`test/e2e/build_flavours_e2e_test.go`,
 `.github/workflows/pr-artifacts.yml`) are set about 5% above `main` so a

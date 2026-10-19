@@ -91,7 +91,7 @@ Format axis:
 | Format | Status | Proposal |
 |--------|--------|----------|
 | raw, compressed raw | Supported | Keep |
-| qcow2 | Supported through tmpfs and `qemu-img` | Stream qcow2 without a full tmpfs copy when RAM is small (see [proposal-image-delivery.md](proposal-image-delivery.md)) |
+| qcow2 | Supported through tmpfs and the in-process converter | Stream qcow2 without a full tmpfs copy when RAM is small (see [proposal-image-delivery.md](proposal-image-delivery.md)) |
 | OCI single layer | Supported | Keep. Index and multi-layer are in [proposal-oci-advanced.md](proposal-oci-advanced.md) |
 | Root filesystem tarball (`.tar.zst`) | Not supported | New `IMAGE_MODE=rootfs`: partition, `mkfs`, extract, install bootloader |
 | VMDK, OVA, OVF | Rejected | Keep rejected. Convert in the image pipeline. |

@@ -16,7 +16,7 @@ func TestSplitBuildPayloadsMatchTheDefaultTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := payload.FRR + " " + payload.QemuImg + " " + payload.IPMITool
+	want := payload.FRR + " " + payload.IPMITool
 	if !strings.Contains(string(script), `payloads="`+want+`"`) {
 		t.Fatalf("hack/split-initramfs.sh does not split %q", want)
 	}
@@ -25,9 +25,9 @@ func TestSplitBuildPayloadsMatchTheDefaultTree(t *testing.T) {
 		t.Fatal(err)
 	}
 	defaultTree := dockerfileStageBlock(t, string(dockerfile), "busybox")
-	files := regexp.MustCompile(`(?m)^\t(?:frr|qemu-img|ipmitool)\) echo (.+) ;;$`).FindAllStringSubmatch(string(script), -1)
-	if len(files) != 3 {
-		t.Fatalf("found %d payload file lists in the script, want 3", len(files))
+	files := regexp.MustCompile(`(?m)^\t(?:frr|ipmitool)\) echo (.+) ;;$`).FindAllStringSubmatch(string(script), -1)
+	if len(files) != 2 {
+		t.Fatalf("found %d payload file lists in the script, want 2", len(files))
 	}
 	for _, m := range files {
 		for f := range strings.FieldsSeq(m[1]) {
@@ -40,7 +40,7 @@ func TestSplitBuildPayloadsMatchTheDefaultTree(t *testing.T) {
 	for _, want := range []string{
 		`RUN split-initramfs.sh /build/initramfs /split "$BOOTY_BUILD"`,
 		"COPY --from=kernel /vmlinuz /split/vmlinuz",
-		"sha256sum base.cpio.zst frr.cpio.zst qemu-img.cpio.zst ipmitool.cpio.zst vmlinuz > SHA256SUMS",
+		"sha256sum base.cpio.zst frr.cpio.zst ipmitool.cpio.zst vmlinuz > SHA256SUMS",
 	} {
 		if !strings.Contains(split, want) {
 			t.Errorf("split-builder lacks %q:\n%s", want, split)
@@ -58,7 +58,7 @@ func TestWorkflowsPublishSplitRamdisk(t *testing.T) {
 	}
 	upload := requireWorkflowStep(t, job, "Publish split ramdisk artifact")
 	assertWorkflowWith(t, upload, "name", "booty-pr-split")
-	for _, f := range []string{"base.cpio.zst", "frr.cpio.zst", "qemu-img.cpio.zst", "ipmitool.cpio.zst", "vmlinuz", "SHA256SUMS"} {
+	for _, f := range []string{"base.cpio.zst", "frr.cpio.zst", "ipmitool.cpio.zst", "vmlinuz", "SHA256SUMS"} {
 		assertStepWithContains(t, upload, "path", "out-split/"+f)
 	}
 
@@ -68,7 +68,7 @@ func TestWorkflowsPublishSplitRamdisk(t *testing.T) {
 	}
 	for _, want := range []string{
 		"flavor: split",
-		"for part in base frr qemu-img ipmitool; do",
+		"for part in base frr ipmitool; do",
 		"split-${{ matrix.arch }}-*.cpio.zst",
 		"split-${{ matrix.arch }}-vmlinuz",
 		"split-${{ matrix.arch }}-SHA256SUMS",

@@ -4,7 +4,6 @@ package image
 
 import (
 	"bytes"
-	"encoding/binary"
 	"os"
 	"path/filepath"
 	"strings"
@@ -87,42 +86,5 @@ func TestStreamRawToDeviceChecksumMismatchDoesNotSyncTarget(t *testing.T) {
 	}
 	if syncCalled {
 		t.Fatal("syncImageTarget called before checksum mismatch was returned")
-	}
-}
-
-func TestCheckQCOW2Header(t *testing.T) {
-	header := func(version uint32, backingOffset, incompat uint64) []byte {
-		h := make([]byte, qcow2HeaderLen)
-		copy(h, qcow2Magic)
-		binary.BigEndian.PutUint32(h[4:8], version)
-		binary.BigEndian.PutUint64(h[8:16], backingOffset)
-		binary.BigEndian.PutUint64(h[72:80], incompat)
-		return h
-	}
-	tests := []struct {
-		name    string
-		header  []byte
-		wantErr string
-	}{
-		{"self-contained v3", header(3, 0, 0), ""},
-		{"self-contained v2", header(2, 0, 0)[:72], ""},
-		{"backing file", header(3, 0x1000, 0), "backing file"},
-		{"external data file", header(3, 0, qcow2IncompatExternalData), "external data file"},
-		{"truncated v3", header(3, 0, 0)[:72], "truncated"},
-		{"not qcow2", make([]byte, qcow2HeaderLen), "not a valid qcow2 header"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := checkQCOW2Header(tt.header)
-			if tt.wantErr == "" {
-				if err != nil {
-					t.Fatalf("checkQCOW2Header() error = %v", err)
-				}
-				return
-			}
-			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-				t.Fatalf("checkQCOW2Header() error = %v, want %q", err, tt.wantErr)
-			}
-		})
 	}
 }

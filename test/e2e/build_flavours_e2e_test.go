@@ -11,14 +11,14 @@ import (
 	"time"
 )
 
-// Size budgets in MiB, about 5% above main (default 40.3, gobgp 35.8,
+// Size budgets in MiB, about 5% above main (default 37.3, gobgp 32.7,
 // slim 23.6, micro 10.3 MiB). Every MB is up to 0.5 s of boot time on
 // slow BMC virtual media; see docs/size-optimization.md.
 const (
 	maxMicroInitramfsMB   = 11.0
 	maxSlimInitramfsMB    = 25.0
-	maxGoBGPInitramfsMB   = 38.0
-	maxDefaultInitramfsMB = 42.5
+	maxGoBGPInitramfsMB   = 34.5
+	maxDefaultInitramfsMB = 39.5
 )
 
 func dockerAvailable(t *testing.T) {
@@ -774,7 +774,8 @@ func TestDefaultContainsDiskToolsE2E(t *testing.T) {
 	assertContains(t, files, "bin/partprobe", "partprobe")
 	assertContains(t, files, "bin/partx", "partx online partition updater")
 	assertContains(t, files, "bin/lsblk", "util-linux lsblk")
-	assertContains(t, files, "bin/qemu-img", "qemu-img qcow2 converter")
+	// BOOTy converts qcow2 images in process.
+	assertNotContains(t, files, "bin/qemu-img", "qemu-img")
 	assertContains(t, files, "bin/efibootmgr", "efibootmgr")
 	assertNotContains(t, files, "bin/blkid", "BusyBox blkid applet shadowing util-linux blkid")
 }
@@ -915,7 +916,8 @@ func TestGoBGPContainsDiskToolsE2E(t *testing.T) {
 
 	assertContains(t, files, "bin/wipefs", "wipefs")
 	assertContains(t, files, "sbin/mdadm", "mdadm RAID")
-	assertContains(t, files, "bin/qemu-img", "qemu-img qcow2 converter")
+	// BOOTy converts qcow2 images in process.
+	assertNotContains(t, files, "bin/qemu-img", "qemu-img")
 	assertContains(t, files, "bin/efibootmgr", "efibootmgr")
 	assertContains(t, files, "bin/lsblk", "lsblk for rescue mode")
 	assertContains(t, files, "sbin/blkid", "util-linux blkid")

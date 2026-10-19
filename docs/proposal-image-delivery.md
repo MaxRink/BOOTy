@@ -28,8 +28,8 @@ air-gapped operation.
   (`pkg/image/stream.go`). For a 20 GiB image on a lossy path this is costly.
 - BOOTy writes every byte, also long zero runs. Raw images are often mostly
   empty.
-- qcow2 images are copied to a tmpfs and converted with `qemu-img`
-  (`pkg/image/qcow2.go`). The host needs RAM larger than the image.
+- qcow2 images are copied to a tmpfs and converted to raw in process
+  (`pkg/image/qcow2raw.go`). The host needs RAM larger than the image.
 - A rack-wide reinstall pulls the same image N times from one server.
 - Some sites have no internet and strict egress rules. Every external
   dependency must have a local mirror.
@@ -42,7 +42,7 @@ air-gapped operation.
 | Transfer | One GET, retry before the body, idle timeout on the body. | `pkg/image/stream.go` (`httpGetWithRetry`, `idleTimeoutBody`) |
 | Decode | gzip, zstd (1 thread), lz4, xz, bzip2. | `pkg/image/format.go` |
 | Checksum | Download or decompressed scope, verified at EOF. Failed writes wipe the start of the target. | `pkg/image/checksum_scope.go`, `pkg/image/stream.go` |
-| qcow2 | tmpfs, `qemu-img convert`, then raw copy. | `pkg/image/qcow2.go` |
+| qcow2 | tmpfs, in-process conversion to raw, then raw copy. | `pkg/image/qcow2.go`, `pkg/image/qcow2raw.go` |
 | OCI | One layer, `go-containerregistry`, keychain auth. | `pkg/image/oci.go` |
 | Resume | `BOOTY_RESUME` checkpoints skip completed steps. Not within a step. | `pkg/provision/checkpoint.go` |
 | Retries | Per-step retry policy. | `pkg/provision/retry.go` |
