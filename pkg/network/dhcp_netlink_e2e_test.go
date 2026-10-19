@@ -11,7 +11,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/digineo/go-dhclient"
+	"github.com/telekom/BOOTy/pkg/network/dhcp4"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
 	"golang.org/x/sys/unix"
@@ -33,7 +33,7 @@ func TestDHCPNetlinkLeaseAppliesTwice(t *testing.T) {
 	t.Cleanup(func() { _ = netlink.LinkDel(link) })
 
 	d := NewDHCPMode()
-	lease := live(&dhclient.Lease{FixedAddress: net.ParseIP("198.51.100.7")})
+	lease := live(&dhcp4.Lease{FixedAddress: net.ParseIP("198.51.100.7")})
 	for attempt := 1; attempt <= 2; attempt++ {
 		leased := make(chan string, 1)
 		d.onBound(link, link.Name, leased)(lease)
@@ -81,7 +81,7 @@ func TestDHCPNetlinkLeaseReplacesOtherPrefix(t *testing.T) {
 	}
 
 	d := NewDHCPMode()
-	lease := live(&dhclient.Lease{FixedAddress: net.ParseIP("198.51.100.7"), Netmask: net.CIDRMask(24, 32)})
+	lease := live(&dhcp4.Lease{FixedAddress: net.ParseIP("198.51.100.7"), Netmask: net.CIDRMask(24, 32)})
 	leased := make(chan string, 1)
 	d.onBound(link, link.Name, leased)(lease)
 	select {
@@ -118,7 +118,7 @@ func TestDHCPNetlinkLeasesOnTwoNICs(t *testing.T) {
 			t.Fatalf("link up: %v", err)
 		}
 		t.Cleanup(func() { _ = netlink.LinkDel(link) })
-		lease := live(&dhclient.Lease{FixedAddress: net.ParseIP(net4 + ".7"), Netmask: net.CIDRMask(24, 32), Router: []net.IP{net.ParseIP(net4 + ".1")}})
+		lease := live(&dhcp4.Lease{FixedAddress: net.ParseIP(net4 + ".7"), Netmask: net.CIDRMask(24, 32), Router: []net.IP{net.ParseIP(net4 + ".1")}})
 		for range 2 {
 			leased := make(chan string, 1)
 			d.onBound(link, link.Name, leased)(lease)
@@ -179,7 +179,7 @@ func TestDHCPNetlinkNewAddressSameSubnet(t *testing.T) {
 	}
 	d := NewDHCPMode()
 	for _, ip := range []string{"198.51.100.7", "198.51.100.8"} {
-		d.onBound(link, link.Name, make(chan string, 1))(live(&dhclient.Lease{
+		d.onBound(link, link.Name, make(chan string, 1))(live(&dhcp4.Lease{
 			FixedAddress: net.ParseIP(ip), Netmask: net.CIDRMask(24, 32), Router: []net.IP{net.ParseIP("198.51.100.1")},
 		}))
 	}
@@ -219,7 +219,7 @@ func TestDHCPNetlinkGatewayOutsideSubnet(t *testing.T) {
 		t.Fatal(err)
 	}
 	leased := make(chan string, 1)
-	NewDHCPMode().onBound(link, link.Name, leased)(live(&dhclient.Lease{
+	NewDHCPMode().onBound(link, link.Name, leased)(live(&dhcp4.Lease{
 		FixedAddress: net.ParseIP("198.51.100.7"), Netmask: net.CIDRMask(32, 32), Router: []net.IP{net.ParseIP("192.0.2.1")},
 	}))
 	if len(leased) != 1 {

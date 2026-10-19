@@ -12,8 +12,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/digineo/go-dhclient"
 	"github.com/google/gopacket/layers"
+	"github.com/telekom/BOOTy/pkg/network/dhcp4"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 )
@@ -63,18 +63,9 @@ var fallbackMachineID = sync.OnceValue(func() string {
 	return hex.EncodeToString(b)
 })
 
-// dhcpMaxMessageSize is option 57 of networkd: the MTU less the IP and UDP
-// headers.
-func dhcpMaxMessageSize(mtu int) []byte {
-	if mtu < dhcpMinMTU {
-		mtu = dhcpMinMTU
-	}
-	return binary.BigEndian.AppendUint16(nil, uint16(mtu-28)) //nolint:gosec // an MTU fits
-}
-
-// leaseOption returns the payload of a lease option that go-dhclient keeps
+// leaseOption returns the payload of a lease option that the client keeps
 // in OtherOptions.
-func leaseOption(lease *dhclient.Lease, opt layers.DHCPOpt) ([]byte, bool) {
+func leaseOption(lease *dhcp4.Lease, opt layers.DHCPOpt) ([]byte, bool) {
 	for _, o := range lease.OtherOptions {
 		if o.Type == opt {
 			return o.Data, true
@@ -192,7 +183,7 @@ func dnsName(data []byte, off int) (name string, next int, ok bool) {
 // leaseRouteSet returns the routes of a lease: option 121, or without it
 // option 33 and a default route through the first router that is not
 // 0.0.0.0 (none when all are), like networkd-dhcp4.c.
-func leaseRouteSet(lease *dhclient.Lease) []dhcpRoute {
+func leaseRouteSet(lease *dhcp4.Lease) []dhcpRoute {
 	if data, ok := leaseOption(lease, dhcpOptClasslessRoutes); ok {
 		if routes, ok := classlessRoutes(data); ok {
 			return routes
@@ -211,7 +202,7 @@ func leaseRouteSet(lease *dhclient.Lease) []dhcpRoute {
 // leaseRoutes returns the routes of a lease like networkd (leaseRouteSet),
 // with first a host route to every gateway. They have metric 100, proto
 // dhcp and the lease address as source, except a route to localhost.
-func leaseRoutes(link netlink.Link, addr *netlink.Addr, lease *dhclient.Lease) []*netlink.Route {
+func leaseRoutes(link netlink.Link, addr *netlink.Addr, lease *dhcp4.Lease) []*netlink.Route {
 	routes := leaseRouteSet(lease)
 	route := func(dst *net.IPNet, gw net.IP) *netlink.Route {
 		r := &netlink.Route{LinkIndex: link.Attrs().Index, Src: addr.IP, Priority: dhcpRouteMetric, Protocol: unix.RTPROT_DHCP}
@@ -265,7 +256,7 @@ func sameRoute(a, b *netlink.Route) bool {
 
 // leaseSearchDomains returns the domain (option 15) and the domain search
 // list (option 119) of a lease, each once.
-func leaseSearchDomains(lease *dhclient.Lease) []string {
+func leaseSearchDomains(lease *dhcp4.Lease) []string {
 	var out []string
 	add := func(d string) {
 		d = strings.TrimSuffix(strings.TrimSpace(d), ".")

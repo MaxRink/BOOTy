@@ -1112,9 +1112,46 @@ A physical NIC that appears after Setup (a driver that brings up its
 ports late) gets its own client too, like networkd matches a link when udev
 announces it.
 
-A client on a NIC without a DHCP server sends a DISCOVER about every 6 s
-(go-dhclient: 5 s response timeout, 1 s pause) for the whole run;
-networkd backs off up to 64 s.
+The client is BOOTy's own (`pkg/network/dhcp4`), with the states of RFC
+2131 and the behaviour of networkd (systemd 255):
+
+- INIT: DHCPDISCOVER with rapid commit (option 80, RFC 4039; an ACK to the
+  DISCOVER binds at once), retransmitted after 2, 4, 8, 16, 32 and then
+  every 64 s (each +-1 s), for the whole run; then DHCPREQUEST with server
+  identifier and requested address (SELECTING), up to five times, else it
+  starts over.
+- RENEWING at T1: DHCPREQUEST from the lease address to the server (UDP
+  unicast), with `ciaddr` and without 50/54, again after half the time to
+  T2 (at least 60 s).
+- REBINDING at T2: the same DHCPREQUEST as broadcast, until the lease
+  expires. Like every networkd broadcast it has the IP source 0.0.0.0
+  (the lease address is in `ciaddr`), as captured in kindmetal.
+- INIT-REBOOT (`Reboot`): DHCPREQUEST with only the requested address,
+  sent once; without an answer the client goes to INIT, like networkd.
+  DHCP mode calls it when the carrier returns (wired in #793).
+- DHCPRELEASE at stop (Teardown, before kexec or reboot) from the lease
+  address to the server, with the client identifier only, like networkd
+  (`SendRelease=yes`; the legacy ramdisk sends it, captured in kindmetal).
+- The UDP socket on lease-address:68 of an exchange with `ciaddr`
+  (RENEWING and REBINDING) stays open until the reply, and a socket on
+  0.0.0.0:68 of the NIC is open for every exchange (a server answers an
+  INIT-REBOOT unicast to the address the NIC still has), so the kernel
+  does not answer a unicast reply with ICMP port unreachable.
+- A DISCOVER after a lease asks for its address again (option 50, after
+  57), like networkd.
+- T2 defaults to 7/8 and T1 to 1/2 of the lease time; a T2 at or past the
+  lease time and a T1 at or past T2 get the defaults, like networkd.
+- Replies, like networkd: only Ethernet BOOTP (htype 1, hlen 6, at least
+  240 bytes); an OFFER or ACK needs an address, a server identifier (54)
+  and a lease time (51) above 0, a NAK a server identifier. A NAK from
+  another server than that of the offer or lease is ignored. An OFFER or
+  ACK with option overload (52, options in `sname` or `file`) is dropped:
+  BOOTy does not read those fields. The IP header checksum is always
+  checked, the UDP checksum unless the kernel marks the frame as not yet
+  checksummed (`PACKET_AUXDATA`, checksum offload). Replies larger than
+  1500 bytes (jumbo MTU) are read whole.
+- DHCP packets carry the IP TOS of networkd (CS6). Debug logging only, one
+  line per message.
 
 The NTP servers (option 42) of all leases, by NIC and each once, go to the
 time sync, like networkd hands the servers of every link to timesyncd; a
@@ -1167,17 +1204,8 @@ On every lease (also renewals and leases on the other NICs), BOOTy:
 When the lease of a NIC ends (it expires before a renewal or rebind, or the
 server answers with DHCPNAK), BOOTy removes the address, default route,
 DNS and NTP servers of that NIC and restores its MTU (RFC 2131 sections 3.2
-and 4.4.5), like networkd. The client starts over in INIT with a DHCPDISCOVER, and its next lease is applied
-again. BOOTy keeps its own expiry timer per lease: the DHCP client library
-(go-dhclient v1.0.2) renews forever after a failed renewal, does not
-report the expiry and keeps requesting the old address from the old
-server, so at the expiry BOOTy replaces the client of that NIC with a new
-one, like networkd restarts its client. After a DHCPNAK go-dhclient starts
-over itself, after a fixed 1 s (networkd backs off instead). A lease
-without a lifetime or a server identifier is not applied, like networkd;
-since go-dhclient stays bound to it, BOOTy restarts the client of that NIC
-after 2 s, doubled per refusal up to 64 s. Teardown waits for a restart
-in progress, so no client starts after it.
+and 4.4.5), like networkd. The client starts over in INIT with a
+DHCPDISCOVER, and its next lease is applied again.
 
 Because `bond*` names are not physical NICs, DHCP does not run on `bond0`.
 

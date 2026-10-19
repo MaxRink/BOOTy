@@ -19,7 +19,7 @@ disabled to keep it that way.
 ## Problem and motivation
 
 - Sites move to IPv6-only management and provisioning networks.
-- The DHCP client is IPv4 (`github.com/digineo/go-dhclient`). There is no
+- The DHCP client is IPv4 (`pkg/network/dhcp4`). There is no
   DHCPv6 client and no explicit SLAAC handling outside the GoBGP device
   setup (`accept_ra` in `pkg/network/gobgp/devices.go`).
 
