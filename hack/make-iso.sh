@@ -24,7 +24,9 @@ export SOURCE_DATE_EPOCH
 # loglevel=4: the console shows kernel errors only. Every kernel line costs
 # about 87 us per byte on a 115200 baud BMC serial console; BOOTy logs the
 # Secure Boot and lockdown state itself and ships the whole kernel log.
-cmdline="console=tty0 console=ttyS0,115200n8 loglevel=4"
+# panic=10: a crash of BOOTy (PID 1) or another kernel panic reboots
+# after 10 s instead of hanging (BOOTy also sets it when it starts).
+cmdline="console=tty0 console=ttyS0,115200n8 loglevel=4 panic=10"
 
 for f in boot/vmlinuz boot/initrd.img; do
 	[ -s "$root/$f" ] || { echo "make-iso: $root/$f is missing" >&2; exit 1; }

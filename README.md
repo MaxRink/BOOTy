@@ -242,9 +242,16 @@ same files cannot take over the boot. The volume label is `BOOTY`
 EFI partition, as Ubuntu's ISOs use it); other ISOs, for example a
 cable-check ISO, can reuse both, or the `efi-boot` and `iso-tools` stages. The
 kernel command line of an ISO boot is
-`console=tty0 console=ttyS0,115200n8 loglevel=4`: the console shows kernel
-errors only, and BOOTy logs the Secure Boot and lockdown state itself
+`console=tty0 console=ttyS0,115200n8 loglevel=4 panic=10`: the console shows
+kernel errors only, and BOOTy logs the Secure Boot and lockdown state itself
 (`kernel security state`).
+
+Without a `panic=` parameter on the kernel command line (before `--`),
+BOOTy sets `kernel.panic` to 10 when it starts as PID 1, so a kernel panic, also the "Attempted
+to kill init" panic when BOOTy itself crashes, reboots the host after 10 s
+instead of hanging; the ramdisk then boots again, as after a failed run. An
+explicit `panic=` (for example `panic=0` to keep a panicked host) wins. The
+CAPRF ISOs set no `panic=`, so this covers them without a CAPRF change.
 The ISOs are amd64 only.
 
 Neither boot loader waits. ISOLINUX (BIOS) has no `PROMPT` or `TIMEOUT`, so

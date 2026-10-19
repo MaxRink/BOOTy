@@ -130,6 +130,7 @@ func main() {
 		return
 	}
 	startPID1ChildReaper(ctx, os.Getpid())
+	setPanicReboot()
 	loadModules()
 	// The disk selection waits for the block devices to settle; count
 	// their settle time from here, while the network comes up.

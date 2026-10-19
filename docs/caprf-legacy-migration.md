@@ -98,11 +98,22 @@ Status values:
 | `sync` before the handoff | `sync` before reboot, power off and kexec | Same | Merged (#623, #597) | Not needed |
 | Failure: `fail()` posts to `ERROR_URL`, the ramdisk stays up | Report the error. Provision applies `RESCUE_MODE` (default `reboot`). Deprovision reboots. | Report the error and wait. An explicit `RESCUE_MODE` still wins for provision. | Merged (#585) | `FAILURE_ACTION=wait` |
 | Failure before the task (network, JWT) or JWT renewal failure: `fail()` | Reboot | Report the error and wait | Merged (#585) | `FAILURE_ACTION=wait` |
+| Kernel panic, also a crash of the init process: the legacy boot entries set no `panic=`, so the host hangs until a power cycle | `kernel.panic=10` when BOOTy runs as PID 1 and the kernel command line has no `panic=`: the host reboots 10 s after the panic and boots the ramdisk again | Same | Deliberately different (#765) | `panic=` on the kernel command line wins (`panic=0` keeps the hang) |
 | `/deploy/vars` is a shell script that `source` runs | Parsed as data: no variable expansion, no command substitution | Same | Deliberately different | Not needed |
 | No target OS check | `TARGET_OS=linux` or `PROVISION_TARGET_OS=linux` required for provisioning | Same | Deliberately different | Not needed |
 | `MODE=decommission` (`force-clean`): `decommission_wipe`, `remove_all_efi_boot_entries`, power off | Wipe every disk with `sgdisk` and `wipefs`, remove every `BootOrder` entry, log failures and continue, reboot | Same, plus `blkdiscard` on every NVMe disk first, then power off | Merged (#586) | `SUCCESS_ACTION=poweroff`, `DISCARD_NVME=true` |
 | EFI boot entries: `mount_efi_vars`, `efibootmgr -c` (provision), `remove_efi_boot_entries` (deprovision) under `set -e` on UEFI; skipped on BIOS | Same: a failure fails the run on UEFI, BIOS skips. Deprovision removes the entries before the wipe (legacy: after). | Same | #669 | `EFI_BOOT_ENTRY_REQUIRED=false` turns "EFI variables unavailable" into warnings |
 | Soft deprovision: rename `grub.cfg` | Rename `grub.cfg` to `grub.cfg.bak` in `/boot/grub` and `/boot/grub2`. An existing `grub.cfg.bak` counts as done. No config at all, or an unmount failure after the rename, is an error. | Same, the disk is selected like `_select_single_disk` | Merged (#590), `/boot/grub2` and errors in #635 | `DISK_SELECTION=lsblk` |
+
+A reboot after a panic cannot loop forever. CAPRF bounds every attempt by
+`--provision-timeout` (default 30 minutes, CAPRF `main.go` and
+`internal/provision/manager.go` `context.WithTimeoutCause`), allows 3
+provisioning attempts before `RetriesExhausted` (`maxProvisionAttempts` in
+`internal/provision/manager.go`), and ejects the virtual media when an
+attempt fails (`cleanupFailedVirtualMedia` in the step executor). A ramdisk
+that panics on every boot therefore ends after at most 3 attempts of 30
+minutes. A hung host, as with the legacy boot entries, also ends by the
+timeout, but stays hung until someone power cycles it.
 
 ### Disks
 
