@@ -35,7 +35,7 @@ type WatchdogConfig struct {
 	Handoff string `yaml:"handoff" json:"handoff"`
 
 	// IPMIFallback arms the BMC watchdog through IPMI (Set Watchdog Timer)
-	// when no watchdog device exists. It needs ipmitool and /dev/ipmi0.
+	// when no watchdog device exists. It needs /dev/ipmi0.
 	// Default: false
 	IPMIFallback bool `yaml:"ipmiFallback" json:"ipmiFallback"`
 

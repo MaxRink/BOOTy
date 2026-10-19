@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// bmcCommandTimeout bounds one ipmitool call.
+// bmcCommandTimeout bounds one IPMI command.
 const bmcCommandTimeout = 20 * time.Second
 
 // bmcWatchdog is the BMC watchdog command set of *ipmi.Manager.

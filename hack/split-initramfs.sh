@@ -27,11 +27,10 @@ build=${3:?usage: split-initramfs.sh <full-root> <out-dir> <build>}
 payload_files() {
 	case "$1" in
 	frr) echo sbin/bgpd sbin/zebra sbin/bfdd bin/vtysh sbin/watchfrr ;;
-	ipmitool) echo bin/ipmitool ;;
 	*) echo "split-initramfs: unknown payload $1" >&2; exit 1 ;;
 	esac
 }
-payloads="frr ipmitool"
+payloads="frr"
 
 # The Debian architecture name is the GOARCH of BOOTy (amd64, arm64).
 arch=$(dpkg --print-architecture)

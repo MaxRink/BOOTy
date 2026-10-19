@@ -506,7 +506,7 @@ func runCAPRF(ctx context.Context) {
 	if cfg.DryRun {
 		cfg.Mode = "dry-run"
 	}
-	if err := checkPayloads(cfg); err != nil {
+	if err := checkPayloads(); err != nil {
 		code := provision.CodeOf(provision.WithCode("check-payloads", err))
 		failRun(ctx, cfg, client, "check-payloads", code, fmt.Sprintf("ramdisk payload check failed [%s]: %v", code, err), reboot)
 		return

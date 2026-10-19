@@ -76,13 +76,52 @@ func TestWatchdogCleanRunDisarmsQEMU(t *testing.T) {
 	}
 }
 
+// TestWatchdogIPMIFallbackHungStepResetsQEMU has no watchdog device but a
+// simulated BMC (QEMU ipmi-bmc-sim behind an ISA KCS interface). With
+// WATCHDOG_IPMI_FALLBACK BOOTy arms the BMC watchdog over /dev/ipmi0, in
+// process, without ipmitool. A hung step stops the keepalive, and the BMC
+// resets the guest.
+func TestWatchdogIPMIFallbackHungStepResetsQEMU(t *testing.T) {
+	output, caprf := runWatchdogProvisionWith(t, ipmiBMCQEMUArgs, kernelModuleFiles(t, "ipmi_si", "ipmi_devintf"), map[string]string{
+		"WATCHDOG_ENABLE":        "true",
+		"WATCHDOG_IPMI_FALLBACK": "true",
+		"WATCHDOG_TIMEOUT_SEC":   "60",
+		"WATCHDOG_STEP_BUDGETS":  `{"run-machine-commands":15}`,
+		"MACHINE_COMMANDS_MODE":  "script",
+	}, map[string]string{
+		"deploy/machine-commands/commands-0.sh": "#!/bin/sh\n/bin/busybox sleep 3600\n",
+	})
+	text := string(output)
+	requireWatchdogArmed(t, output)
+	if !strings.Contains(text, "device=ipmi-bmc") {
+		t.Fatalf("BOOTy did not arm the BMC watchdog. tail:\n%s", tail(output, 4000))
+	}
+	if !stallStatusLine.MatchString(text) {
+		t.Fatalf("no BOOTY1 status line with code=BOOTY-WDT-001 step=run-machine-commands. tail:\n%s", tail(output, 4000))
+	}
+	for _, bad := range []string{"reboot: Restarting system", "reboot: Power down", "disarming the watchdog"} {
+		if strings.Contains(text, bad) {
+			t.Fatalf("output contains %q: BOOTy ended the run, not the BMC. tail:\n%s", bad, tail(output, 4000))
+		}
+	}
+	caprf.requireStatuses(t, "init")
+}
+
+// ipmiBMCQEMUArgs gives the guest a simulated BMC with an IPMI watchdog.
+// The firmware describes the KCS interface in ACPI, so ipmi_si finds it.
+const ipmiBMCQEMUArgs = "-device ipmi-bmc-sim,id=bmc0 -device isa-ipmi-kcs,bmc=bmc0"
+
 func runWatchdogProvision(t *testing.T, extraVars, extraFiles map[string]string) ([]byte, *fakeCAPRF) {
+	t.Helper()
+	return runWatchdogProvisionWith(t, watchdogQEMUArgs, watchdogModuleFiles(t), extraVars, extraFiles)
+}
+
+func runWatchdogProvisionWith(t *testing.T, qemuArgs string, files, extraVars, extraFiles map[string]string) ([]byte, *fakeCAPRF) {
 	t.Helper()
 	requireRoot(t)
 	qemuAvailable(t)
 	requireProvisionTools(t)
 
-	files := watchdogModuleFiles(t)
 	for k, v := range extraFiles {
 		files[k] = v
 	}
@@ -101,7 +140,7 @@ func runWatchdogProvision(t *testing.T, extraVars, extraFiles map[string]string)
 	}
 	initramfs := buildProvisionInitramfsWithFiles(t, vars, files)
 
-	t.Setenv("QEMU_EXTRA_ARGS", strings.TrimSpace(os.Getenv("QEMU_EXTRA_ARGS")+" "+watchdogQEMUArgs))
+	t.Setenv("QEMU_EXTRA_ARGS", strings.TrimSpace(os.Getenv("QEMU_EXTRA_ARGS")+" "+qemuArgs))
 	output := runQEMUProvision(t, findKernel(t), initramfs, targetDisk, 8*time.Minute)
 	t.Logf("watchdog output tail:\n%s", tail(output, 3000))
 	return output, caprf
@@ -118,6 +157,18 @@ func requireWatchdogArmed(t *testing.T, output []byte) {
 // the host kernel, uncompressed, under modules/watchdog: BOOTy loads them
 // with finit_module, which takes plain modules.
 func watchdogModuleFiles(t *testing.T) map[string]string {
+	t.Helper()
+	files := kernelModuleFiles(t, "i6300esb")
+	if _, ok := files["modules/watchdog/i6300esb.ko"]; !ok && !builtinModule(kernelRelease(), "i6300esb") {
+		failOrSkipUnsupportedHost(t, "the host kernel %s has no i6300esb watchdog driver", kernelRelease())
+	}
+	return files
+}
+
+// kernelModuleFiles returns the modules and their dependencies of the host
+// kernel, uncompressed, under modules/watchdog, which BOOTy loads with
+// WATCHDOG_ENABLE. A built-in module has no file.
+func kernelModuleFiles(t *testing.T, modules ...string) map[string]string {
 	t.Helper()
 	release := kernelRelease()
 	files := map[string]string{}
@@ -136,9 +187,8 @@ func watchdogModuleFiles(t *testing.T) map[string]string {
 		}
 		files["modules/watchdog/"+module+".ko"] = string(readKernelModule(t, path))
 	}
-	add("i6300esb", map[string]bool{})
-	if _, ok := files["modules/watchdog/i6300esb.ko"]; !ok && !builtinModule(release, "i6300esb") {
-		failOrSkipUnsupportedHost(t, "the host kernel %s has no i6300esb watchdog driver", release)
+	for _, m := range modules {
+		add(m, map[string]bool{})
 	}
 	return files
 }

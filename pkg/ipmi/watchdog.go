@@ -10,9 +10,9 @@ import (
 
 // BMC watchdog commands (IPMI v2.0 section 27, NetFn App).
 const (
-	netFnApp            = "0x06"
-	cmdResetWatchdog    = "0x22"
-	cmdSetWatchdog      = "0x24"
+	netFnApp            = 0x06
+	cmdResetWatchdog    = 0x22
+	cmdSetWatchdog      = 0x24
 	watchdogUseSMSOS    = 0x04 // timer use SMS/OS, the timer stops on Set
 	watchdogActionNone  = 0x00
 	watchdogActionReset = 0x01 // hard reset at expiry
@@ -35,7 +35,10 @@ func (m *Manager) SetWatchdog(ctx context.Context, timeout time.Duration) error 
 
 // ResetWatchdog restarts the BMC watchdog countdown (pets it).
 func (m *Manager) ResetWatchdog(ctx context.Context) error {
-	return m.run(ctx, "raw", netFnApp, cmdResetWatchdog)
+	if _, err := m.send(ctx, netFnApp, cmdResetWatchdog, nil); err != nil {
+		return fmt.Errorf("reset BMC watchdog: %w", err)
+	}
+	return nil
 }
 
 // StopWatchdog stops the BMC watchdog: a Set without the "don't stop" bit
@@ -46,9 +49,9 @@ func (m *Manager) StopWatchdog(ctx context.Context) error {
 
 func (m *Manager) setWatchdog(ctx context.Context, action byte, timeout time.Duration) error {
 	count := uint16(timeout / (100 * time.Millisecond))
-	return m.run(ctx, "raw", netFnApp, cmdSetWatchdog,
-		hexByte(watchdogUseSMSOS), hexByte(action), hexByte(0), hexByte(watchdogClearSMSOS),
-		hexByte(byte(count)), hexByte(byte(count>>8)))
+	data := []byte{watchdogUseSMSOS, action, 0, watchdogClearSMSOS, byte(count), byte(count >> 8)}
+	if _, err := m.send(ctx, netFnApp, cmdSetWatchdog, data); err != nil {
+		return fmt.Errorf("set BMC watchdog: %w", err)
+	}
+	return nil
 }
-
-func hexByte(b byte) string { return fmt.Sprintf("0x%02x", b) }

@@ -140,6 +140,7 @@ provision or deprovision that names its disk, after "network ready".
 | Drop `lldpcli -f xml` (`libxml2`) | measured | 0.75 MB | superseded: lldpd and lldpcli are dropped, see below |
 | Drop lldpd and lldpcli (`booty lldp` diagnoses LLDP, #735) | yes | default 1.02 MB, gobgp 1.01 MB | done, #812 |
 | ipmitool without FreeIPMI | measured | 1.15 MB | rejected: loses the `-I free` interface |
+| BMC watchdog over `/dev/ipmi0` in BOOTy instead of `ipmitool` (libfreeipmi) | yes | default 1.27 MB, gobgp 1.25 MB, split `ipmitool.cpio.zst` 1.29 MB | done, #816; the shell has no `ipmitool` |
 | Drop `vtysh` | measured | 2.05 MB | rejected: FRR mode and its diagnostics use it |
 | Merge `booty-esp-sync` into `init` | measured | 0.62 MB | rejected: it is installed on the target as its own binary |
 | qcow2 to raw in BOOTy instead of `qemu-img` (glib, liburing, libaio, libnuma) | yes | default 1.30 MB, gobgp 1.30 MB, split `qemu-img.cpio.zst` 1.36 MB | done, #815 |
@@ -148,7 +149,7 @@ provision or deprovision that names its disk, after "network ready".
 | GRUB `timeout=0` (UEFI) | no | 1 s | not done: removes the chance to edit the kernel command line |
 | Faster first retries of the connectivity check (1 s ticker) | no | about 0.4 s on average when the route comes up late | open |
 | DHCP single-NIC settle (3 s, same NIC wait as #760) | no | 3 s for single-NIC DHCP hosts | open: the wait guards the containerlab fabric |
-| Optional payloads as a second initrd | yes | FRR 4.8 MB, ipmitool 1.3 MB | done, #782 (`split` target); qemu-img is no payload since #815 |
+| Optional payloads as a second initrd | yes | FRR 4.8 MB | done, #782 (`split` target); qemu-img and ipmitool are no payloads since #815 and #816 |
 
 The CI size budgets (`test/e2e/build_flavours_e2e_test.go`,
 `.github/workflows/pr-artifacts.yml`) are set about 5% above `main` so a

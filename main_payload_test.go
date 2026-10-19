@@ -35,46 +35,22 @@ func splitRamdisk(t *testing.T, split string, loaded ...string) {
 	payload.Dir, Build = dir, "b1"
 }
 
+// checkPayloads refuses a payload archive of another build.
 func TestCheckPayloads(t *testing.T) {
-	qcow2 := func(c *config.MachineConfig) { c.Provision.Image.URLs = []string{"https://img/x.qcow2.zst"} }
-	ipmi := func(c *config.MachineConfig) { c.Watchdog.Enable, c.Watchdog.IPMIFallback = true, true }
 	for _, tt := range []struct {
-		name   string
-		loaded []string
-		build  string
-		set    func(*config.MachineConfig)
-		code   string
+		name  string
+		build string
+		code  string
 	}{
-		{name: "raw image, no watchdog", set: func(*config.MachineConfig) {}},
-		// BOOTy converts qcow2 in process.
-		{name: "qcow2 image", set: qcow2},
-		{name: "IPMI fallback without ipmitool", set: ipmi, code: provision.CodePayloadMissing},
-		{name: "IPMI fallback with ipmitool", loaded: []string{"ipmitool"}, set: ipmi},
-		{name: "payload of another build", loaded: []string{"ipmitool"}, build: "b2", set: ipmi, code: "BOOTY-PAY-002"},
-		{name: "IPMI fallback alone", set: func(c *config.MachineConfig) { c.Watchdog.IPMIFallback = true }},
-		{name: "watchdog alone", set: func(c *config.MachineConfig) { c.Watchdog.Enable = true }},
-		{name: "dry run with the IPMI fallback and a qcow2 image", set: func(c *config.MachineConfig) {
-			ipmi(c)
-			qcow2(c)
-			c.Mode = "dry-run"
-		}},
-		{name: "DRY_RUN=true with the IPMI fallback", set: func(c *config.MachineConfig) {
-			ipmi(c)
-			c.DryRun = true
-		}},
-		{name: "qcow2 image in a deprovision", set: func(c *config.MachineConfig) {
-			qcow2(c)
-			c.Mode = "deprovision"
-		}},
+		{name: "payload of this build"},
+		{name: "payload of another build", build: "b2", code: "BOOTY-PAY-002"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			splitRamdisk(t, "frr ipmitool", tt.loaded...)
+			splitRamdisk(t, "frr", "frr")
 			if tt.build != "" {
 				Build = tt.build
 			}
-			cfg := &config.MachineConfig{}
-			tt.set(cfg)
-			err := checkPayloads(cfg)
+			err := checkPayloads()
 			if got := provision.CodeOf(provision.WithCode("check-payloads", err)); got != tt.code {
 				t.Fatalf("code = %q (%v), want %q", got, err, tt.code)
 			}
@@ -85,7 +61,7 @@ func TestCheckPayloads(t *testing.T) {
 // FRR mode on a split ramdisk without the FRR archive fails with the
 // payload code instead of falling back to DHCP.
 func TestSetupNetworkModeFRRWithoutPayload(t *testing.T) {
-	splitRamdisk(t, "frr ipmitool")
+	splitRamdisk(t, "frr")
 	cfg := &config.MachineConfig{}
 	cfg.Network.BGP.ASN = 65000
 	cfg.Network.EVPN.UnderlayIP = "10.0.0.1"
@@ -99,7 +75,7 @@ func TestSetupNetworkModeFRRWithoutPayload(t *testing.T) {
 // The network setup error keeps the payload code instead of the generic
 // network setup code (provision.WithCode in setupNetworkAndTokenFlow).
 func TestSetupNetworkAndTokenFlowKeepsThePayloadCode(t *testing.T) {
-	splitRamdisk(t, "frr ipmitool")
+	splitRamdisk(t, "frr")
 	cfg := &config.MachineConfig{}
 	cfg.Network.BGP.ASN = 65000
 	cfg.Network.EVPN.UnderlayIP = "10.0.0.1"

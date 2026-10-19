@@ -210,7 +210,7 @@ jobs:
             # Base ramdisk plus one archive per payload (pkg/payload).
             # SHA256SUMS lists the unprefixed names; it pins the whole set.
             (cd out-split && sha256sum -c --quiet SHA256SUMS)
-            for part in base frr ipmitool; do
+            for part in base frr; do
               cp "out-split/${part}.cpio.zst" "split-${{ matrix.arch }}-${part}.cpio.zst"
               sha256sum "split-${{ matrix.arch }}-${part}.cpio.zst" > "split-${{ matrix.arch }}-${part}.cpio.zst.sha256"
             done

@@ -5,15 +5,12 @@ package runmode
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/caprf"
 	"github.com/telekom/BOOTy/pkg/config"
-	"github.com/telekom/BOOTy/pkg/payload"
 )
 
 const payloadTestBaseVars = `MODE=standby
@@ -374,41 +371,5 @@ func TestStandbyCopiesRamdiskFilesOnlyAfterAnArchive(t *testing.T) {
 	}
 	if copies != 0 {
 		t.Fatalf("ramdisk copies = %d without an archive, want 0", copies)
-	}
-}
-
-// A command that needs a payload the split ramdisk lacks is rejected up
-// front with BOOTY-PAY-001, and standby goes on.
-func TestStandbyRejectsCommandThatNeedsAMissingPayload(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "payloads")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "split"), []byte("frr ipmitool\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	orig := payload.Dir
-	t.Cleanup(func() { payload.Dir = orig })
-	payload.Dir = dir
-
-	ran := false
-	mode, provider := payloadStandby(t, []config.Command{
-		{ID: "p1", Type: "provision", Payload: []byte("WATCHDOG_ENABLE=true\nWATCHDOG_IPMI_FALLBACK=true\n")},
-		{ID: "r1", Type: "reboot"},
-	}, func(*config.MachineConfig) error { ran = true; return nil })
-
-	err := mode.Run(context.Background())
-	var rebootErr *RebootRequestedError
-	if !errors.As(err, &rebootErr) {
-		t.Fatalf("Run error = %T %[1]v, want standby to go on to the reboot command", err)
-	}
-	if ran {
-		t.Fatal("the command ran without its payload")
-	}
-	if !slices.Equal(provider.acks, []string{"p1:failed", "r1:completed"}) {
-		t.Fatalf("acks = %v", provider.acks)
-	}
-	if !strings.Contains(provider.ackMessages[0], "[BOOTY-PAY-001]") {
-		t.Fatalf("ack message = %q, want the payload code", provider.ackMessages[0])
 	}
 }

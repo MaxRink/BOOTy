@@ -28,7 +28,7 @@ var watchdogModuleDir = "/modules/watchdog"
 var (
 	openWatchdogDevice = watchdog.OpenFirst
 	openBMCWatchdog    = func(timeout time.Duration) (watchdog.Device, error) {
-		return watchdog.OpenBMC(ipmi.New(nil), timeout)
+		return watchdog.OpenBMC(ipmi.New(), timeout)
 	}
 )
 

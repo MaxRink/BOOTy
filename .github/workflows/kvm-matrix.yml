@@ -207,8 +207,9 @@ jobs:
             test_regex: "^TestWatchdog.*QEMU$"
             privileged: true
             setup: ""
-            # Two QEMU runs with an i6300esb watchdog.
-            go_timeout: 25m
+            # Two QEMU runs with an i6300esb watchdog, one with a simulated
+            # BMC (IPMI fallback).
+            go_timeout: 35m
           # Times a deprovision + provision cycle, cold (two ISO boots) and
           # through the standby agent. Writes cycle-timing.json and the job
           # summary, compared with the report of main.

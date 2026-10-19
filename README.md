@@ -186,7 +186,7 @@ The `initrd.Dockerfile` supports multiple build targets via `--target`:
 | `split` | see below | as the default | as the default | The default ramdisk as a base archive plus one archive per optional payload |
 
 The `split` target writes `base.cpio.zst`, one archive per payload
-(`frr.cpio.zst`, `ipmitool.cpio.zst`), the `vmlinuz`
+(`frr.cpio.zst`), the `vmlinuz`
 whose modules the base carries, and `SHA256SUMS` over all of them. The boot
 loader loads the base and, after it, only the payloads that the run needs.
 The kernel unpacks them over each other (ISOLINUX
@@ -196,7 +196,6 @@ The kernel unpacks them over each other (ISOLINUX
 | Payload | Load it for |
 |---|---|
 | `frr` | FRR network mode (`asn_server` with `underlay_ip` or `underlay_subnet`, no `NETWORK_MODE=gobgp`) |
-| `ipmitool` | `WATCHDOG_ENABLE` with `WATCHDOG_IPMI_FALLBACK` |
 
 Each payload archive carries `/etc/booty/payloads/<name>` with the build
 ID, and BOOTy refuses a payload of another build (`BOOTY-PAY-002`). A run
@@ -1038,7 +1037,7 @@ Debian 6.12 kernel:
 | SCSI `SG_IO` and NVMe admin ioctls | `hdparm`, `sg_sanitize`, `sg_format`, `nvme` | work |
 | PCI config space writes (`/sys/bus/pci/devices/*/config`) and PCI BAR `mmap` | `mstflint`, `mstconfig` (Mellanox SR-IOV, `NUM_VFS`) | refused: in-band Mellanox firmware configuration fails; configure SR-IOV out of band or with Secure Boot off |
 | `/dev/mem`, `/dev/port`, `ioperm` | `dmidecode` fallback only (it reads `/sys/firmware/dmi/tables` first) | refused |
-| `/dev/ipmi0` | `ipmitool` | not restricted by lockdown (not measured: no IPMI device in QEMU) |
+| `/dev/ipmi0` | BMC watchdog of `WATCHDOG_IPMI_FALLBACK` | not restricted by lockdown |
 
 ### LUKS Encryption (Planned)
 
@@ -1389,19 +1388,12 @@ gateways, DNS, and VLAN assignments where the selected writer supports them.
 
 ### IPMI Operations
 
-BOOTy includes an IPMI manager (`pkg/ipmi/`) for local BMC operations via
-`ipmitool`. This package is a library; it is not currently wired into the
-automatic provisioning, debug, or inventory flows.
-
-| Operation | Description |
-|-----------|-------------|
-| `GetBMCNetwork` | Read BMC IP, netmask, gateway, MAC, DHCP, and VLAN settings |
-| `SetNextBoot` | Set next boot device: `pxe`, `disk`, `cdrom`, `bios` |
-| `ChassisControl` | Power on/off/cycle/reset/soft |
-
-No vars key enables automatic IPMI use today. Sensor reading,
-chassis status reporting, and BMC auto-detection are tracked in the IPMI
-proposal docs but are not implemented in the runtime package.
+`pkg/ipmi` sends IPMI commands to the local BMC in process, through
+`/dev/ipmi0` (`ipmi_devintf`, like `ipmitool -I open`). BOOTy uses it only
+for the BMC watchdog of `WATCHDOG_IPMI_FALLBACK`. The ramdisks do not ship
+`ipmitool`; for BMC network settings, the boot device or the power state use
+the BMC (Redfish, its web interface or `ipmitool -I lanplus` from another
+host).
 
 ### TPM Support
 

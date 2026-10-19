@@ -573,8 +573,9 @@ of waiting for the CAPRF provision timeout.
   without it keeps its firmware watchdog behaviour. BOOTy sets the timeout
   with `WDIOC_SETTIMEOUT` and uses the value that the driver reports.
 - IPMI fallback: without a device and with `WATCHDOG_IPMI_FALLBACK=true`,
-  BOOTy programs the BMC watchdog with `ipmitool raw 0x06 0x24` (Set Watchdog
-  Timer, hard reset) and pets it with `raw 0x06 0x22` (Reset Watchdog Timer).
+  BOOTy programs the BMC watchdog over `/dev/ipmi0` with Set Watchdog Timer
+  (NetFn 0x06, command 0x24, hard reset) and pets it with Reset Watchdog Timer
+  (command 0x22). It sends the commands itself; the ramdisk has no `ipmitool`.
 - Progress: BOOTy pets every third of the timeout. During a provisioning or
   deprovisioning step it pets only while the step makes progress: the step
   start counts, and so do written image bytes and every finished disk
@@ -623,7 +624,7 @@ of waiting for the CAPRF provision timeout.
 | `WATCHDOG_TIMEOUT_SEC` | `0` (300) | integer, seconds, 10-3600 | Hardware timeout, and the default step budget. The driver may round it. YAML `watchdog.timeoutSeconds`. |
 | `WATCHDOG_DEVICE` | (unset) (`/dev/watchdog0`, then `/dev/watchdog`) | clean absolute path under `/dev/` | Watchdog device. YAML `watchdog.device`. |
 | `WATCHDOG_HANDOFF` | (unset) (`stop`) | `stop`, `keep` | `stop` disarms the watchdog at kexec and reboot; `keep` leaves it armed for the target OS. A power off always disarms it. YAML `watchdog.handoff`. |
-| `WATCHDOG_IPMI_FALLBACK` | `false` | boolean | Arm the BMC watchdog through IPMI when no watchdog device exists. Needs `ipmitool` and `/dev/ipmi0`. YAML `watchdog.ipmiFallback`. |
+| `WATCHDOG_IPMI_FALLBACK` | `false` | boolean | Arm the BMC watchdog through IPMI when no watchdog device exists. Needs `/dev/ipmi0` (the ramdisk loads `ipmi_si` and `ipmi_devintf`). YAML `watchdog.ipmiFallback`. |
 | `WATCHDOG_STEP_BUDGETS` | (unset) | JSON object, step name to seconds (1-86400) | Time a step may run without progress, for example `{"wipe-disks":28800}`. Overrides the built-in budgets. YAML `watchdog.stepBudgets`. |
 
 ## Process environment

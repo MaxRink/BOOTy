@@ -1,222 +1,181 @@
 //go:build linux
 
+// Package ipmi sends IPMI commands to the local BMC in process, through the
+// Linux IPMI device interface (/dev/ipmi0 of ipmi_devintf), like
+// `ipmitool -I open`.
 package ipmi
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"log/slog"
-	"net"
-	"strconv"
-	"strings"
+	"os"
+	"runtime"
+	"sync/atomic"
+	"time"
+	"unsafe"
 
-	"github.com/telekom/BOOTy/pkg/executil"
+	"golang.org/x/sys/unix"
 )
 
-// Manager handles local IPMI operations via ipmitool.
+// DevicePath is the IPMI device of the first BMC.
+const DevicePath = "/dev/ipmi0"
+
+// Manager sends IPMI commands to the local BMC.
 type Manager struct {
-	deviceNum string
-	runner    executil.Commander
-	log       *slog.Logger
+	send func(ctx context.Context, netFn, cmd byte, data []byte) ([]byte, error)
 }
 
-// New creates an IPMI manager.
-func New(log *slog.Logger) *Manager {
-	if log == nil {
-		log = slog.Default()
-	}
-	return &Manager{
-		deviceNum: "0",
-		runner:    &executil.ExecCommander{},
-		log:       log,
-	}
+// New returns a Manager for the BMC at DevicePath.
+func New() *Manager {
+	return &Manager{send: func(ctx context.Context, netFn, cmd byte, data []byte) ([]byte, error) {
+		return sendDevice(ctx, DevicePath, netFn, cmd, data)
+	}}
 }
 
-// BMCNetConfig holds BMC network configuration.
-type BMCNetConfig struct {
-	IPAddress   string `json:"ipAddress"`
-	Netmask     string `json:"netmask"`
-	Gateway     string `json:"gateway"`
-	MACAddress  string `json:"macAddress"`
-	DHCP        bool   `json:"dhcp"`
-	VLANEnabled bool   `json:"vlanEnabled"`
-	VLANID      int    `json:"vlanId"`
-}
-
-// SensorReading represents an IPMI sensor value.
-type SensorReading struct {
-	Name      string  `json:"name"`
-	Value     float64 `json:"value"`
-	Unit      string  `json:"unit"`
-	Status    string  `json:"status"`
-	LowerCrit float64 `json:"lowerCrit,omitempty"`
-	UpperCrit float64 `json:"upperCrit,omitempty"`
-}
-
-// BootDevice represents an IPMI boot target.
-type BootDevice string
-
+// The kernel ABI of <linux/ipmi.h>, with the natural alignment of C.
 const (
-	// BootPXE boots from network.
-	BootPXE BootDevice = "pxe"
-	// BootDisk boots from local disk.
-	BootDisk BootDevice = "disk"
-	// BootCDROM boots from CD/DVD.
-	BootCDROM BootDevice = "cdrom"
-	// BootBIOS enters BIOS setup.
-	BootBIOS BootDevice = "bios"
+	systemInterfaceAddrType = 0x0c // IPMI_SYSTEM_INTERFACE_ADDR_TYPE
+	bmcChannel              = 0x0f // IPMI_BMC_CHANNEL
+	responseRecvType        = 1    // IPMI_RESPONSE_RECV_TYPE
+	maxAddrSize             = 32   // IPMI_MAX_ADDR_SIZE
+	maxMsgLength            = 272  // IPMI_MAX_MSG_LENGTH
+	ipmiIOC                 = 'i'
+	// defaultTimeout bounds a command without a context deadline.
+	defaultTimeout = 5 * time.Second
 )
 
-// ChassisStatus holds chassis power state information.
-type ChassisStatus struct {
-	PowerOn    bool   `json:"powerOn"`
-	PowerFault bool   `json:"powerFault"`
-	Intrusion  bool   `json:"intrusion"`
-	LastEvent  string `json:"lastEvent"`
+type systemInterfaceAddr struct {
+	addrType int32
+	channel  int16
+	lun      uint8
 }
 
-// GetBMCNetwork reads the BMC network configuration.
-func (m *Manager) GetBMCNetwork(ctx context.Context, channel int) (*BMCNetConfig, error) {
-	out, err := m.output(ctx, "lan", "print", fmt.Sprintf("%d", channel))
+type msg struct {
+	netFn   uint8
+	cmd     uint8
+	dataLen uint16
+	data    unsafe.Pointer
+}
+
+type req struct {
+	addr    unsafe.Pointer
+	addrLen uint32
+	msgID   int64
+	msg     msg
+}
+
+type recv struct {
+	recvType int32
+	addr     unsafe.Pointer
+	addrLen  uint32
+	msgID    int64
+	msg      msg
+}
+
+// ioctl request numbers: _IOR('i', 13, struct ipmi_req) and
+// _IOWR('i', 11, struct ipmi_recv).
+var (
+	ipmictlSendCommand     = ioc(2, 13, unsafe.Sizeof(req{}))
+	ipmictlReceiveMsgTrunc = ioc(3, 11, unsafe.Sizeof(recv{}))
+)
+
+func ioc(dir, nr, size uintptr) uintptr {
+	return dir<<30 | size<<16 | ipmiIOC<<8 | nr
+}
+
+var msgIDs atomic.Int64
+
+// sendDevice sends one command to the BMC and returns the response data
+// after the completion code.
+func sendDevice(ctx context.Context, path string, netFn, cmd byte, data []byte) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDWR, 0) //nolint:gosec // fixed device path
 	if err != nil {
-		return nil, fmt.Errorf("get BMC network: %w", err)
+		return nil, fmt.Errorf("open IPMI device: %w", err)
 	}
+	defer func() { _ = f.Close() }()
+	fd := int(f.Fd()) //nolint:gosec // a file descriptor fits in int
 
-	fields := parseLanPrint(out)
-	vlanEnabled, vlanID := parseVLAN(fields)
-	return &BMCNetConfig{
-		IPAddress:   fields["IP Address"],
-		Netmask:     fields["Subnet Mask"],
-		Gateway:     fields["Default Gateway IP"],
-		MACAddress:  fields["MAC Address"],
-		DHCP:        strings.Contains(strings.ToLower(fields["IP Address Source"]), "dhcp"),
-		VLANEnabled: vlanEnabled,
-		VLANID:      vlanID,
-	}, nil
-}
-
-// SetNextBoot sets the boot device for the next boot only.
-func (m *Manager) SetNextBoot(ctx context.Context, device BootDevice) error {
-	if err := ValidateBootDevice(string(device)); err != nil {
-		return err
+	addr := systemInterfaceAddr{addrType: systemInterfaceAddrType, channel: bmcChannel}
+	id := msgIDs.Add(1)
+	r := req{
+		addr:    unsafe.Pointer(&addr), //nolint:gosec // struct ipmi_req of <linux/ipmi.h>
+		addrLen: uint32(unsafe.Sizeof(addr)),
+		msgID:   id,
+		msg:     msg{netFn: netFn, cmd: cmd, dataLen: uint16(len(data))}, //nolint:gosec // IPMI requests are short
 	}
-	return m.run(ctx, "chassis", "bootdev", string(device), "options=efiboot")
-}
-
-// ChassisControl sends a chassis control command (power on/off/cycle/reset).
-func (m *Manager) ChassisControl(ctx context.Context, action string) error {
-	switch action {
-	case "on", "off", "cycle", "reset", "soft":
-		return m.run(ctx, "chassis", "power", action)
-	default:
-		return fmt.Errorf("invalid chassis action: %q", action)
+	if len(data) > 0 {
+		r.msg.data = unsafe.Pointer(&data[0]) //nolint:gosec // struct ipmi_msg of <linux/ipmi.h>
 	}
+	err = ioctl(fd, ipmictlSendCommand, unsafe.Pointer(&r)) //nolint:gosec // IPMICTL_SEND_COMMAND
+	runtime.KeepAlive(&addr)
+	runtime.KeepAlive(data)
+	if err != nil {
+		return nil, fmt.Errorf("IPMI send netfn %#02x cmd %#02x: %w", netFn, cmd, err)
+	}
+	return receive(ctx, fd, id)
 }
 
-// DevicePath returns the IPMI device path.
-func (m *Manager) DevicePath() string {
-	return "/dev/ipmi" + m.deviceNum
-}
-
-// parseLanPrint parses "ipmitool lan print" output into a key-value map.
-func parseLanPrint(output string) map[string]string {
-	result := make(map[string]string)
-	for _, line := range strings.Split(output, "\n") {
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
+// receive waits for the response to message id. Other messages, such as
+// events, are dropped.
+func receive(ctx context.Context, fd int, id int64) ([]byte, error) {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		deadline = time.Now().Add(defaultTimeout)
+	}
+	for {
+		wait := time.Until(deadline)
+		if wait <= 0 {
+			return nil, fmt.Errorf("IPMI response: %w", context.DeadlineExceeded)
+		}
+		fds := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}} //nolint:gosec // fd fits in int32
+		n, err := unix.Poll(fds, int(wait.Milliseconds())+1)
+		if errors.Is(err, unix.EINTR) {
 			continue
 		}
-		key := strings.TrimSpace(parts[0])
-		val := strings.TrimSpace(parts[1])
-		result[key] = val
+		if err != nil {
+			return nil, fmt.Errorf("IPMI poll: %w", err)
+		}
+		if n == 0 {
+			continue // the deadline check above ends the loop
+		}
+		var addr [maxAddrSize]byte
+		buf := make([]byte, maxMsgLength)
+		rv := recv{
+			addr:    unsafe.Pointer(&addr[0]), //nolint:gosec // struct ipmi_recv of <linux/ipmi.h>
+			addrLen: maxAddrSize,
+			msg:     msg{dataLen: maxMsgLength, data: unsafe.Pointer(&buf[0])}, //nolint:gosec // struct ipmi_msg
+		}
+		err = ioctl(fd, ipmictlReceiveMsgTrunc, unsafe.Pointer(&rv)) //nolint:gosec // IPMICTL_RECEIVE_MSG_TRUNC
+		runtime.KeepAlive(&addr)
+		runtime.KeepAlive(buf)
+		// EMSGSIZE: the message was truncated to buf; the completion code
+		// is still the first byte.
+		if err != nil && !errors.Is(err, unix.EMSGSIZE) {
+			return nil, fmt.Errorf("IPMI receive: %w", err)
+		}
+		if rv.recvType != responseRecvType || rv.msgID != id {
+			continue
+		}
+		return completion(buf[:min(int(rv.msg.dataLen), len(buf))])
 	}
-	return result
 }
 
-func parseVLAN(fields map[string]string) (enabled bool, vlanID int) {
-	raw := strings.TrimSpace(fields["802.1q VLAN ID"])
-	if raw == "" {
-		return false, 0
+// completion checks the completion code, the first byte of a response.
+func completion(resp []byte) ([]byte, error) {
+	if len(resp) == 0 {
+		return nil, fmt.Errorf("IPMI response without a completion code")
 	}
-	lower := strings.ToLower(raw)
-	if strings.Contains(lower, "disabled") || lower == "off" || lower == "0" {
-		return false, 0
+	if resp[0] != 0 {
+		return nil, fmt.Errorf("IPMI completion code %#02x", resp[0])
 	}
-	if strings.HasPrefix(lower, "0x") {
-		if value, err := strconv.ParseUint(raw[2:], 16, 16); err == nil {
-			return true, int(value)
-		}
-	}
-	if value, err := strconv.ParseUint(raw, 10, 16); err == nil {
-		if value == 0 {
-			return false, 0
-		}
-		return true, int(value)
-	}
-	// Unknown but present value is treated as enabled with unspecified VLAN ID.
-	return true, 0
+	return resp[1:], nil
 }
 
-func (m *Manager) run(ctx context.Context, args ...string) error {
-	_, err := m.execIPMITool(ctx, args...)
-	if err != nil {
-		return err
+func ioctl(fd int, request uintptr, arg unsafe.Pointer) error {
+	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), request, uintptr(arg))
+	if errno != 0 {
+		return errno
 	}
 	return nil
-}
-
-func (m *Manager) output(ctx context.Context, args ...string) (string, error) {
-	return m.execIPMITool(ctx, args...)
-}
-
-func (m *Manager) execIPMITool(ctx context.Context, args ...string) (string, error) {
-	fullArgs := append([]string{"-I", "open", "-d", m.deviceNum}, args...)
-	m.log.Debug("executing ipmitool", "args", redactIPMIArgs(fullArgs))
-	out, err := m.runner.Run(ctx, "ipmitool", fullArgs...)
-	if err != nil {
-		return "", fmt.Errorf("ipmitool %s: %s: %w", strings.Join(redactIPMIArgs(args), " "), strings.TrimSpace(string(out)), err)
-	}
-	return string(out), nil
-}
-
-var sensitiveIPMIFlags = map[string]bool{
-	"-P": true, "--password": true,
-	"-U": true, "--username": true,
-	"-H": true, "--hostname": true,
-	"-K": true, "--kg-key": true,
-}
-
-func redactIPMIArgs(args []string) []string {
-	out := append([]string(nil), args...)
-	redacted := false
-	for i := 0; i < len(out)-1; i++ {
-		if !sensitiveIPMIFlags[out[i]] {
-			continue
-		}
-		out[i+1] = "[REDACTED]"
-		redacted = true
-	}
-	if !redacted {
-		return args
-	}
-	return out
-}
-
-// ParseBMCMAC parses a MAC address string into net.HardwareAddr.
-func ParseBMCMAC(mac string) (net.HardwareAddr, error) {
-	hw, err := net.ParseMAC(strings.TrimSpace(mac))
-	if err != nil {
-		return nil, fmt.Errorf("parse BMC MAC %q: %w", mac, err)
-	}
-	return hw, nil
-}
-
-// ValidateBootDevice checks if a boot device string is valid.
-func ValidateBootDevice(device string) error {
-	switch BootDevice(strings.TrimSpace(device)) {
-	case BootPXE, BootDisk, BootCDROM, BootBIOS:
-		return nil
-	default:
-		return fmt.Errorf("invalid boot device: %q", device)
-	}
 }

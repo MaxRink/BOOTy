@@ -1,4 +1,4 @@
-// Package payload checks the optional ramdisk payloads (FRR, ipmitool).
+// Package payload checks the optional ramdisk payloads (FRR).
 // A split build ships them as extra cpio archives that the boot
 // loader loads after the base initrd, only for the runs that need them
 // (docs/proposal-ramdisk-split.md).
@@ -21,11 +21,8 @@ import (
 	"strings"
 )
 
-// Payload names.
-const (
-	FRR      = "frr"
-	IPMITool = "ipmitool"
-)
+// FRR is the payload of the FRR daemons.
+const FRR = "frr"
 
 // Dir holds the payload manifests; tests change it.
 var Dir = "/etc/booty/payloads"

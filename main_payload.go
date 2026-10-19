@@ -4,21 +4,18 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"runtime"
 
-	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/payload"
-	"github.com/telekom/BOOTy/pkg/provision"
 )
 
 // checkPayloads runs before the network setup. It checks that every
-// payload archive is from the build of this BOOTy and that the ramdisk has
-// the payloads that the config needs (provision.RequirePayloads).
-func checkPayloads(cfg *config.MachineConfig) error {
-	return errors.Join(payload.Check(Build, runtime.GOARCH), provision.RequirePayloads(cfg))
+// payload archive is from the build of this BOOTy. FRR mode checks its
+// payload where the network stack is chosen (requireFRRPayload).
+func checkPayloads() error {
+	return payload.Check(Build, runtime.GOARCH) //nolint:wrapcheck // names the payload
 }
 
 // requireFRRPayload fails FRR network mode on a split ramdisk without the
