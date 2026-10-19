@@ -1820,6 +1820,7 @@ func applyOptionalBoolVar(cfg *config.MachineConfig, key, value string) (bool, e
 		"BGP_EBGP_REQUIRES_POLICY":   &cfg.Network.BGP.EBGPRequiresPolicy,
 		"BGP_GRACEFUL_RESTART":       &cfg.Network.BGP.GracefulRestart,
 		"BGP_GRACEFUL_NOTIFICATION":  &cfg.Network.BGP.GracefulNotification,
+		"BGP_CONNECT_AT_ONCE":        &cfg.Network.BGP.ConnectAtOnce,
 		"BGP_ADDPATH_RX":             &cfg.Network.BGP.AddPathReceive,
 		"BGP_SOFTWARE_VERSION":       &cfg.Network.BGP.SoftwareVersion,
 		"LLDP_RECEIVE":               &cfg.Network.LLDPReceive,

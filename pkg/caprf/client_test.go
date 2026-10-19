@@ -2943,6 +2943,7 @@ BGP_GRACEFUL_RESTART_TIME=60
 BGP_ADDPATH_RX=false
 BGP_SOFTWARE_VERSION=true
 BGP_GRACEFUL_NOTIFICATION=false
+BGP_CONNECT_AT_ONCE=true
 BGP_EBGP_REQUIRES_POLICY=false
 BRIDGE_MAC=02:54:c0:00:02:13
 VXLAN_LINK=dum.underlay
@@ -2960,6 +2961,9 @@ OVERLAY_VRF_TABLE_ID=20
 	}
 	if b.BFDDetectMultiplier != 4 {
 		t.Errorf("BFD_DETECT_MULTIPLIER = %d, want 4", b.BFDDetectMultiplier)
+	}
+	if b.ConnectAtOnce == nil || !*b.ConnectAtOnce {
+		t.Errorf("BGP_CONNECT_AT_ONCE = %v, want true", b.ConnectAtOnce)
 	}
 	if b.GracefulRestart == nil || *b.GracefulRestart || b.GracefulRestartTime != 60 ||
 		b.AddPathReceive == nil || *b.AddPathReceive || b.SoftwareVersion == nil || !*b.SoftwareVersion ||

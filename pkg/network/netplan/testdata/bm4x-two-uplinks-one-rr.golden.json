@@ -199,6 +199,7 @@
   "BGPLocalAS": 0,
   "BGPNeighborVRF": "",
   "BGPConnectRetry": 0,
+  "BGPConnectAtOnce": false,
   "BGPAllowASIn": 0,
   "BGPInstallRoutes": false,
   "BGPFastExternalFailover": null,

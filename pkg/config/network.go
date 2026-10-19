@@ -277,6 +277,14 @@ type BGPConfig struct {
 	// Default: 0 (5s, or the frr.conf value)
 	ConnectRetry uint32 `yaml:"connectRetry" json:"connectRetry"`
 
+	// ConnectAtOnce starts the first connect of a GoBGP peer at once when
+	// it leaves Idle, like FRR when BGP_Start runs, instead of after a
+	// random 1.5 to 2 s. Unset (nil) means off: after a carrier loss both
+	// sides then have a connect pending until the link works again, and
+	// the connection collision that follows is resolved per RFC 4271 6.8
+	// but made the production template lab fail now and then (#811).
+	ConnectAtOnce *bool `yaml:"connectAtOnce,omitempty" json:"connectAtOnce,omitempty"`
+
 	// LocalAS is the local AS that GoBGP sends to the unnumbered (eBGP)
 	// peers, like FRR "neighbor X local-as N no-prepend replace-as". An
 	// explicit value also replaces the local-as of frr.conf eBGP peers.

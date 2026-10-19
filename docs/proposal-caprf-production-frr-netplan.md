@@ -199,11 +199,15 @@ BFD). BOOTy implements a minimal BFD in its own package
 - BFD Up to Down stops the BGP session, like FRR 10.3 (`bgpd/bgp_bfd.c`
   `bfd_session_status_update`: Cease/BFD Down and `BGP_Stop`). FRR then
   waits `BGP_INIT_START_TIMER` (1 s) in Idle and connects again
-  (`bgp_stop_with_notify`). BOOTy uses GoBGP `ResetPeer` with an idle hold
-  time of 1 s after a reset (GoBGP default 30 s); GoBGP sends Cease
-  subcode 4, not 10. FRR also sends `BGP_Start` on BFD Up for a peer that
-  is not established; GoBGP has no API for it and connects 1 to 2 s after
-  Idle anyway. Every state change is logged.
+  (`bgp_stop_with_notify`). BOOTy uses GoBGP `ResetPeer` with `BfdDown`
+  and an idle hold time of 1 s after a reset (GoBGP default 30 s); with
+  the fork tag v4.10.0-booty.6 GoBGP sends Cease subcode 10 (BFD Down),
+  like FRR, and a reset also shortens an Idle hold that already runs.
+  FRR also sends `BGP_Start` on BFD Up for a peer that is not
+  established; GoBGP has no API for it. With `BGP_CONNECT_AT_ONCE`
+  (`ConnectAtOnce`, off by default because of connection collisions after
+  a carrier loss, #811) it connects at once when the peer leaves Idle,
+  else after 1.5 to 2 s. Every state change is logged.
 - Unit tests:
   - the state machine (RFC 5880 6.8.6 transitions)
   - detection time math (6.8.4)

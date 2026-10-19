@@ -150,12 +150,13 @@ func bfdTimers(txMS, rxMS, mult uint32) bfd.Timers {
 }
 
 // bfdChanged couples BFD to BGP like FRR 10.3 bgpd (bgp_bfd.c
-// bfd_session_status_update): BFD Up to Down ends the BGP session. GoBGP
-// sends Cease/Administrative Reset, not Cease/BFD Down (RFC 9384), and
-// connects again after idleHoldAfterReset. FRR also starts a connect at
-// BFD Up; GoBGP has no API for that, its Active state connects within
-// 1.5 to 2 s by itself (pkg/server/fsm.go:980-982: minConnectRetryInterval
-// 2 with 0.75 to 1 jitter since GoBGP v4.0.0).
+// bfd_session_status_update): BFD Up to Down ends the BGP session with
+// Cease/BFD Down (RFC 9384, bgp_bfd.c:70; ResetPeerRequest.BfdDown of the
+// GoBGP fork), and GoBGP connects again after idleHoldAfterReset. FRR
+// also starts a connect at BFD Up; GoBGP has no API for that. With
+// BGP_CONNECT_AT_ONCE (ConnectAtOnce) its Active state connects at once by
+// itself (the outgoingConnManager.run and connectLoop functions of the
+// fork); without it, after 1.5 to 2 s.
 //
 // Like bgpd, a BFD Down does not reset a BGP session that came up in the
 // same second (bss->last_event > peer->uptime, both in seconds): a
@@ -303,7 +304,9 @@ func (u *UnderlayTier) sessionState(ctx context.Context, addr string) (apipb.Pee
 }
 
 func (u *UnderlayTier) resetPeer(ctx context.Context, addr, reason string) {
-	if err := u.bgp.ResetPeer(ctx, &apipb.ResetPeerRequest{Address: addr, Communication: reason}); err != nil {
-		u.log.Warn("reset BGP peer", "peer", addr, "error", err)
+	// BfdDown sends Cease/BFD Down (subcode 10) like FRR; GoBGP sends no
+	// shutdown communication with it, so reason only goes to the log.
+	if err := u.bgp.ResetPeer(ctx, &apipb.ResetPeerRequest{Address: addr, BfdDown: true}); err != nil {
+		u.log.Warn("reset BGP peer", "peer", addr, "reason", reason, "error", err)
 	}
 }

@@ -13,13 +13,12 @@ import (
 
 // prodtplCapKeys are the capabilities of "show bgp neighbors json" that
 // BOOTy must send like FRR. Known deviations of GoBGP are left out:
-// enhancedRouteRefresh and pathsLimit (not implemented),
 // the softwareVersion string, the Restart State (R) bit, and the family tuples of
 // long-lived graceful restart, which GoBGP leaves out in helper mode (FRR
 // sends them with stale time 0) (docs/networking.md, BGP capabilities).
 var prodtplCapKeys = []string{
-	"4byteAs", "addPath", "extendedMessage", "extendedNexthop", "gracefulRestart", "gracefulRestartRemoteTimerMsecs",
-	"longLivedGracefulRestart", "multiprotocolExtensions", "routeRefresh",
+	"4byteAs", "addPath", "enhancedRouteRefresh", "extendedMessage", "extendedNexthop", "gracefulRestart",
+	"gracefulRestartRemoteTimerMsecs", "longLivedGracefulRestart", "multiprotocolExtensions", "pathsLimit", "routeRefresh",
 }
 
 // prodtplCaps returns the compared capabilities that a FRR node received

@@ -222,6 +222,9 @@ network:
     # FRR "timers connect", "local-as N no-prepend replace-as" and
     # "router bgp N vrf NAME". Explicit values also replace frr.conf values.
     connectRetry: 5
+    # connectAtOnce (BGP_CONNECT_AT_ONCE): first connect after Idle at once,
+    # like FRR; default false (connection collisions after a carrier loss)
+    connectAtOnce: true
     localAS: 65501
     neighborVRF: "Vrf_underlay"
     # allowASIn/multipathRelax/installRoutes/fastExternalFailover: unset keeps

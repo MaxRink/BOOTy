@@ -2092,6 +2092,20 @@ func TestApplyBGPOptions(t *testing.T) {
 			t.Fatal("BGP_GRACEFUL_NOTIFICATION=false must win")
 		}
 	})
+	// ConnectAtOnce is off unless BGP_CONNECT_AT_ONCE turns it on: with it,
+	// a carrier loss makes GoBGP and the leaf connect at the same time (#811).
+	t.Run("connect at once", func(t *testing.T) {
+		for _, tt := range []struct {
+			set  *bool
+			want bool
+		}{{nil, false}, {new(false), false}, {new(true), true}} {
+			n := &network.Config{}
+			applyBGPOptions(&config.BGPConfig{ConnectAtOnce: tt.set}, n)
+			if n.BGPConnectAtOnce != tt.want {
+				t.Errorf("ConnectAtOnce %v: BGPConnectAtOnce = %v, want %v", tt.set, n.BGPConnectAtOnce, tt.want)
+			}
+		}
+	})
 	// The peer options are defaults: a session value wins.
 	t.Run("peer options are session defaults", func(t *testing.T) {
 		n := &network.Config{BGPSessions: frrSessions(), BGPMultipathRelax: true}

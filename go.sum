@@ -1,5 +1,5 @@
-github.com/MaxRink/gobgp/v4 v4.10.0-booty.2 h1:eVxEFlqfTlYSRvGUDy72aRiZWI9hFQQidD5aweNndYk=
-github.com/MaxRink/gobgp/v4 v4.10.0-booty.2/go.mod h1:cVD5Q5BXFPLQ1EKROFeXexGJi3XYca4pbs/drBwzUig=
+github.com/MaxRink/gobgp/v4 v4.10.0-booty.10 h1:lzT4u+ct3TfGyuH0jANlNYnyMdoLsDbUHOQrGAbZ3S0=
+github.com/MaxRink/gobgp/v4 v4.10.0-booty.10/go.mod h1:cVD5Q5BXFPLQ1EKROFeXexGJi3XYca4pbs/drBwzUig=
 github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=

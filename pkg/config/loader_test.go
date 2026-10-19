@@ -562,6 +562,7 @@ func TestLoadFullYAMLReference(t *testing.T) {
 		{"Network.BGP.LocalAS", cfg.Network.BGP.LocalAS, uint32(65501)},
 		{"Network.BGP.NeighborVRF", cfg.Network.BGP.NeighborVRF, "Vrf_underlay"},
 		{"Network.BGP.ConnectRetry", cfg.Network.BGP.ConnectRetry, uint32(5)},
+		{"Network.BGP.ConnectAtOnce", *cfg.Network.BGP.ConnectAtOnce, true},
 		{"Network.BGP.AllowASIn", *cfg.Network.BGP.AllowASIn, uint32(3)},
 		{"Network.BGP.InstallRoutes", *cfg.Network.BGP.InstallRoutes, true},
 		{"Network.EVPN.BridgeMAC", cfg.Network.EVPN.BridgeMAC, "02:54:c0:00:02:11"},

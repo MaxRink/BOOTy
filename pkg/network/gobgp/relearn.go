@@ -25,7 +25,8 @@ const (
 	relearnInterval = time.Second
 	// relearnGrace is how long an unnumbered peer with carrier may stay
 	// down before BOOTy looks for a new link-local address of the
-	// switch. GoBGP reconnects within 1 to 2 s on its own.
+	// switch. GoBGP reconnects on its own after 1.5 to 2 s (at once with
+	// BGP_CONNECT_AT_ONCE), and after the connect timer when that fails.
 	relearnGrace = 3 * time.Second
 )
 

@@ -140,6 +140,9 @@ type Config struct {
 	// BGPConnectRetry is the connect retry timer of the native peers in
 	// seconds; 0 keeps the GoBGP default.
 	BGPConnectRetry uint32
+	// BGPConnectAtOnce starts the first connect of a GoBGP peer at once
+	// when it leaves Idle (ConnectAtOnce of the GoBGP fork); off by default.
+	BGPConnectAtOnce bool
 	// BGPAllowASIn is the allowas-in count of the native peers.
 	BGPAllowASIn uint32
 	// BGPInstallRoutes installs the learned unicast routes into the kernel.

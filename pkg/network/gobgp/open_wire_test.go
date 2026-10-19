@@ -144,7 +144,7 @@ var openDeviations = struct {
 	missing []string
 	extra   map[string][]string // per peer kind
 }{
-	missing: []string{"dynamic", "enhanced-route-refresh", "gr:R", "paths-limit",
+	missing: []string{"dynamic", "gr:R",
 		"llgr:[ipv4-unicast/flags=0x80/stale=0]", "llgr:[l2vpn-evpn/flags=0x80/stale=0]"},
 	extra: map[string][]string{"leaf": {"llgr:[]"}, "rr": {"llgr:[]"}},
 }

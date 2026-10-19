@@ -62,6 +62,7 @@ type Config struct {
 	KeepaliveInterval uint64           // BGP keepalive seconds (default: 3)
 	HoldTime          uint64           // BGP hold timer seconds (default: 9)
 	ConnectRetry      uint64           // BGP connect retry seconds (default: 5)
+	ConnectAtOnce     bool             // first connect after Idle at once (default: off)
 	OverlayIP         string           // Overlay loopback IP (derived or same as RouterID)
 	BridgeMAC         string           // Derived MAC for provision bridge
 	IPMIMAC           string           // IPMI MAC for bridge MAC derivation
@@ -215,6 +216,7 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		NeighborVRF:          netCfg.BGPNeighborVRF,
 		AllowASIn:            netCfg.BGPAllowASIn,
 		ConnectRetry:         uint64(netCfg.BGPConnectRetry),
+		ConnectAtOnce:        netCfg.BGPConnectAtOnce,
 		InstallRoutes:        netCfg.BGPInstallRoutes,
 		FastExternalFailover: fastExternalFailover(netCfg),
 		OverlayDevices:       netCfg.OverlayDevices,
@@ -238,7 +240,6 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 	}
 
 	cfg.ApplyDefaults()
-
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}

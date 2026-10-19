@@ -23,8 +23,10 @@ import (
 // expires (1 s after a TCP close, 2 s after a NOTIFICATION) is refused and retries only after its connect timer
 // (osrg/gobgp#3735; lab: 36 s against 2.3 s for FRR). FRR accepts
 // connections while it waits. A peer that is added again starts in Active
-// at once: it accepts the leaf's connection and connects itself after 1 to
-// 2 s.
+// at once: it accepts the leaf's connection and, with BGP_CONNECT_AT_ONCE
+// (ConnectAtOnce), connects itself at once. ConnectAtOnce does not replace the
+// restart: it shortens the first connect after Idle, but GoBGP still holds
+// the peer 5 s in Idle and refuses the leaf meanwhile.
 type peerRestarter struct {
 	// peers returns the GoBGP peer addresses whose host is addr: the peer
 	// state events carry the address without the zone of a link-local
