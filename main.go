@@ -1188,14 +1188,11 @@ func lldpReceiveEnabled(cfg *config.MachineConfig) bool {
 }
 
 // startLLDPReceive logs and records the LLDP neighbors of every physical
-// NIC for the rest of the run. The legacy ramdisk only sends LLDP.
+// NIC for the rest of the run. The legacy ramdisk only sends LLDP. The NIC
+// detection runs in the background: with one NIC it waits 3 s for more
+// NICs to appear, and the connectivity check must not wait for that.
 func startLLDPReceive(ctx context.Context) {
-	nics, err := network.DetectPhysicalNICsContext(ctx)
-	if err != nil || len(nics) == 0 {
-		slog.Warn("LLDP receive not started: no physical NICs", "error", err)
-		return
-	}
-	lldp.Receive(ctx, nics, slog.With("component", "lldp"))
+	lldp.ReceiveDetected(ctx, network.DetectPhysicalNICsContext, slog.With("component", "lldp"))
 }
 
 // disableNICFirmwareLLDP stops the firmware LLDP agent of the Intel NICs

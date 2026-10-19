@@ -21,8 +21,8 @@ import (
 // second chassis on the same link (a hub, or two agents of one switch)
 // replaces the first; the fabric has one switch port per NIC.
 type receiver struct {
-	started   time.Time
 	mu        sync.Mutex
+	started   time.Time // when the sockets open; zero before, guarded by mu
 	neighbors map[string]Neighbor
 	expires   map[string]time.Time
 	log       *slog.Logger
@@ -38,10 +38,46 @@ var current struct {
 // Receive listens for LLDP frames on every interface until ctx ends and
 // logs each new or changed neighbor. Neighbors returns what it learned.
 func Receive(ctx context.Context, ifaces []string, log *slog.Logger) {
-	r := &receiver{started: time.Now(), neighbors: map[string]Neighbor{}, expires: map[string]time.Time{}, log: log}
+	newReceiver(log).listen(ctx, ifaces)
+}
+
+// ReceiveDetected is Receive on the interfaces that detect returns. It
+// registers the receiver at once, so NeighborsWithin waits for the
+// detection, but detect runs in the background: it may wait seconds for
+// the NIC set to settle, and the boot must not wait for a passive
+// receiver. A failed detection unregisters the receiver again.
+func ReceiveDetected(ctx context.Context, detect func(context.Context) ([]string, error), log *slog.Logger) {
+	r := newReceiver(log)
+	go func() {
+		ifaces, err := detect(ctx)
+		if err != nil || len(ifaces) == 0 {
+			log.Warn("LLDP receive not started: no physical NICs", "error", err)
+			current.Lock()
+			if current.r == r {
+				current.r = nil
+			}
+			current.Unlock()
+			return
+		}
+		r.listen(ctx, ifaces)
+	}()
+}
+
+// newReceiver makes the receiver of the process.
+func newReceiver(log *slog.Logger) *receiver {
+	r := &receiver{neighbors: map[string]Neighbor{}, expires: map[string]time.Time{}, log: log}
 	current.Lock()
 	current.r = r
 	current.Unlock()
+	return r
+}
+
+// listen starts a receive on every interface. The wait of NeighborsWithin
+// counts from here, not from the registration.
+func (r *receiver) listen(ctx context.Context, ifaces []string) {
+	r.mu.Lock()
+	r.started = time.Now()
+	r.mu.Unlock()
 	// The state file exists from the start and stays fresh without frames,
 	// so "booty lldp status" tells "no neighbor yet" from "not running"
 	// (a file older than 75 s).
@@ -76,9 +112,11 @@ func Neighbors() []Neighbor {
 }
 
 // NeighborsWithin returns the current LLDP neighbors. While none is known
-// yet, it waits until Receive has run for wait (one transmit interval of
-// the switch, 30 s with lldpd and networkd), so a report soon after the
-// start does not miss them. Without Receive it returns at once.
+// yet, it waits until Receive has listened for wait (one transmit interval
+// of the switch, 30 s with lldpd and networkd), so a report soon after the
+// start does not miss them. While the NIC detection of ReceiveDetected
+// runs, it waits for it, bounded by ctx. Without a receiver, or when the
+// detection failed, it returns at once.
 func NeighborsWithin(ctx context.Context, wait time.Duration) []Neighbor {
 	current.Lock()
 	r := current.r
@@ -88,7 +126,16 @@ func NeighborsWithin(ctx context.Context, wait time.Duration) []Neighbor {
 	}
 	for {
 		n := r.list(time.Now())
-		if len(n) > 0 || time.Since(r.started) >= wait {
+		if len(n) > 0 {
+			return n
+		}
+		current.Lock()
+		registered := current.r == r
+		current.Unlock()
+		r.mu.Lock()
+		started := r.started
+		r.mu.Unlock()
+		if !registered || (!started.IsZero() && time.Since(started) >= wait) {
 			return n
 		}
 		select {

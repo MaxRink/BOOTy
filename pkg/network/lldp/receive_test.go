@@ -5,10 +5,12 @@ package lldp
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -239,5 +241,149 @@ func TestWaitForNeighborsWaitsForEveryCarrier(t *testing.T) {
 	got := WaitForNeighbors(context.Background(), []string{"eth0", "eth1"}, 300*time.Millisecond)
 	if !reflect.DeepEqual(got, []string{"eth1"}) {
 		t.Fatalf("missing = %v, want [eth1] (its carrier came up after 200 ms)", got)
+	}
+}
+
+// ReceiveDetected returns before the NIC detection ends and registers its
+// receiver at once, so NeighborsWithin waits for it. A failed detection is
+// logged.
+func TestReceiveDetectedDoesNotWaitForDetection(t *testing.T) {
+	current.Lock()
+	prev := current.r
+	current.Unlock()
+	t.Cleanup(func() { current.Lock(); current.r = prev; current.Unlock() })
+	var buf bytes.Buffer
+	var mu sync.Mutex
+	log := slog.New(slog.NewTextHandler(&lockedWriter{w: &buf, mu: &mu}, nil))
+	release := make(chan struct{})
+	detected := make(chan struct{})
+	ReceiveDetected(context.Background(), func(context.Context) ([]string, error) {
+		<-release
+		defer close(detected)
+		return nil, errors.New("no NICs")
+	}, log)
+
+	current.Lock()
+	r := current.r
+	current.Unlock()
+	if r == nil || r == prev {
+		t.Fatal("ReceiveDetected did not register its receiver before the detection ended")
+	}
+	close(release)
+	<-detected
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		mu.Lock()
+		logged := strings.Contains(buf.String(), "LLDP receive not started")
+		mu.Unlock()
+		if logged {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("failed detection not logged")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+type lockedWriter struct {
+	w  *bytes.Buffer
+	mu *sync.Mutex
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
+}
+
+// fakeDetect makes a detect function that returns ifaces and err once
+// release is closed.
+func fakeDetect(release <-chan struct{}, ifaces []string, err error) func(context.Context) ([]string, error) {
+	return func(ctx context.Context) ([]string, error) {
+		select {
+		case <-release:
+			return ifaces, err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+}
+
+func keepCurrent(t *testing.T) {
+	t.Helper()
+	current.Lock()
+	prev := current.r
+	current.Unlock()
+	t.Cleanup(func() { current.Lock(); current.r = prev; current.Unlock() })
+	poll := neighborPoll
+	neighborPoll = time.Millisecond
+	t.Cleanup(func() { neighborPoll = poll })
+}
+
+// The wait of NeighborsWithin counts from when the sockets open, not from
+// the registration: a slow NIC detection does not shorten it.
+func TestNeighborsWithinCountsFromListen(t *testing.T) {
+	keepCurrent(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	release := make(chan struct{})
+	// No such interface: the receive logs a warning and ends.
+	ReceiveDetected(ctx, fakeDetect(release, []string{"booty-none0"}, nil), slog.New(slog.DiscardHandler))
+	const detectTime, wait = 200 * time.Millisecond, 50 * time.Millisecond
+	time.AfterFunc(detectTime, func() { close(release) })
+	start := time.Now()
+	NeighborsWithin(context.Background(), wait)
+	if got := time.Since(start); got < detectTime+wait {
+		t.Fatalf("NeighborsWithin returned after %s, want at least the detection plus the wait (%s)", got, detectTime+wait)
+	}
+}
+
+// A failed or empty NIC detection unregisters the receiver, so
+// NeighborsWithin returns at once instead of waiting the transmit interval.
+func TestNeighborsWithinReturnsAfterFailedDetection(t *testing.T) {
+	for name, tc := range map[string]struct {
+		ifaces []string
+		err    error
+	}{
+		"error":   {err: errors.New("no NICs")},
+		"no NICs": {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			keepCurrent(t)
+			release := make(chan struct{})
+			ReceiveDetected(context.Background(), fakeDetect(release, tc.ifaces, tc.err), slog.New(slog.DiscardHandler))
+			time.AfterFunc(20*time.Millisecond, func() { close(release) })
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			start := time.Now()
+			if got := NeighborsWithin(ctx, time.Hour); len(got) != 0 {
+				t.Fatalf("neighbors = %+v", got)
+			}
+			if got := time.Since(start); got > 2*time.Second {
+				t.Fatalf("NeighborsWithin waited %s after a failed detection", got)
+			}
+			current.Lock()
+			r := current.r
+			current.Unlock()
+			if r != nil {
+				t.Fatal("the receiver of a failed detection is still registered")
+			}
+		})
+	}
+}
+
+// While the detection runs, ctx bounds the wait.
+func TestNeighborsWithinDuringDetectionHonoursContext(t *testing.T) {
+	keepCurrent(t)
+	detectCtx, stop := context.WithCancel(context.Background())
+	t.Cleanup(stop)
+	ReceiveDetected(detectCtx, fakeDetect(make(chan struct{}), nil, nil), slog.New(slog.DiscardHandler))
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	NeighborsWithin(ctx, time.Millisecond)
+	if got := time.Since(start); got < 20*time.Millisecond || got > 2*time.Second {
+		t.Fatalf("NeighborsWithin returned after %s, want at the context deadline (20 ms)", got)
 	}
 }
