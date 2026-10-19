@@ -75,8 +75,12 @@ type dhcpApplied struct {
 	link   netlink.Link
 	addr   *netlink.Addr
 	routes []*netlink.Route
-	dns    []string
-	ntp    []string
+	// srcRoutes and rule are the source routing of the lease
+	// (dhcp_options.go).
+	srcRoutes []*netlink.Route
+	rule      *netlink.Rule
+	dns       []string
+	ntp       []string
 	// domains are the lease domain (option 15) and search list (option
 	// 119), search domains like networkd with netplan (the legacy
 	// resolv.conf has them as "search").
@@ -426,6 +430,8 @@ var (
 	dhcpRouteAdd       = netlink.RouteAppend
 	dhcpRouteDel       = netlink.RouteDel
 	dhcpSetMTU         = netlink.LinkSetMTU
+	dhcpRuleAdd        = netlink.RuleAdd
+	dhcpRuleDel        = netlink.RuleDel
 	dhcpSetDNSServers  = dnsFanout.set
 	dhcpLinkMaxMTU     = linkMaxMTU
 	dhcpIPv6Enabled    = ipv6Enabled
@@ -530,8 +536,9 @@ func (d *DHCPMode) endLease(link netlink.Link, ifName string) {
 			delete(d.mtus, idx)
 		}
 	}
+	d.dropRule(a.rule)
 	removed := true
-	for _, r := range a.routes {
+	for _, r := range slices.Concat(a.routes, a.srcRoutes) {
 		if err := dhcpRouteDel(r); err != nil && !errors.Is(err, syscall.ESRCH) {
 			d.log.Warn("failed to remove a route of an ended DHCP lease", "iface", ifName, "route", routeDst(r), "error", err)
 			d.stale = append(d.stale, dhcpApplied{link: link, routes: []*netlink.Route{r}})
@@ -573,7 +580,8 @@ func (d *DHCPMode) apply(link netlink.Link, addr *netlink.Addr, lease *dhcp4.Lea
 			d.stale = append(d.stale, dhcpApplied{link: link, addr: prev.addr})
 		}
 	}
-	d.nics[idx] = dhcpApplied{link: link, addr: addr, routes: routes, dns: leaseDNS(lease), ntp: leaseNTPServers(lease), domains: leaseSearchDomains(lease)}
+	srcRoutes, rule := d.applySource(link, addr, routes, &prev)
+	d.nics[idx] = dhcpApplied{link: link, addr: addr, routes: routes, srcRoutes: srcRoutes, rule: rule, dns: leaseDNS(lease), ntp: leaseNTPServers(lease), domains: leaseSearchDomains(lease)}
 	d.applyMTU(link, lease.MTU)
 	d.writeResolvers()
 	return nil
@@ -815,16 +823,22 @@ func (d *DHCPMode) Teardown(_ context.Context) error {
 		dhcpSetDNSServers(nil) // the plain Go resolver again
 	}
 	applied := d.stale
-	for _, a := range d.nics {
-		applied = append(applied, a)
+	for idx := range d.nics {
+		applied = append(applied, d.nics[idx])
 	}
 	mtus := d.mtus
 	d.nics, d.stale, d.mtus, d.written = nil, nil, nil, ""
 	setDHCPNTPList(nil)
 	d.mu.Unlock()
 	errs := restoreMTUs(mtus)
-	for _, a := range applied {
-		for _, r := range a.routes {
+	for i := range applied {
+		a := &applied[i]
+		if a.rule != nil {
+			if err := dhcpRuleDel(a.rule); err != nil && !errors.Is(err, syscall.ENOENT) {
+				errs = append(errs, fmt.Errorf("delete DHCP source rule: %w", err))
+			}
+		}
+		for _, r := range slices.Concat(a.routes, a.srcRoutes) {
 			if err := dhcpRouteDel(r); err != nil && !errors.Is(err, syscall.ESRCH) {
 				errs = append(errs, fmt.Errorf("delete DHCP route %s: %w", routeDst(r), err))
 			}
@@ -928,6 +942,54 @@ func appendNew(list []string, items ...string) []string {
 		}
 	}
 	return list
+}
+
+// applySource puts the routes of a lease into the table of its NIC and
+// the rule for its address there, and removes those of the previous lease
+// that are gone. It is best effort: a failure is logged, the lease and its
+// main table routes stay. The caller holds d.mu.
+func (d *DHCPMode) applySource(link netlink.Link, addr *netlink.Addr, main []*netlink.Route, prev *dhcpApplied) ([]*netlink.Route, *netlink.Rule) {
+	if !dhcpSourceRouting {
+		return nil, nil
+	}
+	want := sourceRoutes(main, link, addr)
+	added := make([]*netlink.Route, 0, len(want))
+	for _, r := range want {
+		if err := dhcpRouteAdd(r); err != nil && !errors.Is(err, syscall.EEXIST) {
+			d.log.Warn("failed to add a DHCP source route", "iface", link.Attrs().Name, "route", routeDst(r), "error", err)
+			continue
+		}
+		added = append(added, r)
+	}
+	for _, p := range prev.srcRoutes {
+		if !slices.ContainsFunc(want, func(r *netlink.Route) bool { return sameRoute(p, r) }) {
+			if err := dhcpRouteDel(p); err != nil && !errors.Is(err, syscall.ESRCH) {
+				d.stale = append(d.stale, dhcpApplied{link: link, routes: []*netlink.Route{p}})
+			}
+		}
+	}
+	if prev.rule != nil && prev.addr != nil && prev.addr.IP.Equal(addr.IP) {
+		return added, prev.rule
+	}
+	d.dropRule(prev.rule)
+	rule := sourceRule(link, addr)
+	if err := dhcpRuleAdd(rule); err != nil && !errors.Is(err, syscall.EEXIST) {
+		d.log.Warn("failed to add the DHCP source rule", "iface", link.Attrs().Name, "error", err)
+		return added, nil
+	}
+	return added, rule
+}
+
+// dropRule removes a source rule; one that cannot be removed stays for
+// Teardown. The caller holds d.mu.
+func (d *DHCPMode) dropRule(r *netlink.Rule) {
+	if r == nil {
+		return
+	}
+	if err := dhcpRuleDel(r); err != nil && !errors.Is(err, syscall.ENOENT) {
+		d.log.Warn("failed to remove a DHCP source rule", "error", err)
+		d.stale = append(d.stale, dhcpApplied{rule: r})
+	}
 }
 
 // restoreMTUs sets the MTU from before the first lease again.

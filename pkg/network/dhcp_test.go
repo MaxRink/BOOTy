@@ -246,6 +246,13 @@ func stubDHCPNetlink(t *testing.T) {
 		dhcpSetMTU, dhcpWriteResolvers = origMTU, origResolvers
 		dhcpLinkMaxMTU, dhcpIPv6Enabled = origMax, origV6
 	})
+	origRuleAdd, origRuleDel := dhcpRuleAdd, dhcpRuleDel
+	t.Cleanup(func() { dhcpRuleAdd, dhcpRuleDel = origRuleAdd, origRuleDel })
+	dhcpRuleAdd = func(*netlink.Rule) error { return nil }
+	dhcpRuleDel = func(*netlink.Rule) error { return nil }
+	origSrc := dhcpSourceRouting
+	t.Cleanup(func() { dhcpSourceRouting = origSrc })
+	dhcpSourceRouting = false
 	origDNS := dhcpSetDNSServers
 	t.Cleanup(func() { dhcpSetDNSServers = origDNS })
 	dhcpSetDNSServers = func([][]string) {}
@@ -1590,5 +1597,60 @@ func TestTeardownResetsDNSFanout(t *testing.T) {
 		if !manage && len(calls) != 0 {
 			t.Errorf("keep resolv.conf: dhcpSetDNSServers calls %v, want none", calls)
 		}
+	}
+}
+
+// Source routing: the lease routes are also in the table of the NIC, after
+// the subnet route, a rule sends the lease address there, and the end of
+// the lease and a new address remove them.
+func TestSourceRouting(t *testing.T) {
+	stubDHCPNetlink(t)
+	dhcpSourceRouting = true
+	var added, deleted []string
+	dhcpRouteAdd = func(r *netlink.Route) error {
+		added = append(added, fmt.Sprintf("%s via %v table %d", routeDst(r), r.Gw, r.Table))
+		return nil
+	}
+	dhcpRouteDel = func(r *netlink.Route) error {
+		deleted = append(deleted, fmt.Sprintf("%s table %d", routeDst(r), r.Table))
+		return nil
+	}
+	var rules, ruleDels []string
+	dhcpRuleAdd = func(r *netlink.Rule) error {
+		rules = append(rules, fmt.Sprintf("from %s table %d prio %d", r.Src, r.Table, r.Priority))
+		return nil
+	}
+	dhcpRuleDel = func(r *netlink.Rule) error { ruleDels = append(ruleDels, r.Src.String()); return nil }
+	d := NewDHCPMode()
+	link := dummyLink("eth0", 7)
+	d.onBound(link, "eth0", make(chan string, 4))(lease24("10.0.2.15", "10.0.2.2"))
+	d.onBound(link, "eth0", make(chan string, 4))(lease24("10.0.2.15", "10.0.2.2")) // renewal: no new rule
+	wantAdded := []string{"10.0.2.2/32 via <nil> table 0", "default via 10.0.2.2 table 0",
+		"10.0.2.0/24 via <nil> table 10007", "10.0.2.2/32 via <nil> table 10007", "default via 10.0.2.2 table 10007"}
+	if !slices.Equal(added[:5], wantAdded) || !slices.Equal(rules, []string{"from 10.0.2.15/32 table 10007 prio 10000"}) {
+		t.Fatalf("routes %q rules %q", added, rules)
+	}
+	d.onBound(link, "eth0", make(chan string, 4))(lease24("10.0.2.16", "10.0.2.2")) // new address: new rule
+	if !slices.Equal(ruleDels, []string{"10.0.2.15/32"}) || len(rules) != 2 {
+		t.Fatalf("after a new address: rules %q, deleted %q", rules, ruleDels)
+	}
+	d.onExpire(link, "eth0")(nil)
+	if !slices.Equal(ruleDels, []string{"10.0.2.15/32", "10.0.2.16/32"}) || !slices.Contains(deleted, "default table 10007") {
+		t.Fatalf("after the end: rules deleted %q, routes deleted %q", ruleDels, deleted)
+	}
+}
+
+// Host routes (scope host: localhost, the lease address) stay in the main
+// table only; the table of the NIC gets the subnet route and the others.
+func TestSourceRoutesSkipHostRoutes(t *testing.T) {
+	link := dummyLink("eth0", 7)
+	addr := &netlink.Addr{IPNet: &net.IPNet{IP: net.ParseIP("10.0.2.15").To4(), Mask: net.CIDRMask(24, 32)}}
+	main := []*netlink.Route{
+		{Dst: &net.IPNet{IP: net.ParseIP("127.0.0.1").To4(), Mask: net.CIDRMask(32, 32)}, Scope: netlink.SCOPE_HOST},
+		{Gw: net.ParseIP("10.0.2.2")},
+	}
+	got := sourceRoutes(main, link, addr)
+	if len(got) != 2 || routeDst(got[0]) != "10.0.2.0/24" || got[1].Gw == nil || got[0].Table != 10007 || got[1].Table != 10007 {
+		t.Fatalf("source routes = %v", got)
 	}
 }

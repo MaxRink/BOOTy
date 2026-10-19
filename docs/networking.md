@@ -1147,9 +1147,21 @@ the image connection's FIN later leaves there too, with the source
 address of the first NIC. The image connection,
 bound to the address of the first NIC, then sends through the other NIC
 and stalls until BOOTy's download retry opens a new connection (about
-2 min); the legacy ramdisk has no such retry. Source routing per NIC
-would keep the connection on its NIC; neither networkd's configuration
-nor BOOTy sets it up.
+2 min); the legacy ramdisk has no such retry. BOOTy's source routing
+(below) keeps the connection on its NIC.
+
+### Source routing
+
+BOOTy adds the routes of every lease also to a table of the NIC (10000
+plus the interface index), with the subnet route of the lease address,
+and a rule `from <lease address> lookup <table>` (priority 10000, before
+the main table). A packet from the address of a NIC then leaves through
+that NIC and its gateway, whatever default route the kernel picks for
+new connections. This is an intended difference to networkd, whose
+configuration has no such rules: it fixes the stall of the image stream
+after a link flap (above). Failures to add them are logged; the main
+table routes stay. The end of a lease, a new address and Teardown remove
+them.
 
 The client is BOOTy's own (`pkg/network/dhcp4`), with the states of RFC
 2131 and the behaviour of networkd (systemd 255):

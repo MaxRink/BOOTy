@@ -376,3 +376,63 @@ func TestSendRSOnVeth(t *testing.T) {
 		t.Fatalf("RS = % x (hop limit %v), want type 133 with option 1 %x and hop limit 255", buf[:n], cm, want)
 	}
 }
+
+// TestDHCPNetlinkSourceRouting: with leases on two NICs, a packet from the
+// address of the second NIC leaves through the second NIC and its gateway,
+// although the default route of the first NIC comes first; without a source
+// it takes the first. Teardown removes the rules and tables.
+func TestDHCPNetlinkSourceRouting(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Fatal("test requires root (run with sudo)")
+	}
+	enterTestNetns(t)
+	var links []netlink.Link
+	for _, n := range []string{"src-e2e0", "src-e2e1"} {
+		l := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: n}}
+		if err := netlink.LinkAdd(l); err != nil {
+			t.Fatal(err)
+		}
+		if err := netlink.LinkSetUp(l); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := netlink.LinkByName(n)
+		links = append(links, got)
+	}
+	d := NewDHCPMode()
+	for i, net4 := range []string{"198.51.100", "203.0.113"} {
+		d.onBound(links[i], links[i].Attrs().Name, make(chan string, 1))(live(&dhcp4.Lease{
+			FixedAddress: net.ParseIP(net4 + ".7"), Netmask: net.CIDRMask(24, 32), Router: []net.IP{net.ParseIP(net4 + ".1")},
+		}))
+	}
+	dst := net.ParseIP("192.0.2.80")
+	via := func(src net.IP) string {
+		t.Helper()
+		opts := &netlink.RouteGetOptions{}
+		if src != nil {
+			opts.SrcAddr = src
+		}
+		rs, err := netlink.RouteGetWithOptions(dst, opts)
+		if err != nil || len(rs) == 0 {
+			t.Fatalf("route get from %v: %v %v", src, rs, err)
+		}
+		return fmt.Sprintf("%v dev %d", rs[0].Gw, rs[0].LinkIndex)
+	}
+	if got, want := via(net.ParseIP("203.0.113.7")), fmt.Sprintf("203.0.113.1 dev %d", links[1].Attrs().Index); got != want {
+		t.Fatalf("from the second NIC: %s, want %s", got, want)
+	}
+	if got, want := via(nil), fmt.Sprintf("198.51.100.1 dev %d", links[0].Attrs().Index); got != want {
+		t.Fatalf("without a source: %s, want %s", got, want)
+	}
+	if err := d.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	rules, err := netlink.RuleList(netlink.FAMILY_V4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rules {
+		if r.Table >= dhcpTableBase {
+			t.Fatalf("rule left after Teardown: %+v", r)
+		}
+	}
+}

@@ -251,7 +251,56 @@ func sameRoute(a, b *netlink.Route) bool {
 		}
 		return r.Dst.String()
 	}
-	return dst(a) == dst(b) && a.Gw.Equal(b.Gw) && a.Src.Equal(b.Src) && a.Scope == b.Scope
+	return dst(a) == dst(b) && a.Gw.Equal(b.Gw) && a.Src.Equal(b.Src) && a.Scope == b.Scope && a.Table == b.Table
+}
+
+// Source routing: every NIC's lease routes are also in a table of its
+// own, and a rule sends what comes from the lease address there. A
+// connection bound to the address of one NIC (the image stream) then
+// leaves through that NIC, also when the kernel picks the default route of
+// another NIC for new lookups (after a carrier flap). networkd does not do
+// this; it fixes the stall of the legacy ramdisk after a link flap.
+const (
+	dhcpTableBase    = 10000 // table dhcpTableBase+ifindex
+	dhcpRulePriority = 10000 // before the main table (32766)
+)
+
+// dhcpSourceRouting turns source routing on; tests of the main table
+// routes turn it off.
+var dhcpSourceRouting = true
+
+// sourceTable returns the table of a NIC.
+func sourceTable(link netlink.Link) int { return dhcpTableBase + link.Attrs().Index }
+
+// sourceRoutes returns the copies of the main table routes of a lease in
+// the table of the NIC, with the subnet route of the lease address first.
+// Host routes (scope host) stay in the main table only.
+func sourceRoutes(main []*netlink.Route, link netlink.Link, addr *netlink.Addr) []*netlink.Route {
+	table := sourceTable(link)
+	subnet := &net.IPNet{IP: addr.IP.Mask(addr.Mask), Mask: addr.Mask}
+	out := make([]*netlink.Route, 0, len(main)+1)
+	if ones, bits := addr.Mask.Size(); ones < bits {
+		out = append(out, &netlink.Route{LinkIndex: link.Attrs().Index, Dst: subnet, Src: addr.IP, Scope: netlink.SCOPE_LINK,
+			Priority: dhcpRouteMetric, Protocol: unix.RTPROT_DHCP, Table: table})
+	}
+	for _, r := range main {
+		if r.Scope == netlink.SCOPE_HOST {
+			continue
+		}
+		c := *r
+		c.Table = table
+		out = append(out, &c)
+	}
+	return out
+}
+
+// sourceRule is the rule for the lease address of a NIC.
+func sourceRule(link netlink.Link, addr *netlink.Addr) *netlink.Rule {
+	r := netlink.NewRule()
+	r.Src = &net.IPNet{IP: addr.IP, Mask: net.CIDRMask(32, 32)}
+	r.Table = sourceTable(link)
+	r.Priority = dhcpRulePriority
+	return r
 }
 
 // leaseSearchDomains returns the domain (option 15) and the domain search
