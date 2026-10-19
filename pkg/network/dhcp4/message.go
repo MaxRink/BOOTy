@@ -1,6 +1,7 @@
 package dhcp4
 
 import (
+	"bytes"
 	"encoding/binary"
 	"net"
 	"slices"
@@ -151,6 +152,30 @@ var valid = map[uint8]func([]byte) bool{
 	dhcpv4.OptionDNSDomainSearchList.Code():  func(b []byte) bool { return len(b) > 0 && SearchDomains(b) != nil },
 }
 
+// prepare checks the options that fail the whole message in networkd
+// (parse_options -EINVAL) and cuts option 121 after its last whole route.
+func prepare(code uint8, data []byte) ([]byte, bool) {
+	switch code {
+	case dhcpv4.OptionDHCPMessageType.Code(), dhcpv4.OptionOptionOverload.Code():
+		return data, len(data) == 1
+	case dhcpv4.OptionMessage.Code():
+		return data, errorMessage(data)
+	case dhcpv4.OptionClasslessStaticRoute.Code():
+		return classless(data), true
+	}
+	return data, true
+}
+
+// errorMessage tells whether option 56 passes networkd's check
+// (parse_options): not empty, no NUL but one at the end, ASCII only.
+func errorMessage(b []byte) bool {
+	if len(b) == 0 {
+		return false
+	}
+	b = bytes.TrimSuffix(b, []byte{0})
+	return !slices.ContainsFunc(b, func(c byte) bool { return c == 0 || c >= 0x80 })
+}
+
 // classless cuts option 121 after its last whole route, like networkd
 // (lease_parse_classless_routes keeps the routes before an error).
 func classless(b []byte) []byte {
@@ -190,15 +215,11 @@ func options(b []byte) (dhcpv4.Options, bool) {
 		}
 		data := b[2 : 2+int(b[1])]
 		b = b[2+int(b[1]):]
-		switch code {
-		case dhcpv4.OptionDHCPMessageType.Code(), dhcpv4.OptionOptionOverload.Code():
-			if len(data) != 1 {
-				return nil, false // networkd: -EINVAL for the message
-			}
-		case dhcpv4.OptionClasslessStaticRoute.Code():
-			data = classless(data)
+		data, ok := prepare(code, data)
+		if !ok {
+			return nil, false
 		}
-		if ok, checked := valid[code]; checked && !ok(data) {
+		if check, checked := valid[code]; checked && !check(data) {
 			if _, seen := opts[code]; !seen {
 				// Kept so that the option counts as present; its decoder
 				// rejects it, as before. A valid copy replaces it.

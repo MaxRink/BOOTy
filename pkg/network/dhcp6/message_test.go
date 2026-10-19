@@ -75,9 +75,8 @@ func TestDecodeChecks(t *testing.T) {
 	if _, err := decode(encode(msgAdvertise, 1, []dhcpv6.Option{client}), 7, time.Now()); err == nil {
 		t.Error("an ADVERTISE without server ID was accepted")
 	}
-	r, err := decode(encode(msgAdvertise, 1, []dhcpv6.Option{raw(optServerID, testServer), client, raw(optStatusCode, []byte{0, 2})}), 7, time.Now())
-	if err != nil || r.status != 2 {
-		t.Errorf("status = %d, %v", r.status, err)
+	if _, err := decode(encode(msgAdvertise, 1, []dhcpv6.Option{raw(optServerID, testServer), client, raw(optStatusCode, []byte{0, 2})}), 7, time.Now()); err == nil {
+		t.Error("an ADVERTISE with status NoAddrsAvail was accepted")
 	}
 }
 
@@ -228,4 +227,79 @@ func TestDecodeMalformedOptions(t *testing.T) {
 func FuzzDecode(f *testing.F) {
 	f.Add(serverReply(encode(msgSolicit, 1, nil), msgReply, true))
 	f.Fuzz(func(_ *testing.T, b []byte) { _, _ = decode(b, 7, time.Now()) })
+}
+
+// What drops the message in networkd 255 (dhcp6_lease_parse_message): a
+// second client or server ID, a preference other than 1 byte, a status
+// code under 2 bytes, an information refresh time other than 4 bytes.
+func TestDecodeStrictLikeNetworkd(t *testing.T) {
+	base := []dhcpv6.Option{raw(optServerID, testServer), raw(optClientID, testDUID)}
+	for _, tt := range []struct {
+		name string
+		opt  dhcpv6.Option
+		ok   bool
+	}{
+		{"valid", raw(optPreference, []byte{7}), true},
+		{"second server ID", raw(optServerID, testServer), false},
+		{"second client ID", raw(optClientID, testDUID), false},
+		{"preference of 2 bytes", raw(optPreference, []byte{0, 7}), false},
+		{"preference of 0 bytes", raw(optPreference, nil), false},
+		{"status of 1 byte", raw(optStatusCode, []byte{0}), false},
+		{"status success", raw(optStatusCode, []byte{0, 0}), true},
+		{"status UnspecFail", raw(optStatusCode, []byte{0, 1}), false},
+		{"status UnspecFail with a message", raw(optStatusCode, append([]byte{0, 1}, "busy"...)), false},
+		{"information refresh time of 3 bytes", raw(optInfoRefresh, []byte{0, 0, 9}), false},
+		{"information refresh time of 4 bytes", raw(optInfoRefresh, []byte{0, 0, 0, 9}), true},
+		{"information refresh time of 5 bytes", raw(optInfoRefresh, []byte{0, 0, 0, 0, 9}), false},
+	} {
+		_, err := decode(encode(msgReply, 1, append(slices.Clone(base), tt.opt)), 7, time.Now())
+		if (err == nil) != tt.ok {
+			t.Errorf("%s: err %v, want ok %v", tt.name, err, tt.ok)
+		}
+	}
+	// An empty first server ID is no server ID for networkd: a second one
+	// counts.
+	if _, err := decode(encode(msgReply, 1, []dhcpv6.Option{raw(optServerID, nil), raw(optServerID, testServer), raw(optClientID, testDUID)}), 7, time.Now()); err != nil {
+		t.Errorf("a server ID after an empty one: %v", err)
+	}
+}
+
+// A REPLY with a top-level status other than success does not bind, also
+// with an IA address: rapid commit and REPLY to REQUEST (networkd drops
+// it). NoBinding inside the IA is handled by TestRenewNoBindingRequests.
+func TestReplyWithErrorStatusDoesNotBind(t *testing.T) {
+	unspecFail := []byte{0, byte(optStatusCode), 0, 2, 0, 1}
+	for _, rapid := range []bool{true, false} {
+		f := newFakeNet()
+		f.answer = func(msg []byte) []byte {
+			switch dhcpv6.MessageType(msg[0]) {
+			case msgSolicit:
+				if rapid {
+					return append(serverReply(msg, msgReply, true), unspecFail...)
+				}
+				return serverReply(msg, msgAdvertise, false)
+			case msgRequest:
+				return append(serverReply(msg, msgReply, false), unspecFail...)
+			}
+			return nil
+		}
+		bound := make(chan *Lease, 1)
+		c := f.client(true)
+		c.OnBound = func(l *Lease) { bound <- l }
+		c.Start()
+		want := msgSolicit
+		if !rapid {
+			want = msgRequest
+		}
+		for deadline := time.Now().Add(5 * time.Second); f.countType(want) < 3; time.Sleep(time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatalf("rapid %v: fewer than 3 messages of type %d", rapid, want)
+			}
+		}
+		close(f.stopped)
+		c.Stop()
+		if len(bound) != 0 {
+			t.Errorf("rapid %v: a REPLY with status UnspecFail bound", rapid)
+		}
+	}
 }

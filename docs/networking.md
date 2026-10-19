@@ -1311,8 +1311,8 @@ captured in the CAPRF L2 parity fixture:
   SOLICIT. When the valid lifetime ends without a REPLY, the client
   solicits again.
 - Replies (RFC 8415): an ADVERTISE or REPLY without a server identifier
-  is discarded, an ADVERTISE with a status other than success ignored; an
-  IA_NA with T1 > T2 is discarded, an address with a preferred lifetime
+  or with a top-level status other than success is discarded (networkd
+  too; NoBinding in an IA is handled above); an IA_NA with T1 > T2 is discarded, an address with a preferred lifetime
   over its valid lifetime, a valid lifetime of 0 or an error status is
   skipped. T1 and T2 of 0 become 0.5 and 0.8 of the preferred lifetime,
   and T1 <= T2 <= the valid lifetime.
@@ -1366,7 +1366,9 @@ BOOTy checks the decoded messages like networkd, on top of the library:
   a later copy of an option replaces an earlier one unless networkd
   rejects it (a wrong length, a malformed search list 119), and the routes
   of valid copies of 33 and 121 add up. A message type or overload option
-  of another length than 1 drops the message. The library would
+  of another length than 1 drops the message, and so does a message
+  option (56) that is empty, has a NUL before its end or a byte over
+  127. The library would
   concatenate all copies (RFC 3396), so BOOTy reads the options itself.
   networkd also ignores a copy of 12 or 15 that is no valid DNS name;
   BOOTy keeps the last copy and checks the domain name where it uses it.
@@ -1374,8 +1376,12 @@ BOOTy checks the decoded messages like networkd, on top of the library:
   0.0.0.0, a lease time over 0 and no option overload; a NAK needs a
   server identifier. A malformed option 33 or 119 is ignored as a whole;
   of option 121 the routes before the error stay, like networkd.
-- DHCPv6: a malformed option is ignored, not the message, and in an IA_NA
-  a malformed address or status is ignored, not the IA. A truncated option
+- DHCPv6: like networkd, a second client or server identifier, a
+  preference other than 1 byte, a top-level status code under 2 bytes or
+  other than success, and an information refresh time other than 4 bytes
+  drop the message. Another malformed option is ignored, not the
+  message, and in an IA_NA a malformed address or status is ignored, not
+  the IA. A truncated option
   drops the message (in an IA: the IA, in an address: the address).
   1 to 3 bytes after the last option are ignored. Option 24 is read
   like networkd's `dhcp6_option_parse_domainname_list` (the last byte is

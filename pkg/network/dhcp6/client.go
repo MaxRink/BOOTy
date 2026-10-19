@@ -175,7 +175,7 @@ func (c *Client) solicit() {
 			case r.typ == msgReply && r.rapidCommit && r.hasAddr:
 				bound = &r.lease
 				return true
-			case r.typ == msgAdvertise && r.hasAddr && r.status == 0:
+			case r.typ == msgAdvertise && r.hasAddr:
 				if best == nil || r.pref > best.pref {
 					best = &r
 				}

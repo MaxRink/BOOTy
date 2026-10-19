@@ -264,6 +264,30 @@ func TestOptionsKeepLastValidCopy(t *testing.T) {
 	if opts, _ := options(tlv(121, 8, 10, 10, 0, 0, 1, 40, 1)); !slices.Equal(opts[121], []byte{8, 10, 10, 0, 0, 1}) {
 		t.Errorf("121 with a bad second route: %x", opts[121])
 	}
+	// A route of width 33 ends the routes of 121, even with 5 bytes for
+	// its destination.
+	if opts, _ := options(tlv(121, 8, 10, 10, 0, 0, 1, 33, 1, 2, 3, 4, 5, 6, 7, 8, 9)); !slices.Equal(opts[121], []byte{8, 10, 10, 0, 0, 1}) {
+		t.Errorf("121 with a route of width 33: %x", opts[121])
+	}
+	// Option 56 (message) like networkd parse_options: empty, a NUL but
+	// at the end, or a byte over 127 drops the message.
+	for _, tt := range []struct {
+		msg []byte
+		ok  bool
+	}{
+		{[]byte("no address"), true},
+		{[]byte("no address\x00"), true},
+		{nil, false},
+		{[]byte("no\x00address"), false},
+		{[]byte("a\x00\x00"), false},
+		{[]byte("a\x80"), false},
+		{[]byte("a\x7f"), true},
+		{[]byte("adresse \xe9puis\xe9e"), false},
+	} {
+		if _, ok := options(tlv(56, tt.msg...)); ok != tt.ok {
+			t.Errorf("option 56 %q: ok %v, want %v", tt.msg, ok, tt.ok)
+		}
+	}
 	// A message type or overload option of another length drops the
 	// message, whichever copy it is (networkd parse_options -EINVAL).
 	for _, b := range [][]byte{
