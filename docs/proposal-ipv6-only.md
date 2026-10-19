@@ -19,15 +19,17 @@ disabled to keep it that way.
 ## Problem and motivation
 
 - Sites move to IPv6-only management and provisioning networks.
-- The DHCP client is IPv4 (`pkg/network/dhcp4`). There is no
-  DHCPv6 client and no explicit SLAAC handling outside the GoBGP device
-  setup (`accept_ra` in `pkg/network/gobgp/devices.go`).
+- DHCP mode runs DHCPv4 (`pkg/network/dhcp4`) on every NIC, and DHCPv6
+  (`pkg/network/dhcp6`, started by router advertisements) only next to it:
+  a NIC without a DHCPv4 client gets no DHCPv6. SLAAC is the kernel's;
+  outside DHCP mode only the GoBGP device setup handles it (`accept_ra` in
+  `pkg/network/gobgp/devices.go`).
 
 ## Current state
 
 | Area | Today | Reference |
 |------|-------|-----------|
-| DHCP | IPv4 client. | `pkg/network/dhcp.go`, `go.mod` |
+| DHCP | DHCPv4 client; DHCPv6 next to it, started by RAs. | `pkg/network/dhcp.go`, `pkg/network/dhcp6_mode.go` |
 | Static | `VLANS` accepts IPv6 in brackets. | `docs/configuration.md` |
 | GoBGP | IPv6 link-local and `accept_ra` settings; IPv6 Type-5 routes. | `pkg/network/gobgp/devices.go`, CHANGELOG (#651) |
 | Persistence | netplan, networkd, NetworkManager writers. | `pkg/network/persist/persist.go` |

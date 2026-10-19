@@ -41,9 +41,11 @@ type DHCPMode struct {
 	// stopped is set before the clients stop; a lease that arrives after it
 	// is not applied.
 	stopped bool
-	// watchDone ends the watch for new NICs.
+	// watchDone ends the watch for new NICs and the router solicitations.
 	watchDone chan struct{}
+	bg        sync.WaitGroup  // router solicitations; stopClients waits for them
 	mtus      map[int]dhcpMTU // by link index: MTU before the first lease changed it
+	v6        map[int]*nic6   // by link index: DHCPv6 (dhcp6_mode.go)
 
 	manageDNS bool     // false: the provisioner resolv.conf stays
 	resolvers []string // configured DNS servers, written before the lease ones
@@ -236,6 +238,7 @@ func (d *DHCPMode) startClient(iface *net.Interface, hostname string, leased cha
 		return
 	}
 	d.clients[link.Attrs().Index] = nc
+	d.startRA(link, iface, hostname)
 	d.mu.Unlock()
 }
 
@@ -342,11 +345,16 @@ func (d *DHCPMode) carrierChange(u netlink.LinkUpdate) bool {
 		nc.down = true
 		_, nc.lost = d.nics[u.Attrs().Index]
 		d.log.Info("NIC lost carrier, keeping its DHCP lease until the carrier returns", "interface", nc.link.Attrs().Name)
+		d.mu.Unlock()
+		d.stop6(u.Attrs().Index, false) // the next RA starts it again
+		return true
 	case carrier && nc.down:
 		nc.down = false
 		_, leased := d.nics[u.Attrs().Index]
 		lost := nc.lost
 		nc.lost = false
+		// Under d.mu: stopClients sets stopped under it before it waits.
+		d.bg.Go(func() { d.solicitRA(u.Attrs().Index) })
 		d.mu.Unlock()
 		switch {
 		case lost:
@@ -378,10 +386,12 @@ func (d *DHCPMode) stopClients() {
 		d.watchDone = nil
 	}
 	d.mu.Unlock()
+	d.bg.Wait()
 	var wg sync.WaitGroup
 	for _, c := range clients {
 		wg.Go(c.client.Stop)
 	}
+	wg.Go(d.stopAll6)
 	wg.Wait()
 }
 
@@ -616,18 +626,13 @@ func (d *DHCPMode) writeResolvers() {
 	servers := slices.Clone(d.resolvers)
 	var search []string
 	for _, idx := range slices.Sorted(maps.Keys(d.nics)) {
-		n := d.nics[idx]
-		for _, s := range n.dns {
-			if !slices.Contains(servers, s) {
-				servers = append(servers, s)
-			}
-		}
-		for _, dom := range n.domains {
-			if !slices.Contains(search, dom) {
-				search = append(search, dom)
-			}
-		}
+		servers = appendNew(servers, d.nics[idx].dns...)
+		search = appendNew(search, d.nics[idx].domains...)
 	}
+	for _, idx := range slices.Sorted(maps.Keys(d.v6)) {
+		search = appendNew(search, d.v6[idx].domains...)
+	}
+	servers = appendNew(servers, d.dns6()...)
 	content := strings.Join(servers, ",") + " search " + strings.Join(search, " ")
 	// Nothing to write before the first write without servers (the
 	// provisioner resolv.conf stays); after it, no servers left means the
@@ -874,6 +879,16 @@ func (d *DHCPMode) ManagesDNS() bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.manageDNS
+}
+
+// appendNew appends the items that list does not have yet.
+func appendNew(list []string, items ...string) []string {
+	for _, it := range items {
+		if !slices.Contains(list, it) {
+			list = append(list, it)
+		}
+	}
+	return list
 }
 
 // restoreMTUs sets the MTU from before the first lease again.

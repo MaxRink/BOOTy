@@ -1248,6 +1248,47 @@ DNS and NTP servers of that NIC and restores its MTU (RFC 2131 sections 3.2
 and 4.4.5), like networkd. The client starts over in INIT with a
 DHCPDISCOVER, and its next lease is applied again.
 
+### DHCPv6
+
+Like networkd with the legacy netplan, every NIC with a DHCP client also
+watches router advertisements (the kernel keeps doing SLAAC). Only an RA
+with code 0 and hop limit 255 from a link-local address counts (RFC 4861
+6.1.2). The
+first RA with the M flag starts a stateful DHCPv6 client
+(`pkg/network/dhcp6`), one with only the O flag a stateless one
+(INFORMATION-REQUEST, options 6, 1, 8); a later RA with the M flag
+replaces a stateless client with a stateful one. The stateful client sends the messages of systemd-networkd 255, as
+captured in the CAPRF L2 parity fixture:
+
+- SOLICIT with rapid commit, IA_NA, IA_PD, client FQDN (39, flag S and the
+  hostname), ORO 23, 31, 56, 82, 103, client identifier and elapsed time;
+  REQUEST after an ADVERTISE without rapid commit.
+- RENEW at T1 and REBIND at T2 with the IA address; RELEASE at stop.
+- Retransmission as in RFC 8415 section 15 (SOLICIT 1 s, up to 1 h; the
+  first SOLICIT timeout is above 1 s); REQUEST up to ten times, then a new
+  SOLICIT. When the valid lifetime ends without a REPLY, the client
+  solicits again.
+- Replies (RFC 8415): an ADVERTISE or REPLY without a server identifier
+  is discarded, an ADVERTISE with a status other than success ignored; an
+  IA_NA with T1 > T2 is discarded, an address with a preferred lifetime
+  over its valid lifetime, a valid lifetime of 0 or an error status is
+  skipped. T1 and T2 of 0 become 0.5 and 0.8 of the preferred lifetime,
+  and T1 <= T2 <= the valid lifetime.
+- The client identifier is the DUID-EN of DHCPv4 option 61 and the IAID
+  that of option 61, as in networkd.
+
+The leased address goes on the NIC as /128 with its preferred and valid
+lifetimes; the DNS servers (option 23, a link-local one with its zone)
+go to `/etc/resolv.conf` after those of DHCPv4, the domain search list
+(option 24) to its `search` line, like networkd. A stateless client asks
+again after the information refresh time (option 32, at least 600 s) or
+a day. When the lease ends, or the NIC loses carrier, the client
+stops and the address and DNS servers go; the next RA starts it again.
+When the carrier returns, BOOTy sends router solicitations (up to three,
+4 s apart, with the source link-layer address) until a client runs, like
+networkd's NDisc client; the kernel sends them only when the link comes
+up.
+
 Because `bond*` names are not physical NICs, DHCP does not run on `bond0`.
 
 Planned (#608): handle DHCP leases without a subnet mask and leases on

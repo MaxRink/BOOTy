@@ -583,6 +583,12 @@ func stubDHCPSetup(t *testing.T, onBound func(name string, cb dhcp4.Callback)) m
 	})
 	origSub := dhcpSubscribe
 	t.Cleanup(func() { dhcpSubscribe = origSub })
+	origRA := dhcp6WatchRA
+	t.Cleanup(func() { dhcp6WatchRA = origRA })
+	dhcp6WatchRA = func(context.Context, *net.Interface, func(bool, bool)) error { return nil }
+	origRS := dhcp6SendRS
+	t.Cleanup(func() { dhcp6SendRS = origRS })
+	dhcp6SendRS = func(string, net.HardwareAddr) error { return nil }
 	dhcpSubscribe = func(chan<- netlink.LinkUpdate, <-chan struct{}, netlink.LinkSubscribeOptions) error { return nil }
 	dhcpInterfaces = func(context.Context) ([]net.Interface, error) {
 		return []net.Interface{{Name: "eth0", Index: 1}, {Name: "eth1", Index: 2}}, nil
@@ -1479,6 +1485,7 @@ func TestStartClientWithoutCarrier(t *testing.T) {
 		return l, nil
 	}
 	d := NewDHCPMode()
+	t.Cleanup(func() { _ = d.Teardown(context.Background()) }) // waits for the senders of the carrier
 	d.startClient(&net.Interface{Name: "eth0", Index: 1}, "", make(chan string, 1))
 	d.startClient(&net.Interface{Name: "eth1", Index: 2}, "", make(chan string, 1))
 	up := netlink.LinkUpdate{Link: dummyLink("eth0", 1)}
@@ -1514,6 +1521,7 @@ func TestCarrierUpAroundFirstLease(t *testing.T) {
 		fc := &fakeDHCPClient{}
 		link := dummyLink("eth0", 1)
 		d.clients = map[int]*nicClient{1: {client: fc, link: link, down: true}} // started without carrier
+		t.Cleanup(func() { _ = d.Teardown(context.Background()) })              // ends the router solicitations
 		carrier := false
 		dhcpCarrier = func(int) bool { return carrier }
 		for _, e := range tt.events {
