@@ -7,8 +7,8 @@ require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/google/go-containerregistry v0.22.1
 	github.com/google/go-tpm v0.9.8
-	github.com/google/gopacket v1.1.19
 	github.com/gopacket/gopacket v1.7.4
+	github.com/insomniacslk/dhcp v0.0.0-20260901064844-234b97448fae
 	github.com/klauspost/compress v1.20.3
 	github.com/mdlayher/packet v1.2.0
 	github.com/osrg/gobgp/v4 v4.10.0
@@ -35,6 +35,7 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
+	github.com/josharian/native v1.1.0 // indirect
 	github.com/k-sone/critbitgo v1.4.0 // indirect
 	github.com/mdlayher/socket v0.8.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
@@ -49,6 +50,7 @@ require (
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/spf13/viper v1.21.0 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
+	github.com/u-root/uio v0.0.0-20230220225925-ffce2a382923 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
@@ -67,3 +69,7 @@ replace github.com/osrg/gobgp/v4 => github.com/MaxRink/gobgp/v4 v4.10.0-booty.10
 replace github.com/gopacket/gopacket => github.com/MaxRink/gopacket v1.7.4-booty.2
 
 replace github.com/vishvananda/netlink => github.com/MaxRink/netlink v1.3.1-booty.1
+
+// insomniacslk/dhcp 234b97448fae plus the BOOTy fixes; why, and when to
+// drop it: docs/dependency-forks.md
+replace github.com/insomniacslk/dhcp => github.com/MaxRink/dhcp v0.0.0-20260901064844-234b97448fae-booty.2

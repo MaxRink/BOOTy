@@ -16,7 +16,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/google/gopacket/layers"
+	"github.com/insomniacslk/dhcp/dhcpv4"
 	"github.com/telekom/BOOTy/pkg/network/dhcp4"
 	"github.com/telekom/BOOTy/pkg/network/lldp"
 	"github.com/vishvananda/netlink"
@@ -789,13 +789,7 @@ func (d *DHCPMode) dropUnappliedAddr(link netlink.Link, addr *netlink.Addr, prev
 
 // leaseNTPServers returns the NTP servers (option 42) of a lease.
 func leaseNTPServers(lease *dhcp4.Lease) []string {
-	var out []string
-	for _, opt := range lease.OtherOptions {
-		if opt.Type == layers.DHCPOptNTPServers {
-			out = parseNTPServers(opt.Data)
-		}
-	}
-	return out
+	return parseNTPServers(lease.Options.Get(dhcpv4.OptionNTPServers))
 }
 
 // publishNTP publishes the NTP servers of all leases (by NIC index, each

@@ -15,7 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/google/gopacket/layers"
+	"github.com/insomniacslk/dhcp/dhcpv4"
 )
 
 // Callback receives a lease.
@@ -27,7 +27,7 @@ type Client struct {
 	Iface    *net.Interface
 	Hostname string // option 12; none when empty
 	ClientID []byte // option 61; none when empty
-	Params   []layers.DHCPOpt
+	Params   []dhcpv4.OptionCode
 	// OnBound runs for every lease the server acknowledges: the first one,
 	// renewals, rebinds and the lease after an INIT-REBOOT.
 	OnBound Callback
@@ -209,15 +209,15 @@ func (c *Client) initState() state {
 			}
 		}
 		r, err := c.exchange(func(tr transport, m *message) error { return tr.broadcast(nil, m) },
-			c.discover(xid), timeout, nil, layers.DHCPMsgTypeOffer, layers.DHCPMsgTypeAck)
+			c.discover(xid), timeout, nil, dhcpv4.MessageTypeOffer, dhcpv4.MessageTypeAck)
 		switch {
 		case interrupted(err):
 			return stateInit
 		case err != nil:
 			continue
-		case r.typ == layers.DHCPMsgTypeAck && r.rapidCommit:
+		case r.typ == dhcpv4.MessageTypeAck && r.rapidCommit:
 			return c.bind(&r.lease)
-		case r.typ == layers.DHCPMsgTypeOffer:
+		case r.typ == dhcpv4.MessageTypeOffer:
 			return c.selecting(xid, &r.lease)
 		}
 	}
@@ -228,13 +228,13 @@ func (c *Client) initState() state {
 func (c *Client) selecting(xid uint32, offer *Lease) state {
 	for n := 0; n < 5; n++ {
 		r, err := c.exchange(func(tr transport, m *message) error { return tr.broadcast(nil, m) },
-			c.request(xid, nil, offer.ServerID, offer.FixedAddress), c.timeout(n), offer.ServerID, layers.DHCPMsgTypeAck, layers.DHCPMsgTypeNak)
+			c.request(xid, nil, offer.ServerID, offer.FixedAddress), c.timeout(n), offer.ServerID, dhcpv4.MessageTypeAck, dhcpv4.MessageTypeNak)
 		switch {
 		case interrupted(err):
 			return stateInit
 		case err != nil:
 			continue
-		case r.typ == layers.DHCPMsgTypeAck:
+		case r.typ == dhcpv4.MessageTypeAck:
 			return c.bind(&r.lease)
 		default:
 			c.Log.Info("DHCPNAK, starting over")
@@ -258,13 +258,13 @@ func (c *Client) rebootState() state {
 	xid := rand.Uint32() //nolint:gosec // a transaction ID
 	for n := 0; n < 1; n++ {
 		r, err := c.exchange(func(tr transport, m *message) error { return tr.broadcast(nil, m) },
-			c.request(xid, nil, nil, last.FixedAddress), c.timeout(n), last.ServerID, layers.DHCPMsgTypeAck, layers.DHCPMsgTypeNak)
+			c.request(xid, nil, nil, last.FixedAddress), c.timeout(n), last.ServerID, dhcpv4.MessageTypeAck, dhcpv4.MessageTypeNak)
 		switch {
 		case interrupted(err):
 			return stateInit
 		case err != nil:
 			continue
-		case r.typ == layers.DHCPMsgTypeAck:
+		case r.typ == dhcpv4.MessageTypeAck:
 			return c.bind(&r.lease)
 		default:
 			return c.expire()
@@ -332,13 +332,13 @@ func (c *Client) extend(next state, until func(*Lease) time.Time, send func(tran
 		wait := max(left/2, 60*time.Second)
 		wait = min(wait, left)
 		r, err := c.exchange(func(tr transport, m *message) error { return send(tr, m, l) },
-			c.request(xid, l.FixedAddress, nil, nil), wait, l.ServerID, layers.DHCPMsgTypeAck, layers.DHCPMsgTypeNak)
+			c.request(xid, l.FixedAddress, nil, nil), wait, l.ServerID, dhcpv4.MessageTypeAck, dhcpv4.MessageTypeNak)
 		switch {
 		case interrupted(err):
 			return stateBound
 		case err != nil:
 			continue
-		case r.typ == layers.DHCPMsgTypeAck:
+		case r.typ == dhcpv4.MessageTypeAck:
 			return c.bind(&r.lease)
 		default:
 			return c.expire()
@@ -400,7 +400,7 @@ func (c *Client) expire() state {
 // the types with the same transaction ID and our MAC.
 // A DHCPNAK counts only from server (the server of the offer or lease),
 // like networkd ("NAK from unexpected server, ignoring").
-func (c *Client) exchange(send func(transport, *message) error, m *message, timeout time.Duration, server net.IP, types ...layers.DHCPMsgType) (reply, error) {
+func (c *Client) exchange(send func(transport, *message) error, m *message, timeout time.Duration, server net.IP, types ...dhcpv4.MessageType) (reply, error) {
 	tr, err := c.open()
 	if interrupted(err) {
 		return reply{}, err
@@ -445,11 +445,11 @@ func (c *Client) exchange(send func(transport, *message) error, m *message, time
 
 // wanted tells whether r answers m with one of the types; a NAK counts only
 // from server.
-func (c *Client) wanted(r *reply, m *message, server net.IP, types []layers.DHCPMsgType) bool {
+func (c *Client) wanted(r *reply, m *message, server net.IP, types []dhcpv4.MessageType) bool {
 	if r.xid != m.xid || r.mac.String() != c.Iface.HardwareAddr.String() || !slices.Contains(types, r.typ) {
 		return false
 	}
-	if r.typ == layers.DHCPMsgTypeNak && server != nil && !r.lease.ServerID.Equal(server) {
+	if r.typ == dhcpv4.MessageTypeNak && server != nil && !r.lease.ServerID.Equal(server) {
 		c.Log.Debug("DHCPNAK from an unexpected server, ignoring", "server", r.lease.ServerID)
 		return false
 	}
@@ -523,11 +523,11 @@ func (c *Client) release() {
 	defer func() { _ = tr.close() }()
 	// networkd sends the client identifier only (captured in kindmetal:
 	// options 53, 61), unicast from the lease address to the server.
-	var opts []layers.DHCPOption
+	var opts []dhcpv4.Option
 	if len(c.ClientID) > 0 {
-		opts = append(opts, layers.NewDHCPOption(layers.DHCPOptClientID, c.ClientID))
+		opts = append(opts, dhcpv4.OptClientIdentifier(c.ClientID))
 	}
-	m := &message{typ: layers.DHCPMsgTypeRelease, xid: rand.Uint32(), ciaddr: l.FixedAddress, mac: c.Iface.HardwareAddr, options: opts} //nolint:gosec // a transaction ID
+	m := &message{typ: dhcpv4.MessageTypeRelease, xid: rand.Uint32(), ciaddr: l.FixedAddress, mac: c.Iface.HardwareAddr, options: opts} //nolint:gosec // a transaction ID
 	if err := tr.unicast(l.FixedAddress, l.ServerID, m); err != nil {
 		c.Log.Debug("DHCPRELEASE", "error", err)
 	}
@@ -545,10 +545,10 @@ func (c *Client) discover(xid uint32) *message {
 	}
 	c.mu.Unlock()
 	if ip := last.To4(); ip != nil {
-		opts = append(opts, layers.NewDHCPOption(layers.DHCPOptRequestIP, ip))
+		opts = append(opts, dhcpv4.OptRequestedIPAddress(ip))
 	}
-	opts = append(opts, layers.NewDHCPOption(optRapidCommit, nil))
-	return &message{typ: layers.DHCPMsgTypeDiscover, xid: xid, mac: c.Iface.HardwareAddr, options: c.withHostname(opts)}
+	opts = append(opts, dhcpv4.OptGeneric(dhcpv4.OptionRapidCommit, nil))
+	return &message{typ: dhcpv4.MessageTypeDiscover, xid: xid, mac: c.Iface.HardwareAddr, options: c.withHostname(opts)}
 }
 
 // request is a DHCPREQUEST: with server ID and address when SELECTING
@@ -557,40 +557,36 @@ func (c *Client) discover(xid uint32) *message {
 func (c *Client) request(xid uint32, ciaddr, server, addr net.IP) *message {
 	opts := c.common()
 	if server != nil {
-		opts = append(opts, layers.NewDHCPOption(layers.DHCPOptServerID, server.To4()))
+		opts = append(opts, dhcpv4.OptServerIdentifier(server.To4()))
 	}
 	if addr != nil {
-		opts = append(opts, layers.NewDHCPOption(layers.DHCPOptRequestIP, addr.To4()))
+		opts = append(opts, dhcpv4.OptRequestedIPAddress(addr.To4()))
 	}
-	return &message{typ: layers.DHCPMsgTypeRequest, xid: xid, ciaddr: ciaddr, mac: c.Iface.HardwareAddr, options: c.withHostname(opts)}
+	return &message{typ: dhcpv4.MessageTypeRequest, xid: xid, ciaddr: ciaddr, mac: c.Iface.HardwareAddr, options: c.withHostname(opts)}
 }
 
 // common returns 61, 55 and 57 (the MTU of the NIC now, less 28).
-func (c *Client) common() []layers.DHCPOption {
-	var opts []layers.DHCPOption
+func (c *Client) common() []dhcpv4.Option {
+	var opts []dhcpv4.Option
 	if len(c.ClientID) > 0 {
-		opts = append(opts, layers.NewDHCPOption(layers.DHCPOptClientID, c.ClientID))
+		opts = append(opts, dhcpv4.OptClientIdentifier(c.ClientID))
 	}
 	if len(c.Params) > 0 {
-		prl := make([]byte, 0, len(c.Params))
-		for _, p := range c.Params {
-			prl = append(prl, byte(p))
-		}
-		opts = append(opts, layers.NewDHCPOption(layers.DHCPOptParamsRequest, prl))
+		opts = append(opts, dhcpv4.OptParameterRequestList(c.Params...))
 	}
 	mtu := c.Iface.MTU
 	if ifi, err := net.InterfaceByIndex(c.Iface.Index); err == nil {
 		mtu = ifi.MTU
 	}
 	if mtu >= 576 {
-		opts = append(opts, layers.NewDHCPOption(layers.DHCPOptMaxMessageSize, []byte{byte((mtu - 28) >> 8), byte(mtu - 28)}))
+		opts = append(opts, dhcpv4.OptMaxMessageSize(uint16(mtu-28))) //nolint:gosec // an MTU fits 16 bits
 	}
 	return opts
 }
 
-func (c *Client) withHostname(opts []layers.DHCPOption) []layers.DHCPOption {
+func (c *Client) withHostname(opts []dhcpv4.Option) []dhcpv4.Option {
 	if c.Hostname != "" {
-		opts = append(opts, layers.NewDHCPOption(layers.DHCPOptHostname, []byte(c.Hostname)))
+		opts = append(opts, dhcpv4.OptHostName(c.Hostname))
 	}
 	return opts
 }

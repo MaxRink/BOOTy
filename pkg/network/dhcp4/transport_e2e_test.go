@@ -3,6 +3,7 @@
 package dhcp4
 
 import (
+	"encoding/binary"
 	"net"
 	"os"
 	"os/exec"
@@ -11,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
+	"github.com/insomniacslk/dhcp/dhcpv4"
+	"github.com/insomniacslk/dhcp/iana"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
 	"golang.org/x/sys/unix"
@@ -85,7 +86,7 @@ func TestTransportOnVeth(t *testing.T) {
 
 	ifi, _ := net.InterfaceByName("dhcpc0")
 	bound := make(chan *Lease, 4)
-	c := &Client{Iface: ifi, Hostname: "veth-test", Params: []layers.DHCPOpt{1, 3}, OnBound: func(l *Lease) {
+	c := &Client{Iface: ifi, Hostname: "veth-test", Params: []dhcpv4.OptionCode{dhcpv4.OptionSubnetMask, dhcpv4.OptionRouter}, OnBound: func(l *Lease) {
 		// Like BOOTy: the address is on the NIC before the renewal.
 		_ = netlink.AddrReplace(cli, &netlink.Addr{IPNet: &net.IPNet{IP: l.FixedAddress, Mask: l.Netmask}})
 		bound <- l
@@ -109,7 +110,7 @@ func TestTransportOnVeth(t *testing.T) {
 	}
 	var renewal *message
 	for len(requests) > 0 {
-		if m := <-requests; m.typ == layers.DHCPMsgTypeRequest && m.ciaddr != nil {
+		if m := <-requests; m.typ == dhcpv4.MessageTypeRequest && m.ciaddr != nil {
 			renewal = m
 		}
 	}
@@ -139,23 +140,18 @@ func serveDHCP(t *testing.T, ifname string, seen chan<- *message) {
 		if err != nil {
 			return
 		}
-		var d layers.DHCPv4
-		if d.DecodeFromBytes(buf[:n], nil) != nil {
+		d, err := dhcpv4.FromBytes(buf[:n])
+		if err != nil {
 			continue
 		}
-		m := &message{xid: d.Xid, mac: d.ClientHWAddr}
-		if !d.ClientIP.IsUnspecified() {
-			m.ciaddr = d.ClientIP
-		}
-		for _, o := range d.Options {
-			if o.Type == layers.DHCPOptMessageType {
-				m.typ = layers.DHCPMsgType(o.Data[0])
-			}
+		m := &message{xid: binary.BigEndian.Uint32(d.TransactionID[:]), mac: d.ClientHWAddr, typ: d.MessageType()}
+		if !d.ClientIPAddr.IsUnspecified() {
+			m.ciaddr = d.ClientIPAddr
 		}
 		seen <- m
-		typ := layers.DHCPMsgTypeOffer
-		if m.typ == layers.DHCPMsgTypeRequest {
-			typ = layers.DHCPMsgTypeAck
+		typ := dhcpv4.MessageTypeOffer
+		if m.typ == dhcpv4.MessageTypeRequest {
+			typ = dhcpv4.MessageTypeAck
 		}
 		reply := testReply(m, typ)
 		to := &unix.SockaddrInet4{Port: 68, Addr: [4]byte{255, 255, 255, 255}}
@@ -166,20 +162,17 @@ func serveDHCP(t *testing.T, ifname string, seen chan<- *message) {
 	}
 }
 
-func testReply(m *message, typ layers.DHCPMsgType) []byte {
-	d := &layers.DHCPv4{
-		Operation: layers.DHCPOpReply, HardwareType: layers.LinkTypeEthernet, HardwareLen: 6,
-		Xid: m.xid, ClientHWAddr: m.mac, YourClientIP: net.IPv4(192, 0, 2, 10).To4(), ClientIP: net.IPv4zero,
-		NextServerIP: net.IPv4zero, RelayAgentIP: net.IPv4zero,
-		Options: []layers.DHCPOption{
-			layers.NewDHCPOption(layers.DHCPOptMessageType, []byte{byte(typ)}),
-			layers.NewDHCPOption(layers.DHCPOptServerID, net.IPv4(192, 0, 2, 1).To4()),
-			layers.NewDHCPOption(layers.DHCPOptLeaseTime, []byte{0, 0, 0, 10}),
-			layers.NewDHCPOption(layers.DHCPOptT1, []byte{0, 0, 0, 2}),
-			layers.NewDHCPOption(layers.DHCPOptSubnetMask, []byte{255, 255, 255, 0}),
-		},
+func testReply(m *message, typ dhcpv4.MessageType) []byte {
+	d := &dhcpv4.DHCPv4{
+		OpCode: dhcpv4.OpcodeBootReply, HWType: iana.HWTypeEthernet, ClientHWAddr: m.mac, YourIPAddr: net.IPv4(192, 0, 2, 10),
+		Options: dhcpv4.OptionsFromList(
+			dhcpv4.OptMessageType(typ),
+			dhcpv4.OptServerIdentifier(net.IPv4(192, 0, 2, 1)),
+			dhcpv4.OptIPAddressLeaseTime(10*time.Second),
+			dhcpv4.OptRenewTimeValue(2*time.Second),
+			dhcpv4.OptSubnetMask(net.IPv4Mask(255, 255, 255, 0)),
+		),
 	}
-	buf := gopacket.NewSerializeBuffer()
-	_ = d.SerializeTo(buf, gopacket.SerializeOptions{})
-	return buf.Bytes()
+	binary.BigEndian.PutUint32(d.TransactionID[:], m.xid)
+	return d.ToBytes()
 }

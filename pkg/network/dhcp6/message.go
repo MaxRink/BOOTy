@@ -6,45 +6,41 @@ import (
 	"net"
 	"strings"
 	"time"
+
+	"github.com/insomniacslk/dhcp/dhcpv6"
+	"github.com/insomniacslk/dhcp/iana"
 )
 
 // Message types (RFC 8415 section 7.3).
 const (
-	msgSolicit            byte = 1
-	msgAdvertise          byte = 2
-	msgRequest            byte = 3
-	msgRenew              byte = 5
-	msgRebind             byte = 6
-	msgReply              byte = 7
-	msgRelease            byte = 8
-	msgInformationRequest byte = 11
+	msgSolicit            = dhcpv6.MessageTypeSolicit
+	msgAdvertise          = dhcpv6.MessageTypeAdvertise
+	msgRequest            = dhcpv6.MessageTypeRequest
+	msgRenew              = dhcpv6.MessageTypeRenew
+	msgRebind             = dhcpv6.MessageTypeRebind
+	msgReply              = dhcpv6.MessageTypeReply
+	msgRelease            = dhcpv6.MessageTypeRelease
+	msgInformationRequest = dhcpv6.MessageTypeInformationRequest
 )
 
 // Option codes.
 const (
-	optClientID      uint16 = 1
-	optServerID      uint16 = 2
-	optIANA          uint16 = 3
-	optIAAddr        uint16 = 5
-	optORO           uint16 = 6
-	optPreference    uint16 = 7
-	optElapsedTime   uint16 = 8
-	optStatusCode    uint16 = 13
-	optRapidCommit   uint16 = 14
-	optDNSServers    uint16 = 23
-	optDomainList    uint16 = 24
-	optInfoRefresh   uint16 = 32
-	optIAPD          uint16 = 25
-	optSNTPServers   uint16 = 31
-	optClientFQDN    uint16 = 39
-	optNTPServer     uint16 = 56
-	optSolMaxRT      uint16 = 82
-	optCaptivePortal uint16 = 103
+	optClientID      = dhcpv6.OptionClientID
+	optServerID      = dhcpv6.OptionServerID
+	optIANA          = dhcpv6.OptionIANA
+	optIAAddr        = dhcpv6.OptionIAAddr
+	optPreference    = dhcpv6.OptionPreference
+	optStatusCode    = dhcpv6.OptionStatusCode
+	optRapidCommit   = dhcpv6.OptionRapidCommit
+	optDNSServers    = dhcpv6.OptionDNSRecursiveNameServer
+	optDomainList    = dhcpv6.OptionDomainSearchList
+	optInfoRefresh   = dhcpv6.OptionInformationRefreshTime
+	optSNTPServers   = dhcpv6.OptionSNTPServerList
+	optClientFQDN    = dhcpv6.OptionFQDN
+	optNTPServer     = dhcpv6.OptionNTPServer
+	optSolMaxRT      = dhcpv6.OptionSolMaxRT
+	optCaptivePortal = dhcpv6.OptionCaptivePortal
 )
-
-// statusNoBinding is the status code of an IA the server has no binding
-// for (RFC 8415 section 21.13).
-const statusNoBinding uint16 = 3
 
 // Lease is the address a REPLY assigns (IA_NA) and its options.
 type Lease struct {
@@ -64,54 +60,60 @@ type Lease struct {
 	Expire time.Time // end of the valid lifetime
 }
 
-// option is one TLV.
-type option struct {
-	code uint16
-	data []byte
+func encode(typ dhcpv6.MessageType, xid uint32, opts []dhcpv6.Option) []byte {
+	m := dhcpv6.Message{MessageType: typ, TransactionID: dhcpv6.TransactionID{byte(xid >> 16), byte(xid >> 8), byte(xid)}}
+	m.Options.Options = opts
+	return m.ToBytes()
 }
 
-func encode(typ byte, xid uint32, opts []option) []byte {
-	b := []byte{typ, byte(xid >> 16), byte(xid >> 8), byte(xid)}
-	for _, o := range opts {
-		b = binary.BigEndian.AppendUint16(b, o.code)
-		b = binary.BigEndian.AppendUint16(b, uint16(len(o.data))) //nolint:gosec // short options
-		b = append(b, o.data...)
+// raw is an option sent as it is: a DUID, opaque to the client (RFC 8415
+// section 11), or the FQDN of fqdn.
+func raw(code dhcpv6.OptionCode, data []byte) dhcpv6.Option {
+	return &dhcpv6.OptionGeneric{OptionCode: code, OptionData: data}
+}
+
+// lenient parses an option like the library, but keeps one that does not
+// parse as raw bytes: like networkd, a malformed option is ignored, not
+// the message, and a malformed option in an IA_NA or an IA address is
+// ignored, not the IA or the address. A truncated option still fails the
+// message, the IA or the address, as in networkd.
+func lenient(code dhcpv6.OptionCode, data []byte) (dhcpv6.Option, error) {
+	o, err := dhcpv6.ParseOption(code, data)
+	if err == nil {
+		return o, nil
 	}
-	return b
-}
-
-// parseOptions splits TLVs; a truncated option ends the list.
-func parseOptions(b []byte) []option {
-	var out []option
-	for len(b) >= 4 {
-		code, n := binary.BigEndian.Uint16(b), int(binary.BigEndian.Uint16(b[2:]))
-		if len(b) < 4+n {
-			break
+	switch {
+	case code == optIANA && len(data) >= 12:
+		var ia dhcpv6.OptIANA
+		if ia.FromBytes(data[:12]) == nil && ia.Options.FromBytesWithParser(data[12:], lenient) == nil {
+			return &ia, nil
 		}
-		out = append(out, option{code: code, data: b[4 : 4+n]})
-		b = b[4+n:]
-	}
-	return out
-}
-
-func find(opts []option, code uint16) ([]byte, bool) {
-	for _, o := range opts {
-		if o.code == code {
-			return o.data, true
+	case code == optIAAddr && len(data) >= 24:
+		var a dhcpv6.OptIAAddress
+		if a.FromBytes(data[:24]) == nil && a.Options.FromBytesWithParser(data[24:], lenient) == nil {
+			return &a, nil
 		}
 	}
-	return nil, false
+	return raw(code, append([]byte(nil), data...)), nil
+}
+
+// optionData returns the payload of the first option with code.
+func optionData(opts dhcpv6.Options, code dhcpv6.OptionCode) []byte {
+	if o := opts.GetOne(code); o != nil {
+		return o.ToBytes()
+	}
+	return nil
 }
 
 // reply is a decoded ADVERTISE or REPLY.
 type reply struct {
-	typ         byte
+	typ         dhcpv6.MessageType
 	xid         uint32
 	clientID    []byte
 	rapidCommit bool
-	status      uint16 // top-level status code, 0 = success
-	iaStatus    uint16 // status code of our IA_NA, 0 = success
-	pref        byte   // server preference (option 7), 0 when absent
+	status      iana.StatusCode // top-level status code, 0 = success
+	iaStatus    iana.StatusCode // status code of our IA_NA, 0 = success
+	pref        byte            // server preference (option 7), 0 when absent
 	lease       Lease
 	hasAddr     bool
 }
@@ -123,56 +125,45 @@ var (
 
 // decode parses a server message for the IA with iaid.
 func decode(b []byte, iaid uint32, now time.Time) (reply, error) {
-	if len(b) < 4 {
+	if len(b) < dhcpv6.MessageHeaderSize {
 		return reply{}, errShort
 	}
-	r := reply{typ: b[0], xid: uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])}
-	opts := parseOptions(b[4:])
-	r.clientID, _ = find(opts, optClientID)
-	r.lease.ServerID, _ = find(opts, optServerID)
+	var opts dhcpv6.Options
+	if err := opts.FromBytesWithParser(withoutTail(b[dhcpv6.MessageHeaderSize:]), lenient); err != nil {
+		return reply{}, err //nolint:wrapcheck // the caller drops it
+	}
+	r := reply{typ: dhcpv6.MessageType(b[0]), xid: uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])}
+	r.clientID = optionData(opts, optClientID)
+	r.lease.ServerID = optionData(opts, optServerID)
 	// RFC 8415 16.3 and 16.10: discard an ADVERTISE or REPLY without one.
 	if (r.typ == msgAdvertise || r.typ == msgReply) && len(r.lease.ServerID) == 0 {
 		return reply{}, errNoServer
 	}
-	_, r.rapidCommit = find(opts, optRapidCommit)
-	if p, ok := find(opts, optPreference); ok && len(p) == 1 {
+	r.rapidCommit = opts.GetOne(optRapidCommit) != nil
+	if p := optionData(opts, optPreference); len(p) == 1 {
 		r.pref = p[0]
 	}
-	if st, ok := find(opts, optStatusCode); ok && len(st) >= 2 {
-		r.status = binary.BigEndian.Uint16(st)
+	mo := dhcpv6.MessageOptions{Options: opts}
+	if st := mo.Status(); st != nil {
+		r.status = st.StatusCode
 	}
-	if dns, ok := find(opts, optDNSServers); ok {
-		for i := 0; i+16 <= len(dns); i += 16 {
-			r.lease.DNS = append(r.lease.DNS, net.IP(append([]byte(nil), dns[i:i+16]...)))
-		}
+	r.lease.DNS = mo.DNS()
+	if dl := optionData(opts, optDomainList); dl != nil {
+		r.lease.Domains = domainList(dl)
 	}
-	r.lease.otherOptions(opts)
-	for _, o := range opts {
-		if o.code == optIANA && len(o.data) >= 12 && binary.BigEndian.Uint32(o.data) == iaid {
-			r.iaNA(o.data, now)
+	if irt := mo.InformationRefreshTime(-1); irt >= 0 {
+		// At least IRT_MINIMUM, also for 0 (RFC 8415 21.23).
+		r.lease.InfoRefresh = max(irt, 600*time.Second)
+	}
+	for _, o := range opts.Get(optIANA) {
+		if ia, ok := o.(*dhcpv6.OptIANA); ok && binary.BigEndian.Uint32(ia.IaId[:]) == iaid {
+			if st := ia.Options.Status(); st != nil {
+				r.iaStatus = st.StatusCode
+			}
+			r.hasAddr = r.lease.ia(ia, now)
 		}
 	}
 	return r, nil
-}
-
-// iaNA reads our IA_NA: its status code and its address.
-func (r *reply) iaNA(b []byte, now time.Time) {
-	if st, ok := find(parseOptions(b[12:]), optStatusCode); ok && len(st) >= 2 {
-		r.iaStatus = binary.BigEndian.Uint16(st)
-	}
-	r.hasAddr = r.lease.ia(b, now)
-}
-
-// otherOptions reads the domain search list (24) and the information
-// refresh time (32).
-func (l *Lease) otherOptions(opts []option) {
-	if dl, ok := find(opts, optDomainList); ok {
-		l.Domains = domainList(dl)
-	}
-	if v, ok := find(opts, optInfoRefresh); ok && len(v) == 4 {
-		// At least IRT_MINIMUM, also for 0 (RFC 8415 21.23).
-		l.InfoRefresh = max(time.Duration(binary.BigEndian.Uint32(v))*time.Second, 600*time.Second)
-	}
 }
 
 // ia reads an IA_NA: T1, T2 and its first usable IA address with
@@ -181,23 +172,24 @@ func (l *Lease) otherOptions(opts []option) {
 // a valid lifetime of 0 or a status other than success is skipped. T1 and
 // T2 of 0 are left to the client (0.5 and 0.8 of the preferred lifetime);
 // T1 <= T2 <= valid.
-func (l *Lease) ia(b []byte, now time.Time) bool {
-	t1, t2 := binary.BigEndian.Uint32(b[4:]), binary.BigEndian.Uint32(b[8:])
+func (l *Lease) ia(ia *dhcpv6.OptIANA, now time.Time) bool {
+	t1, t2 := seconds(ia.T1), seconds(ia.T2)
 	if t1 > 0 && t2 > 0 && t1 > t2 {
 		return false
 	}
-	for _, o := range parseOptions(b[12:]) {
-		if o.code != optIAAddr || len(o.data) < 24 {
+	for _, o := range ia.Options.Get(optIAAddr) {
+		a, ok := o.(*dhcpv6.OptIAAddress)
+		if !ok {
+			continue // malformed
+		}
+		if st := a.Options.Status(); st != nil && st.StatusCode != iana.StatusSuccess {
 			continue
 		}
-		if st, ok := find(parseOptions(o.data[24:]), optStatusCode); ok && len(st) >= 2 && binary.BigEndian.Uint16(st) != 0 {
-			continue
-		}
-		pref, valid := binary.BigEndian.Uint32(o.data[16:]), binary.BigEndian.Uint32(o.data[20:])
+		pref, valid := seconds(a.PreferredLifetime), seconds(a.ValidLifetime)
 		if valid == 0 || pref > valid {
 			continue
 		}
-		l.Addr = net.IP(append([]byte(nil), o.data[:16]...))
+		l.Addr = a.IPv6Addr
 		l.Preferred, l.Valid = time.Duration(pref)*time.Second, time.Duration(valid)*time.Second
 		if t1 == 0 {
 			t1 = pref / 2
@@ -215,29 +207,59 @@ func (l *Lease) ia(b []byte, now time.Time) bool {
 	return false
 }
 
-// domainList decodes DNS wire-format names (RFC 1035, no compression).
+func seconds(d time.Duration) uint32 { return uint32(d / time.Second) } //nolint:gosec // from 32 bits
+
+// withoutTail cuts 1 to 3 bytes after the last option, which networkd
+// ignores ("Ignoring %zu invalid byte(s) at the end of the packet"); the
+// library fails the message. A truncated option stays and fails it.
+func withoutTail(b []byte) []byte {
+	n := 0
+	for len(b)-n >= 4 {
+		next := n + 4 + int(binary.BigEndian.Uint16(b[n+2:]))
+		if next > len(b) {
+			return b
+		}
+		n = next
+	}
+	return b[:n]
+}
+
+// domainList decodes option 24 like networkd 255
+// (dhcp6_option_parse_domainname_list): the last byte is 0, every label
+// has at most 63 bytes and lies inside the option, and a name may end at
+// the end of the option without the root label. Anything else ignores
+// the option as a whole. The names are checked later (validSearchDomain).
 func domainList(b []byte) []string {
+	if len(b) <= 1 || b[len(b)-1] != 0 {
+		return nil
+	}
 	var out []string
-	var labels []string
 	for len(b) > 0 {
-		n := int(b[0])
-		if n == 0 {
-			if len(labels) > 0 {
-				out = append(out, strings.Join(labels, "."))
+		if len(b) <= 1 {
+			return nil // parse_domain: -ENODATA
+		}
+		var labels []string
+		for len(b) > 0 {
+			n := int(b[0])
+			b = b[1:]
+			if n == 0 {
+				break
 			}
-			labels, b = nil, b[1:]
-			continue
+			if n > 63 || n > len(b) {
+				return nil
+			}
+			labels, b = append(labels, string(b[:n])), b[n:]
 		}
-		if len(b) < 1+n {
-			break
+		if len(labels) > 0 {
+			out = append(out, strings.Join(labels, "."))
 		}
-		labels, b = append(labels, string(b[1:1+n])), b[1+n:]
 	}
 	return out
 }
 
 // fqdn is option 39 like networkd: flags S (the server updates the AAAA
-// record) and the host name as a partial DNS name (no root label).
+// record) and the host name as a partial DNS name (no root label). The
+// library always ends a name with the root label.
 func fqdn(hostname string) []byte {
 	b := []byte{0x01}
 	for _, l := range strings.Split(strings.TrimSuffix(hostname, "."), ".") {
@@ -250,30 +272,26 @@ func fqdn(hostname string) []byte {
 	return b
 }
 
-// ia returns an IA_NA (or IA_PD) option for iaid with T1 and T2 of 0, and
-// the address of a lease in it when addr is set.
-func iaOption(code uint16, iaid uint32, addr *Lease) option {
-	b := binary.BigEndian.AppendUint32(nil, iaid)
-	b = append(b, make([]byte, 8)...)
+// iaNA returns an IA_NA for iaid with T1 and T2 of 0, and the address of a
+// lease in it when addr is set.
+func iaNA(iaid uint32, addr *Lease) dhcpv6.Option {
+	ia := &dhcpv6.OptIANA{}
+	binary.BigEndian.PutUint32(ia.IaId[:], iaid)
 	if addr != nil && addr.Addr != nil {
-		ia := append([]byte(nil), addr.Addr.To16()...)
-		ia = append(ia, make([]byte, 8)...)
-		b = binary.BigEndian.AppendUint16(b, optIAAddr)
-		b = binary.BigEndian.AppendUint16(b, uint16(len(ia))) //nolint:gosec // 24 bytes
-		b = append(b, ia...)
+		ia.Options.Add(&dhcpv6.OptIAAddress{IPv6Addr: addr.Addr})
 	}
-	return option{code: code, data: b}
+	return ia
 }
 
-func oro(codes ...uint16) option {
-	var b []byte
-	for _, c := range codes {
-		b = binary.BigEndian.AppendUint16(b, c)
-	}
-	return option{code: optORO, data: b}
+// iaPD returns an empty IA_PD for iaid.
+func iaPD(iaid uint32) dhcpv6.Option {
+	ia := &dhcpv6.OptIAPD{}
+	binary.BigEndian.PutUint32(ia.IaId[:], iaid)
+	return ia
 }
 
-func elapsed(d time.Duration) option {
-	cs := d / (10 * time.Millisecond)
-	return option{code: optElapsedTime, data: binary.BigEndian.AppendUint16(nil, uint16(min(max(cs, 0), 0xffff)))} //nolint:gosec // bounded
+// elapsed is option 8 in hundredths of a second, cut like networkd; the
+// library rounds.
+func elapsed(d time.Duration) dhcpv6.Option {
+	return dhcpv6.OptElapsedTime(d.Truncate(10 * time.Millisecond))
 }

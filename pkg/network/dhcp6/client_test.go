@@ -9,6 +9,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/insomniacslk/dhcp/dhcpv6"
+	"github.com/insomniacslk/dhcp/iana"
 )
 
 var (
@@ -107,28 +110,44 @@ func xidOf(msg []byte) uint32 { return uint32(msg[1])<<16 | uint32(msg[2])<<8 | 
 
 // serverReply answers msg with typ: T1 60 s, T2 96 s, preferred 120 s,
 // valid 180 s, one DNS server.
-func serverReply(msg []byte, typ byte, rapid bool) []byte {
-	clientID, _ := find(parseOptions(msg[4:]), optClientID)
+func serverReply(msg []byte, typ dhcpv6.MessageType, rapid bool) []byte {
+	clientID, _ := find(msg, optClientID)
 	ia := binary.BigEndian.AppendUint32(nil, 7)
 	ia = binary.BigEndian.AppendUint32(ia, 60)
 	ia = binary.BigEndian.AppendUint32(ia, 96)
 	addr := append(append([]byte(nil), testAddr.To16()...), 0, 0, 0, 120, 0, 0, 0, 180)
-	ia = binary.BigEndian.AppendUint16(ia, optIAAddr)
+	ia = binary.BigEndian.AppendUint16(ia, uint16(optIAAddr))
 	ia = binary.BigEndian.AppendUint16(ia, uint16(len(addr)))
 	ia = append(ia, addr...)
-	opts := []option{{optServerID, testServer}, {optClientID, clientID}, {optIANA, ia}, {optDNSServers, net.ParseIP("fd00:10::1").To16()}}
+	opts := []dhcpv6.Option{raw(optServerID, testServer), raw(optClientID, clientID), raw(optIANA, ia), raw(optDNSServers, net.ParseIP("fd00:10::1").To16())}
 	if rapid {
-		opts = append(opts, option{optRapidCommit, nil})
+		opts = append(opts, raw(optRapidCommit, nil))
 	}
 	return encode(typ, xidOf(msg), opts)
 }
 
 func codes(msg []byte) []uint16 {
 	out := make([]uint16, 0, 8)
-	for _, o := range parseOptions(msg[4:]) {
-		out = append(out, o.code)
+	for _, o := range options(msg) {
+		out = append(out, uint16(o.Code()))
 	}
 	return out
+}
+
+// options parses the options of msg.
+func options(msg []byte) dhcpv6.Options {
+	var opts dhcpv6.Options
+	_ = opts.FromBytesWithParser(msg[4:], lenient)
+	return opts
+}
+
+// find returns the payload of the first option of msg with code.
+func find(msg []byte, code dhcpv6.OptionCode) ([]byte, bool) {
+	o := options(msg).GetOne(code)
+	if o == nil {
+		return nil, false
+	}
+	return o.ToBytes(), true
 }
 
 // TestSolicitLikeNetworkd: networkd's SOLICIT and its retransmissions
@@ -137,7 +156,7 @@ func TestSolicitLikeNetworkd(t *testing.T) {
 	f := newFakeNet()
 	solicits := 0
 	f.answer = func(msg []byte) []byte {
-		if msg[0] == msgSolicit {
+		if dhcpv6.MessageType(msg[0]) == msgSolicit {
 			if solicits++; solicits > 3 {
 				return serverReply(msg, msgReply, true)
 			}
@@ -160,11 +179,11 @@ func TestSolicitLikeNetworkd(t *testing.T) {
 	if got := codes(s); !slices.Equal(got, []uint16{14, 3, 25, 39, 6, 1, 8}) {
 		t.Errorf("SOLICIT options = %v, want networkd's 14,3,25,39,6,1,8", got)
 	}
-	o, _ := find(parseOptions(s[4:]), optORO)
+	o, _ := find(s, dhcpv6.OptionORO)
 	if !bytes.Equal(o, []byte{0, 23, 0, 31, 0, 56, 0, 82, 0, 103}) {
 		t.Errorf("ORO = %x, want 23,31,56,82,103", o)
 	}
-	fq, _ := find(parseOptions(s[4:]), optClientFQDN)
+	fq, _ := find(s, optClientFQDN)
 	if !bytes.Equal(fq, append([]byte{1, 14}, "e2e-test-rfm-0"...)) {
 		t.Errorf("FQDN = %x, want flags 01 and the partial host name", fq)
 	}
@@ -183,7 +202,7 @@ func TestSolicitLikeNetworkd(t *testing.T) {
 func TestRenewRebindExpire(t *testing.T) {
 	f := newFakeNet()
 	f.answer = func(msg []byte) []byte {
-		if msg[0] == msgSolicit {
+		if dhcpv6.MessageType(msg[0]) == msgSolicit {
 			return serverReply(msg, msgReply, true)
 		}
 		return nil
@@ -201,7 +220,7 @@ func TestRenewRebindExpire(t *testing.T) {
 	c.Stop()
 	var renew, rebind []byte
 	for _, m := range f.messages() {
-		switch m[0] {
+		switch dhcpv6.MessageType(m[0]) {
 		case msgRenew:
 			renew = m
 		case msgRebind:
@@ -214,7 +233,7 @@ func TestRenewRebindExpire(t *testing.T) {
 	if rebind == nil || !slices.Equal(codes(rebind), []uint16{3, 39, 6, 1, 8}) {
 		t.Errorf("REBIND options = %v, want 3,39,6,1,8", codes(rebind))
 	}
-	o, _ := find(parseOptions(renew[4:]), optORO)
+	o, _ := find(renew, dhcpv6.OptionORO)
 	if !bytes.Equal(o, []byte{0, 23, 0, 31, 0, 56, 0, 103}) {
 		t.Errorf("RENEW ORO = %x, want 23,31,56,103", o)
 	}
@@ -225,7 +244,7 @@ func TestRenewRebindExpire(t *testing.T) {
 func TestAdvertiseRequestAndRelease(t *testing.T) {
 	f := newFakeNet()
 	f.answer = func(msg []byte) []byte {
-		switch msg[0] {
+		switch dhcpv6.MessageType(msg[0]) {
 		case msgSolicit:
 			return serverReply(msg, msgAdvertise, false)
 		case msgRequest, msgRelease:
@@ -242,13 +261,13 @@ func TestAdvertiseRequestAndRelease(t *testing.T) {
 	close(f.stopped)
 	c.Stop()
 	msgs := f.messages()
-	if len(msgs) != 3 || msgs[1][0] != msgRequest || msgs[2][0] != msgRelease {
+	if len(msgs) != 3 || dhcpv6.MessageType(msgs[1][0]) != msgRequest || dhcpv6.MessageType(msgs[2][0]) != msgRelease {
 		t.Fatalf("messages = %v, want SOLICIT, REQUEST, RELEASE", msgs)
 	}
 	if got := codes(msgs[2]); !slices.Equal(got, []uint16{2, 3, 1, 8}) {
 		t.Errorf("RELEASE options = %v, want networkd's 2,3,1,8", got)
 	}
-	if sid, _ := find(parseOptions(msgs[1][4:]), optServerID); !bytes.Equal(sid, testServer) {
+	if sid, _ := find(msgs[1], optServerID); !bytes.Equal(sid, testServer) {
 		t.Errorf("REQUEST server ID = %x", sid)
 	}
 	f.mu.Lock()
@@ -263,7 +282,7 @@ func TestAdvertiseRequestAndRelease(t *testing.T) {
 func TestInformationRequest(t *testing.T) {
 	f := newFakeNet()
 	f.answer = func(msg []byte) []byte {
-		if msg[0] == msgInformationRequest {
+		if dhcpv6.MessageType(msg[0]) == msgInformationRequest {
 			return serverReply(msg, msgReply, false)
 		}
 		return nil
@@ -288,6 +307,26 @@ func TestDomainList(t *testing.T) {
 	if got := domainList(b); !slices.Equal(got, []string{"a.example", "b"}) {
 		t.Fatalf("domainList = %v", got)
 	}
+	// networkd 255 dhcp6_option_parse_domainname_list: a name may end at
+	// the end of the option when the last byte is 0; one byte after a
+	// name, a label over 63 bytes or past the end, a pointer, or a last
+	// byte other than 0 ignore the list.
+	for _, tt := range []struct {
+		b    []byte
+		want []string
+	}{
+		{[]byte{1, 'a', 0, 2, 'b', 0}, []string{"a", "b\x00"}},
+		{[]byte{0, 1, 'a', 0}, []string{"a"}},
+		{[]byte{1, 'a', 0, 0}, nil},
+		{[]byte{1, 'a'}, nil},
+		{[]byte{1, 'a', 0xc0, 0}, nil},
+		{[]byte{3, 'a', 0}, nil},
+		{append([]byte{64}, make([]byte, 65)...), nil},
+	} {
+		if got := domainList(tt.b); !slices.Equal(got, tt.want) {
+			t.Errorf("domainList(%x) = %q, want %q", tt.b, got, tt.want)
+		}
+	}
 }
 
 // RFC 8415 18.2.1: the first SOLICIT RT is above IRT even with a negative
@@ -303,18 +342,13 @@ func TestFirstSolicitAboveIRT(t *testing.T) {
 }
 
 // replyFrom is serverReply from server with the extra options.
-func replyFrom(msg []byte, typ byte, server []byte, extra ...option) []byte {
-	r := serverReply(msg, typ, false)
-	opts := parseOptions(r[4:])
-	for i := range opts {
-		if opts[i].code == optServerID {
-			opts[i].data = server
-		}
-	}
+func replyFrom(msg []byte, typ dhcpv6.MessageType, server []byte, extra ...dhcpv6.Option) []byte {
+	opts := options(serverReply(msg, typ, false))
+	opts.Update(raw(optServerID, server))
 	return encode(typ, xidOf(msg), append(opts, extra...))
 }
 
-func pref(p byte) option { return option{optPreference, []byte{p}} }
+func pref(p byte) dhcpv6.Option { return raw(optPreference, []byte{p}) }
 
 // RFC 8415 18.2.9: the ADVERTISEs of the first RT are collected and the
 // one with the highest preference wins; preference 255, or an ADVERTISE
@@ -346,7 +380,7 @@ func TestAdvertisePreference(t *testing.T) {
 			var solicits int
 			var reqAt time.Time
 			f.answer = func(msg []byte) []byte {
-				switch msg[0] {
+				switch dhcpv6.MessageType(msg[0]) {
 				case msgSolicit:
 					solicits++
 					advs := tt.advs(solicits, msg)
@@ -376,12 +410,12 @@ func TestAdvertisePreference(t *testing.T) {
 			c.Stop()
 			var req []byte
 			for _, m := range f.messages() {
-				if m[0] == msgRequest {
+				if dhcpv6.MessageType(m[0]) == msgRequest {
 					req = m
 					break
 				}
 			}
-			if sid, _ := find(parseOptions(req[4:]), optServerID); !bytes.Equal(sid, tt.server) {
+			if sid, _ := find(req, optServerID); !bytes.Equal(sid, tt.server) {
 				t.Errorf("REQUEST to server %q, want %q", sid, tt.server)
 			}
 			if got := reqAt.Sub(start); got != tt.after {
@@ -404,9 +438,9 @@ func (s *socketTransport) send(msg []byte) error {
 	defer s.f.mu.Unlock()
 	s.f.sent = append(s.f.sent, msg)
 	switch {
-	case msg[0] == msgSolicit && len(s.f.sent) == 1:
+	case dhcpv6.MessageType(msg[0]) == msgSolicit && len(s.f.sent) == 1:
 		s.late = serverReply(msg, msgAdvertise, false) // after the first RT
-	case msg[0] == msgRequest:
+	case dhcpv6.MessageType(msg[0]) == msgRequest:
 		s.queue = append(s.queue, serverReply(msg, msgReply, false))
 	}
 	return nil
@@ -458,10 +492,10 @@ func TestLateAdvertiseSameSocket(t *testing.T) {
 	}
 }
 
-func (f *fakeNet) countType(typ byte) int {
+func (f *fakeNet) countType(typ dhcpv6.MessageType) int {
 	n := 0
 	for _, m := range f.messages() {
-		if m[0] == typ {
+		if dhcpv6.MessageType(m[0]) == typ {
 			n++
 		}
 	}
@@ -473,23 +507,18 @@ var otherServer = []byte{0, 1, 0, 1, 8, 8, 8, 8}
 
 // noBindingFrom is a REPLY of server whose IA_NA has the status NoBinding.
 func noBindingFrom(msg, server []byte) []byte {
-	r := noBinding(msg)
-	opts := parseOptions(r[4:])
-	for i := range opts {
-		if opts[i].code == optServerID {
-			opts[i].data = server
-		}
-	}
+	opts := options(noBinding(msg))
+	opts.Update(raw(optServerID, server))
 	return encode(msgReply, xidOf(msg), opts)
 }
 
 // noBinding is a REPLY whose IA_NA has the status NoBinding.
 func noBinding(msg []byte) []byte {
-	clientID, _ := find(parseOptions(msg[4:]), optClientID)
+	clientID, _ := find(msg, optClientID)
 	ia := binary.BigEndian.AppendUint32(nil, 7)
 	ia = append(ia, make([]byte, 8)...)
-	ia = append(ia, 0, byte(optStatusCode), 0, 2, 0, byte(statusNoBinding))
-	return encode(msgReply, xidOf(msg), []option{{optServerID, testServer}, {optClientID, clientID}, {optIANA, ia}})
+	ia = append(ia, 0, byte(optStatusCode), 0, 2, 0, byte(iana.StatusNoBinding))
+	return encode(msgReply, xidOf(msg), []dhcpv6.Option{raw(optServerID, testServer), raw(optClientID, clientID), raw(optIANA, ia)})
 }
 
 // RFC 8415 18.2.10.1: NoBinding in the REPLY to a RENEW makes the client
@@ -499,7 +528,7 @@ func TestRenewNoBindingRequests(t *testing.T) {
 	for _, answered := range []bool{true, false} {
 		f := newFakeNet()
 		f.answer = func(msg []byte) []byte {
-			switch msg[0] {
+			switch dhcpv6.MessageType(msg[0]) {
 			case msgSolicit:
 				return serverReply(msg, msgReply, true)
 			case msgRenew:
@@ -533,20 +562,20 @@ func TestRenewNoBindingRequests(t *testing.T) {
 		}
 		close(f.stopped)
 		c.Stop()
-		var types []byte
+		var types []dhcpv6.MessageType
 		for _, m := range f.messages() {
-			if len(types) == 0 || types[len(types)-1] != m[0] {
-				types = append(types, m[0])
+			if typ := dhcpv6.MessageType(m[0]); len(types) == 0 || types[len(types)-1] != typ {
+				types = append(types, typ)
 			}
 		}
 		if len(types) < 3 || types[1] != msgRenew || types[2] != msgRequest || slices.Contains(types, msgRebind) || f.countType(msgRequest) != 1 {
 			t.Fatalf("answered %v: message types %v, want SOLICIT, RENEW, one REQUEST and no REBIND", answered, types)
 		}
 		req := f.messages()[2]
-		if ia, _ := find(parseOptions(req[4:]), optIANA); !bytes.Contains(ia, testAddr.To16()) {
+		if ia, _ := find(req, optIANA); !bytes.Contains(ia, testAddr.To16()) {
 			t.Errorf("REQUEST IA_NA %x without the address", ia)
 		}
-		if sid, _ := find(parseOptions(req[4:]), optServerID); !bytes.Equal(sid, otherServer) {
+		if sid, _ := find(req, optServerID); !bytes.Equal(sid, otherServer) {
 			t.Errorf("REQUEST to server %x, want %x that answered NoBinding", sid, otherServer)
 		}
 	}
@@ -561,12 +590,12 @@ func TestInformationWaitsRefreshTime(t *testing.T) {
 	}{{[]byte{0, 0, 0x0e, 0x10}, time.Hour}, {[]byte{0, 0, 0, 0}, 600 * time.Second}, {nil, 24 * time.Hour}} {
 		f := newFakeNet()
 		f.answer = func(msg []byte) []byte {
-			if msg[0] != msgInformationRequest {
+			if dhcpv6.MessageType(msg[0]) != msgInformationRequest {
 				return nil
 			}
 			r := serverReply(msg, msgReply, false)
 			if tt.opt != nil {
-				r = encode(msgReply, xidOf(msg), append(parseOptions(r[4:]), option{optInfoRefresh, tt.opt}))
+				r = encode(msgReply, xidOf(msg), append(options(r), raw(optInfoRefresh, tt.opt)))
 			}
 			return r
 		}
@@ -597,7 +626,7 @@ func TestInformationWaitsRefreshTime(t *testing.T) {
 func TestNoBindingRequestBoundedByLifetime(t *testing.T) {
 	f := newFakeNet()
 	f.answer = func(msg []byte) []byte {
-		switch msg[0] {
+		switch dhcpv6.MessageType(msg[0]) {
 		case msgSolicit:
 			return serverReply(msg, msgReply, true)
 		case msgRenew:
@@ -643,7 +672,7 @@ func (c *countTransport) close() error { c.open.Add(-1); return nil }
 func TestInformationClosesSocketBeforeWait(t *testing.T) {
 	f := newFakeNet()
 	f.answer = func(msg []byte) []byte {
-		if msg[0] == msgInformationRequest {
+		if dhcpv6.MessageType(msg[0]) == msgInformationRequest {
 			return serverReply(msg, msgReply, false)
 		}
 		return nil

@@ -1,6 +1,33 @@
 package dhcp4
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+	"net"
+)
+
+// udpFrame returns an Ethernet broadcast frame from mac that carries an
+// IPv4 UDP datagram (TTL 64, ID 0, no flags) with tos and both checksums.
+func udpFrame(mac net.HardwareAddr, src, dst net.IP, sport, dport uint16, tos byte, payload []byte) []byte {
+	const ethLen, ipLen, udpLen = 14, 20, 8
+	b := make([]byte, ethLen+ipLen+udpLen+len(payload))
+	copy(b, []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff})
+	copy(b[6:], mac)
+	binary.BigEndian.PutUint16(b[12:], 0x0800)
+	ip := b[ethLen:]
+	ip[0], ip[1], ip[8], ip[9] = 0x45, tos, 64, 17
+	binary.BigEndian.PutUint16(ip[2:], uint16(len(ip))) //nolint:gosec // one DHCP message
+	copy(ip[12:], src.To4())
+	copy(ip[16:], dst.To4())
+	binary.BigEndian.PutUint16(ip[10:], checksum(0, ip[:ipLen]))
+	udp := ip[ipLen:]
+	binary.BigEndian.PutUint16(udp, sport)
+	binary.BigEndian.PutUint16(udp[2:], dport)
+	binary.BigEndian.PutUint16(udp[4:], uint16(len(udp))) //nolint:gosec // one DHCP message
+	copy(udp[udpLen:], payload)
+	pseudo := append(append([]byte(nil), ip[12:20]...), 0, 17, udp[4], udp[5])
+	binary.BigEndian.PutUint16(udp[6:], checksum(sum(0, pseudo), udp))
+	return b
+}
 
 // udpPayload returns the payload of an Ethernet frame that carries an
 // unfragmented IPv4 UDP datagram to port 68. It checks the IP header

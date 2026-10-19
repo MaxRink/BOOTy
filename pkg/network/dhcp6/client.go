@@ -16,6 +16,9 @@ import (
 	"slices"
 	"sync"
 	"time"
+
+	"github.com/insomniacslk/dhcp/dhcpv6"
+	"github.com/insomniacslk/dhcp/iana"
 )
 
 // Callback receives a lease.
@@ -210,11 +213,11 @@ func (c *Client) request(adv *Lease, until time.Time) bool {
 			rt = min(rt, left)
 		}
 		r, err := c.exchangeOne(func() []byte {
-			return encode(msgRequest, xid, c.withTail(start, option{optServerID, adv.ServerID}, iaOption(optIANA, c.IAID, adv)))
+			return encode(msgRequest, xid, c.withTail(start, raw(optServerID, adv.ServerID), iaNA(c.IAID, adv)))
 		}, xid, rt, msgReply)
 		switch {
 		case err != nil:
-		case r.iaStatus == statusNoBinding:
+		case r.iaStatus == iana.StatusNoBinding:
 			return false // like networkd: start over
 		case r.hasAddr:
 			c.bind(&r.lease)
@@ -233,7 +236,7 @@ func (c *Client) extend(l *Lease) {
 	case <-c.after(l.Renew.Sub(c.now())):
 	}
 	for _, phase := range []struct {
-		typ   byte
+		typ   dhcpv6.MessageType
 		until time.Time
 	}{{msgRenew, l.Rebind}, {msgRebind, l.Expire}} {
 		bound, noBinding := c.phase(l, phase.typ, phase.until)
@@ -257,7 +260,7 @@ func (c *Client) extend(l *Lease) {
 // NoBinding for the IA makes the client send a REQUEST to that server
 // (RFC 8415 18.2.10.1); noBinding then tells that the REQUEST failed too,
 // and the lease ends at once, like networkd ends it on NoBinding.
-func (c *Client) phase(l *Lease, typ byte, until time.Time) (bound, noBinding bool) {
+func (c *Client) phase(l *Lease, typ dhcpv6.MessageType, until time.Time) (bound, noBinding bool) {
 	start, xid := c.now(), rand.Uint32()&0xffffff //nolint:gosec // a transaction ID
 	var rt time.Duration
 	for !c.stopped() {
@@ -267,19 +270,19 @@ func (c *Client) phase(l *Lease, typ byte, until time.Time) (bound, noBinding bo
 		}
 		rt = min(c.next(renewRT, rt), left)
 		r, err := c.exchangeOne(func() []byte {
-			opts := []option{iaOption(optIANA, c.IAID, l)}
+			opts := []dhcpv6.Option{iaNA(c.IAID, l)}
 			if typ == msgRenew {
-				opts = append([]option{{optServerID, l.ServerID}}, opts...)
+				opts = append([]dhcpv6.Option{raw(optServerID, l.ServerID)}, opts...)
 			}
 			if c.Hostname != "" {
-				opts = append(opts, option{optClientFQDN, fqdn(c.Hostname)})
+				opts = append(opts, raw(optClientFQDN, fqdn(c.Hostname)))
 			}
-			opts = append(opts, oro(optDNSServers, optSNTPServers, optNTPServer, optCaptivePortal), option{optClientID, c.DUID}, elapsed(c.now().Sub(start)))
+			opts = append(opts, dhcpv6.OptRequestedOption(optDNSServers, optSNTPServers, optNTPServer, optCaptivePortal), raw(optClientID, c.DUID), elapsed(c.now().Sub(start)))
 			return encode(typ, xid, opts)
 		}, xid, rt, msgReply)
 		switch {
 		case err != nil:
-		case r.iaStatus == statusNoBinding:
+		case r.iaStatus == iana.StatusNoBinding:
 			req := *l
 			req.ServerID = r.lease.ServerID
 			return c.request(&req, l.Expire), true
@@ -309,8 +312,8 @@ func (c *Client) information() {
 	for !c.stopped() {
 		rt = c.next(infoRT, rt)
 		r, err := c.exchangeOne(func() []byte {
-			return encode(msgInformationRequest, xid, []option{
-				oro(optDNSServers, optSNTPServers, optNTPServer, optCaptivePortal), {optClientID, c.DUID}, elapsed(c.now().Sub(start)),
+			return encode(msgInformationRequest, xid, []dhcpv6.Option{
+				dhcpv6.OptRequestedOption(optDNSServers, optSNTPServers, optNTPServer, optCaptivePortal), raw(optClientID, c.DUID), elapsed(c.now().Sub(start)),
 			})
 		}, xid, rt, msgReply)
 		if err != nil {
@@ -341,22 +344,22 @@ func (c *Client) bind(l *Lease) {
 // solicitMsg is networkd's SOLICIT: rapid commit, IA_NA, IA_PD, FQDN, ORO
 // (DNS, SNTP, NTP, SOL_MAX_RT, captive portal), client ID, elapsed time.
 func (c *Client) solicitMsg(xid uint32, start time.Time) []byte {
-	opts := []option{{optRapidCommit, nil}, iaOption(optIANA, c.IAID, nil), iaOption(optIAPD, c.IAID, nil)}
+	opts := []dhcpv6.Option{raw(optRapidCommit, nil), iaNA(c.IAID, nil), iaPD(c.IAID)}
 	if c.Hostname != "" {
-		opts = append(opts, option{optClientFQDN, fqdn(c.Hostname)})
+		opts = append(opts, raw(optClientFQDN, fqdn(c.Hostname)))
 	}
-	opts = append(opts, oro(optDNSServers, optSNTPServers, optNTPServer, optSolMaxRT, optCaptivePortal),
-		option{optClientID, c.DUID}, elapsed(c.now().Sub(start)))
+	opts = append(opts, dhcpv6.OptRequestedOption(optDNSServers, optSNTPServers, optNTPServer, optSolMaxRT, optCaptivePortal),
+		raw(optClientID, c.DUID), elapsed(c.now().Sub(start)))
 	return encode(msgSolicit, xid, opts)
 }
 
 // withTail appends FQDN, ORO, client ID and elapsed time to opts.
-func (c *Client) withTail(start time.Time, opts ...option) []option {
+func (c *Client) withTail(start time.Time, opts ...dhcpv6.Option) []dhcpv6.Option {
 	if c.Hostname != "" {
-		opts = append(opts, option{optClientFQDN, fqdn(c.Hostname)})
+		opts = append(opts, raw(optClientFQDN, fqdn(c.Hostname)))
 	}
-	return append(opts, oro(optDNSServers, optSNTPServers, optNTPServer, optCaptivePortal),
-		option{optClientID, c.DUID}, elapsed(c.now().Sub(start)))
+	return append(opts, dhcpv6.OptRequestedOption(optDNSServers, optSNTPServers, optNTPServer, optCaptivePortal),
+		raw(optClientID, c.DUID), elapsed(c.now().Sub(start)))
 }
 
 // release sends networkd's RELEASE (server ID, IA_NA, client ID, elapsed).
@@ -373,8 +376,8 @@ func (c *Client) release() {
 	}
 	defer func() { _ = tr.close() }()
 	xid := rand.Uint32() & 0xffffff //nolint:gosec // a transaction ID
-	msg := encode(msgRelease, xid, []option{
-		{optServerID, l.ServerID}, iaOption(optIANA, c.IAID, l), {optClientID, c.DUID}, elapsed(0),
+	msg := encode(msgRelease, xid, []dhcpv6.Option{
+		raw(optServerID, l.ServerID), iaNA(c.IAID, l), raw(optClientID, c.DUID), elapsed(0),
 	})
 	if err := tr.send(msg); err != nil {
 		c.Log.Debug("DHCPv6 RELEASE", "error", err)
@@ -396,7 +399,7 @@ func (c *Client) release() {
 }
 
 // exchangeOne returns the first reply of one of the types.
-func (c *Client) exchangeOne(build func() []byte, xid uint32, timeout time.Duration, types ...byte) (reply, error) {
+func (c *Client) exchangeOne(build func() []byte, xid uint32, timeout time.Duration, types ...dhcpv6.MessageType) (reply, error) {
 	var r reply
 	err := c.exchange(build, xid, timeout, func(x reply) bool { r = x; return true }, types...)
 	return r, err
@@ -407,7 +410,7 @@ func (c *Client) exchangeOne(build func() []byte, xid uint32, timeout time.Durat
 // returns true (nil) or timeout ends. The socket stays open for the whole
 // transaction (endTransaction closes it), so a late reply to an earlier
 // transmission is still read (RFC 8415 section 15).
-func (c *Client) exchange(build func() []byte, xid uint32, timeout time.Duration, take func(reply) bool, types ...byte) error {
+func (c *Client) exchange(build func() []byte, xid uint32, timeout time.Duration, take func(reply) bool, types ...dhcpv6.MessageType) error {
 	tr, err := c.open()
 	if err != nil {
 		return c.pause(timeout)

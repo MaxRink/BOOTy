@@ -11,8 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
 	"github.com/mdlayher/packet"
 	"golang.org/x/net/bpf"
 	"golang.org/x/sys/unix"
@@ -88,27 +86,14 @@ func openTransport(iface *net.Interface) (transport, error) {
 // broadcast sends with the IP TOS of networkd (CS6). A message with ciaddr
 // (REBINDING) also opens the socket on ciaddr:68 for the unicast reply.
 func (t *rawTransport) broadcast(src net.IP, m *message) error {
-	payload, err := m.encode()
-	if err != nil {
-		return fmt.Errorf("encode DHCP %s: %w", m.typ, err)
-	}
+	payload := m.encode()
 	if ip := m.ciaddr.To4(); ip != nil && !ip.IsUnspecified() {
 		t.mu.Lock()
 		_, _ = t.openUDP(ip) // without the address on the NIC the reply finds no socket either way
 		t.mu.Unlock()
 	}
-	eth := &layers.Ethernet{SrcMAC: t.iface.HardwareAddr, DstMAC: layers.EthernetBroadcast, EthernetType: layers.EthernetTypeIPv4}
-	ip := &layers.IPv4{Version: 4, TTL: 64, TOS: 0xc0, Protocol: layers.IPProtocolUDP, SrcIP: ipOrZero(src), DstIP: net.IPv4bcast}
-	udp := &layers.UDP{SrcPort: 68, DstPort: 67}
-	if err := udp.SetNetworkLayerForChecksum(ip); err != nil {
-		return fmt.Errorf("DHCP checksum: %w", err)
-	}
-	buf := gopacket.NewSerializeBuffer()
-	if err := gopacket.SerializeLayers(buf, gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: true},
-		eth, ip, udp, gopacket.Payload(payload)); err != nil {
-		return fmt.Errorf("serialize DHCP %s: %w", m.typ, err)
-	}
-	if _, err := t.conn.WriteTo(buf.Bytes(), &packet.Addr{HardwareAddr: layers.EthernetBroadcast}); err != nil {
+	frame := udpFrame(t.iface.HardwareAddr, ipOrZero(src), net.IPv4bcast, 68, 67, 0xc0, payload)
+	if _, err := t.conn.WriteTo(frame, &packet.Addr{HardwareAddr: net.HardwareAddr{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}}); err != nil {
 		return fmt.Errorf("send DHCP %s on %s: %w", m.typ, t.iface.Name, err)
 	}
 	return nil
@@ -149,10 +134,7 @@ func (t *rawTransport) openUDP(src net.IP) (int, error) {
 }
 
 func (t *rawTransport) unicast(src, dst net.IP, m *message) error {
-	payload, err := m.encode()
-	if err != nil {
-		return fmt.Errorf("encode DHCP %s: %w", m.typ, err)
-	}
+	payload := m.encode()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	fd, err := t.openUDP(src)

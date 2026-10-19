@@ -12,6 +12,7 @@ directive:
 | `github.com/osrg/gobgp/v4` | `github.com/MaxRink/gobgp/v4 v4.10.0-booty.10` | `booty/v4.10`, see [GoBGP version and fork](networking.md#gobgp-version-and-fork) |
 | `github.com/gopacket/gopacket` | `github.com/MaxRink/gopacket v1.7.4-booty.2` | [`booty/v1.7`](https://github.com/MaxRink/gopacket/tree/booty/v1.7) |
 | `github.com/vishvananda/netlink` | `github.com/MaxRink/netlink v1.3.1-booty.1` | [`booty/v1.3`](https://github.com/MaxRink/netlink/tree/booty/v1.3) |
+| `github.com/insomniacslk/dhcp` | `github.com/MaxRink/dhcp v0.0.0-20260901064844-234b97448fae-booty.2` | [`booty/master`](https://github.com/MaxRink/dhcp/tree/booty/master) |
 
 Dependabot ignores the forked modules (`.github/dependabot.yml`): an
 upstream bump does not change the build while the `replace` is in place.
@@ -34,15 +35,10 @@ google/gopacket).
 | Chassis ID, Port ID and TTL must be the first three TLVs, in this order, each once; the End TLV is optional (IEEE 802.1AB-2016) | A misordered LLDPDU, or one without TTL TLV (decoded as TTL 0), is accepted; a second TTL TLV overwrites the first; an LLDPDU without End TLV is dropped. Before the fork, BOOTy checked the order and appended an End TLV itself | Present; [gopacket/gopacket#173](https://github.com/gopacket/gopacket/issues/173) |
 | One zero byte after an LLDPDU without End TLV is Ethernet padding (booty.2) | A 45-byte LLDPDU without End TLV in a minimum-size frame gets one byte of padding and is dropped as truncated | Upstream rejects every LLDPDU without End TLV (#173) |
 
-`pkg/network/dhcp.go` still imports `github.com/google/gopacket/layers`:
-the go-dhclient API uses its types. go-dhclient decodes with
-`gopacket.NewPacket`, which turns the DHCPv4 panic into a decode error.
-Drop google/gopacket together with go-dhclient (#790); BOOTy's own DHCPv4
-client should then use `github.com/gopacket/gopacket`. Until then the
-binary carries both gopacket modules: the linux/amd64 BOOTy binary
-(`-trimpath -ldflags "-s -w"`) is 1.7 MB larger raw and 0.55 MB larger
-gzip (`-9`) than with google/gopacket alone (30,695,584 against
-28,975,264 bytes, measured on main 1fd8dd3c).
+DHCP does not use gopacket: the DHCPv4 and DHCPv6 clients encode and
+decode with `github.com/insomniacslk/dhcp` and build their broadcast
+frames themselves (#835), so `github.com/google/gopacket` is no longer in
+the build.
 
 ## netlink
 
@@ -58,11 +54,27 @@ identifier and requested address; no retransmission backoff). It is not
 forked: #790 replaces it with BOOTy's own DHCPv4 client. Until then, BOOTy
 works around the missing expiry with its own timer (#751).
 
+## insomniacslk/dhcp
+
+The DHCPv4 and DHCPv6 clients encode and decode their messages with
+`github.com/insomniacslk/dhcp` ([message encoding](networking.md#message-encoding)).
+The module has no releases; the fork starts at master 234b97448fae
+(2026-09-01), so its version line is `master` and its tags carry the
+pseudo-version of that commit.
+
+| Fix | Effect without it | Upstream (master c6bb46ad3f3a, 2026-10-14) |
+|---|---|---|
+| `rfc1035label` follows a compression pointer to a name that ends with a pointer itself (RFC 1035 section 4.1.4) | A DHCPv4 search list (option 119) from a server that compresses names like `c.b.example`, `b.example`, `example` is rejected as a whole: no search domains | Present; not reported yet |
+| `rfc1035label` rejects a pointer that does not point before its name and before the previous pointer of the name (the jump barrier of systemd-networkd), a pointer past the end, the reserved label types 01 and 10, and names over 255 octets | Forward pointers, pointers past the end (read as a partial name) and label lengths 64 to 191 are accepted, unlike in networkd | Present; not reported yet |
+| `OptElapsedTime` sends 0xffff for 655.35 s and more (RFC 8415 section 21.9) | The elapsed time wraps around: 700 s goes out as 44.64 s. BOOTy does not depend on it: the client starts a new transaction long before | Present; not reported yet |
+
 ## When to drop a fork
 
 Drop a `replace` when an upstream release contains all fixes of its
 fork, then run the unit tests: `TestParseLLDPMandatoryTLVs` and
 `TestParseLLDPShortOrgTLVs` (gopacket) and
-`TestFollowLLDPMatchesResubscribeClosesSocket` (netlink) fail with a
-release that lacks a fix. `FuzzParseLLDP` does not: `parseLLDP` recovers
-decoder panics.
+`TestFollowLLDPMatchesResubscribeClosesSocket` (netlink),
+`TestLeaseSearchDomains` and `TestMalformedRouteAndSearchOptions`
+(dhcp, `pkg/network`) and `TestGolden` (`pkg/network/dhcp6`, the elapsed
+time) fail with a release that lacks a fix.
+`FuzzParseLLDP` does not: `parseLLDP` recovers decoder panics.

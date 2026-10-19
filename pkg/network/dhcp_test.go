@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/gopacket/layers"
+	"github.com/insomniacslk/dhcp/dhcpv4"
 	"github.com/telekom/BOOTy/pkg/network/dhcp4"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
@@ -211,8 +211,11 @@ func TestNewDHCPClientSendsNetworkdOptions(t *testing.T) {
 		t.Fatalf("client ID = %x, want type 255, IAID, DUID-EN 43793", id)
 	}
 	c := newDHCPClient(&net.Interface{Name: "eth0", MTU: 1500}, "e2e-test-rfm-0", id, nil, nil)
-	want := []layers.DHCPOpt{1, 3, 6, 12, 15, 26, 33, 42, 114, 119, 120, 121}
-	if !slices.Equal(c.Params, want) || !bytes.Equal(c.ClientID, id) || c.Hostname != "e2e-test-rfm-0" {
+	params := make([]uint8, 0, len(c.Params))
+	for _, p := range c.Params {
+		params = append(params, p.Code())
+	}
+	if want := []uint8{1, 3, 6, 12, 15, 26, 33, 42, 114, 119, 120, 121}; !slices.Equal(params, want) || !bytes.Equal(c.ClientID, id) || c.Hostname != "e2e-test-rfm-0" {
 		t.Fatalf("client = params %v, client ID %x, hostname %q", c.Params, c.ClientID, c.Hostname)
 	}
 }
@@ -323,7 +326,7 @@ func TestOnBoundReplacesStateAndTeardownRemovesIt(t *testing.T) {
 	d := NewDHCPMode()
 	leased := make(chan string, 1)
 	lease := lease24("10.0.2.15", "10.0.2.2")
-	lease.OtherOptions = []dhcp4.Option{{Type: layers.DHCPOptNTPServers, Data: []byte{10, 0, 2, 3}}}
+	lease.Options = dhcpv4.Options{42: {10, 0, 2, 3}}
 	d.onBound(dummyLink("eth0", 7), "eth0", leased)(lease)
 	t.Cleanup(func() { setDHCPNTPServers(nil) })
 	if got := DHCPNTPServers(); len(got) != 1 || got[0] != "10.0.2.3" {
@@ -713,9 +716,9 @@ func TestOnBoundKeepsNTPServersOfEveryNIC(t *testing.T) {
 	t.Cleanup(func() { setDHCPNTPList(nil) })
 	d := NewDHCPMode()
 	l0 := lease24("10.0.2.15", "10.0.2.2")
-	l0.OtherOptions = []dhcp4.Option{{Type: layers.DHCPOptNTPServers, Data: []byte{10, 0, 2, 3}}}
+	l0.Options = dhcpv4.Options{42: {10, 0, 2, 3}}
 	l1 := lease24("10.0.3.15", "10.0.3.2")
-	l1.OtherOptions = []dhcp4.Option{{Type: layers.DHCPOptNTPServers, Data: []byte{10, 0, 3, 3, 10, 0, 2, 3}}}
+	l1.Options = dhcpv4.Options{42: {10, 0, 3, 3, 10, 0, 2, 3}}
 	d.onBound(dummyLink("eth0", 1), "eth0", make(chan string, 4))(l0)
 	d.onBound(dummyLink("eth1", 2), "eth1", make(chan string, 4))(l1)
 	d.onBound(dummyLink("eth2", 3), "eth2", make(chan string, 4))(lease24("10.0.4.15", "10.0.4.2"))
@@ -1110,11 +1113,11 @@ func TestOnBoundAppliesClasslessRoutes(t *testing.T) {
 	}
 	l := lease24("10.0.2.15", "10.0.2.99")
 	// 0.0.0.0/0 via 10.0.2.1, 10.20.0.0/16 via 10.0.2.2, 10.0.9.0/24 on link.
-	l.OtherOptions = []dhcp4.Option{{Type: dhcpOptClasslessRoutes, Data: []byte{
+	l.Options = dhcpv4.Options{121: {
 		0, 10, 0, 2, 1,
 		16, 10, 20, 10, 0, 2, 2,
 		24, 10, 0, 9, 0, 0, 0, 0,
-	}}}
+	}}
 	NewDHCPMode().onBound(dummyLink("eth0", 1), "eth0", make(chan string, 1))(l)
 	want := []string{
 		"10.0.2.1/32 via <nil> scope 253", "10.0.2.2/32 via <nil> scope 253",
@@ -1134,12 +1137,17 @@ func TestOnBoundAppliesClasslessRoutes(t *testing.T) {
 func TestLeaseSearchDomains(t *testing.T) {
 	// "a.example" then "b.example" with a pointer to "example" (RFC 3397).
 	data := []byte{1, 'a', 7, 'e', 'x', 'a', 'm', 'p', 'l', 'e', 0, 1, 'b', 0xc0, 2}
-	l := &dhcp4.Lease{DomainName: "l2.example", OtherOptions: []dhcp4.Option{{Type: dhcpOptDomainSearch, Data: data}}}
+	l := &dhcp4.Lease{DomainName: "l2.example", Options: dhcpv4.Options{119: data}}
 	if got, want := leaseSearchDomains(l), []string{"l2.example", "a.example", "b.example"}; !slices.Equal(got, want) {
 		t.Fatalf("search domains = %q, want %q", got, want)
 	}
 	if got := domainSearch([]byte{0xc0, 0}); got != nil {
 		t.Fatalf("a pointer loop gave %q", got)
+	}
+	// A pointer to a name that ends with a pointer (RFC 1035 4.1.4).
+	chained := []byte{3, 'c', 'o', 'm', 0, 1, 'x', 0xc0, 0, 1, 'y', 0xc0, 5}
+	if got, want := domainSearch(chained), []string{"com", "x.com", "y.x.com"}; !slices.Equal(got, want) {
+		t.Fatalf("chained pointers: %q, want %q", got, want)
 	}
 }
 
@@ -1156,28 +1164,25 @@ func TestLeaseRoutesTable(t *testing.T) {
 		}
 		return out
 	}
-	opt := func(typ layers.DHCPOpt, data ...byte) []dhcp4.Option {
-		return []dhcp4.Option{{Type: typ, Data: data}}
-	}
 	for _, tt := range []struct {
 		name    string
 		routers []string
-		opts    []dhcp4.Option
+		opts    dhcpv4.Options
 		want    []string
 	}{
 		{"first router not null", []string{"0.0.0.0", "10.0.2.2"}, nil,
 			[]string{"10.0.2.2/32 via <nil> scope 253 src 10.0.2.15", "default via 10.0.2.2 scope 0 src 10.0.2.15"}},
 		{"all routers null", []string{"0.0.0.0"}, nil, nil},
-		{"option 33 and router", []string{"10.0.2.2"}, opt(dhcpOptStaticRoutes, 10, 30, 1, 0, 10, 0, 2, 5, 0, 0, 0, 0, 10, 0, 2, 6, 224, 0, 0, 1, 10, 0, 2, 7),
+		{"option 33 and router", []string{"10.0.2.2"}, dhcpv4.Options{33: {10, 30, 1, 0, 10, 0, 2, 5, 0, 0, 0, 0, 10, 0, 2, 6, 224, 0, 0, 1, 10, 0, 2, 7}},
 			[]string{"10.0.2.5/32 via <nil> scope 253 src 10.0.2.15", "10.0.2.2/32 via <nil> scope 253 src 10.0.2.15",
 				"10.0.0.0/8 via 10.0.2.5 scope 0 src 10.0.2.15", "default via 10.0.2.2 scope 0 src 10.0.2.15"}},
-		{"option 121 masked, host routes", []string{"10.0.2.99"}, append(opt(dhcpOptStaticRoutes, 10, 30, 1, 0, 10, 0, 2, 5),
-			opt(dhcpOptClasslessRoutes, 12, 10, 47, 10, 0, 2, 2, 32, 127, 0, 0, 1, 0, 0, 0, 0, 32, 10, 0, 2, 15, 10, 0, 2, 2)...),
+		{"option 121 masked, host routes", []string{"10.0.2.99"}, dhcpv4.Options{33: {10, 30, 1, 0, 10, 0, 2, 5},
+			121: {12, 10, 47, 10, 0, 2, 2, 32, 127, 0, 0, 1, 0, 0, 0, 0, 32, 10, 0, 2, 15, 10, 0, 2, 2}},
 			[]string{"10.0.2.2/32 via <nil> scope 253 src 10.0.2.15", "10.32.0.0/12 via 10.0.2.2 scope 0 src 10.0.2.15",
 				"127.0.0.1/32 via <nil> scope 254 src <nil>", "10.0.2.15/32 via <nil> scope 254 src 10.0.2.15"}},
 	} {
 		l := lease24("10.0.2.15", tt.routers...)
-		l.OtherOptions = tt.opts
+		l.Options = tt.opts
 		if got := show(leaseRoutes(link, addr, l)); !slices.Equal(got, tt.want) {
 			t.Errorf("%s: routes =\n%q\nwant\n%q", tt.name, got, tt.want)
 		}

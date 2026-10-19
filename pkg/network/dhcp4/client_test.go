@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
+	"github.com/insomniacslk/dhcp/dhcpv4"
+	"github.com/insomniacslk/dhcp/iana"
 )
 
 var (
@@ -58,7 +58,7 @@ func (f *fakeNet) client() *Client {
 		Iface:    &net.Interface{Name: "eth9", Index: 99999, MTU: 1500, HardwareAddr: testMAC},
 		Hostname: "e2e-test-rfm-0",
 		ClientID: append([]byte{255, 1, 2, 3, 4, 0, 2}, make([]byte, 12)...),
-		Params:   []layers.DHCPOpt{1, 3, 6, 12, 15, 26, 33, 42, 114, 119, 120, 121},
+		Params:   codes(1, 3, 6, 12, 15, 26, 33, 42, 114, 119, 120, 121),
 	}
 	c.newTransport = func(*net.Interface) (transport, error) {
 		f.mu.Lock()
@@ -197,41 +197,43 @@ func (t *fakeTransport) close() error {
 }
 
 // serverReply builds a reply of the server to m.
-func serverReply(m *message, typ layers.DHCPMsgType, extra ...layers.DHCPOption) []byte {
-	lease := make([]byte, 4)
-	binary.BigEndian.PutUint32(lease, 120)
-	d := &layers.DHCPv4{
-		Operation: layers.DHCPOpReply, HardwareType: layers.LinkTypeEthernet, HardwareLen: 6,
-		Xid: m.xid, ClientHWAddr: m.mac, YourClientIP: testAddr, ClientIP: net.IPv4zero,
-		NextServerIP: net.IPv4zero, RelayAgentIP: net.IPv4zero,
-		Options: append([]layers.DHCPOption{
-			layers.NewDHCPOption(layers.DHCPOptMessageType, []byte{byte(typ)}),
-			layers.NewDHCPOption(layers.DHCPOptServerID, testServer),
-			layers.NewDHCPOption(layers.DHCPOptLeaseTime, lease),
-			layers.NewDHCPOption(layers.DHCPOptSubnetMask, []byte{255, 255, 255, 0}),
-			layers.NewDHCPOption(layers.DHCPOptRouter, testServer),
-		}, extra...),
+func serverReply(m *message, typ dhcpv4.MessageType, extra ...dhcpv4.Option) []byte {
+	d := &dhcpv4.DHCPv4{
+		OpCode: dhcpv4.OpcodeBootReply, HWType: iana.HWTypeEthernet, ClientHWAddr: m.mac, YourIPAddr: testAddr,
+		Options: dhcpv4.OptionsFromList(append([]dhcpv4.Option{
+			dhcpv4.OptMessageType(typ),
+			dhcpv4.OptServerIdentifier(testServer),
+			dhcpv4.OptIPAddressLeaseTime(120 * time.Second),
+			dhcpv4.OptSubnetMask(net.IPv4Mask(255, 255, 255, 0)),
+			dhcpv4.OptRouter(testServer),
+		}, extra...)...),
 	}
-	buf := gopacket.NewSerializeBuffer()
-	_ = d.SerializeTo(buf, gopacket.SerializeOptions{})
-	return buf.Bytes()
+	binary.BigEndian.PutUint32(d.TransactionID[:], m.xid)
+	return d.ToBytes()
 }
 
-// optionTypes returns the option codes of m in order, without padding.
-func optionTypes(m *message) []int {
-	out := []int{int(layers.DHCPOptMessageType)}
-	for _, o := range m.options {
-		if o.Type != layers.DHCPOptPad {
-			out = append(out, int(o.Type))
-		}
+func codes(c ...uint8) []dhcpv4.OptionCode {
+	out := make([]dhcpv4.OptionCode, 0, len(c))
+	for _, x := range c {
+		out = append(out, dhcpv4.GenericOptionCode(x))
 	}
 	return out
 }
 
-func option(m *message, t layers.DHCPOpt) []byte {
+// optionTypes returns the option codes of m in order.
+func optionTypes(m *message) []int {
+	out := make([]int, 1, 1+len(m.options))
+	out[0] = int(dhcpv4.OptionDHCPMessageType)
 	for _, o := range m.options {
-		if o.Type == t {
-			return o.Data
+		out = append(out, int(o.Code.Code()))
+	}
+	return out
+}
+
+func option(m *message, c dhcpv4.OptionCode) []byte {
+	for _, o := range m.options {
+		if o.Code.Code() == c.Code() {
+			return o.Value.ToBytes()
 		}
 	}
 	return nil
@@ -245,12 +247,12 @@ func TestDiscoverBackoffAndOptions(t *testing.T) {
 	discovers := 0
 	f.answer = func(s sent) []byte {
 		switch s.m.typ {
-		case layers.DHCPMsgTypeDiscover:
+		case dhcpv4.MessageTypeDiscover:
 			if discovers++; discovers > 3 {
-				return serverReply(s.m, layers.DHCPMsgTypeOffer)
+				return serverReply(s.m, dhcpv4.MessageTypeOffer)
 			}
-		case layers.DHCPMsgTypeRequest:
-			return serverReply(s.m, layers.DHCPMsgTypeAck)
+		case dhcpv4.MessageTypeRequest:
+			return serverReply(s.m, dhcpv4.MessageTypeAck)
 		}
 		return nil
 	}
@@ -272,7 +274,7 @@ func TestDiscoverBackoffAndOptions(t *testing.T) {
 	if got := optionTypes(msgs[0].m); !slices.Equal(got, []int{53, 61, 55, 57, 80, 12}) {
 		t.Errorf("DISCOVER options = %v, want networkd's 53,61,55,57,80,12", got)
 	}
-	if got := option(msgs[0].m, layers.DHCPOptMaxMessageSize); !slices.Equal(got, []byte{0x05, 0xc0}) {
+	if got := option(msgs[0].m, dhcpv4.OptionMaximumDHCPMessageSize); !slices.Equal(got, []byte{0x05, 0xc0}) {
 		t.Errorf("max message size = %x, want 1472", got)
 	}
 	req := msgs[4]
@@ -297,10 +299,10 @@ func TestRenewUnicastRebindBroadcast(t *testing.T) {
 	f := newFakeNet()
 	f.answer = func(s sent) []byte {
 		switch {
-		case s.m.typ == layers.DHCPMsgTypeDiscover:
-			return serverReply(s.m, layers.DHCPMsgTypeAck, layers.NewDHCPOption(optRapidCommit, nil))
+		case s.m.typ == dhcpv4.MessageTypeDiscover:
+			return serverReply(s.m, dhcpv4.MessageTypeAck, dhcpv4.OptGeneric(dhcpv4.OptionRapidCommit, nil))
 		case s.kind == "broadcast" && s.m.ciaddr != nil:
-			return serverReply(s.m, layers.DHCPMsgTypeAck)
+			return serverReply(s.m, dhcpv4.MessageTypeAck)
 		}
 		return nil
 	}
@@ -323,7 +325,7 @@ func TestRenewUnicastRebindBroadcast(t *testing.T) {
 			rebind = append(rebind, s)
 		}
 	}
-	if msgs[0].m.typ != layers.DHCPMsgTypeDiscover || len(renew) == 0 || len(rebind) != 1 {
+	if msgs[0].m.typ != dhcpv4.MessageTypeDiscover || len(renew) == 0 || len(rebind) != 1 {
 		t.Fatalf("messages = %d DISCOVER/ACK, %d renew, %d rebind", len(msgs), len(renew), len(rebind))
 	}
 	r := renew[0]
@@ -352,10 +354,10 @@ func TestExpiryAndNak(t *testing.T) {
 		f := newFakeNet()
 		f.answer = func(s sent) []byte {
 			switch {
-			case s.m.typ == layers.DHCPMsgTypeDiscover:
-				return serverReply(s.m, layers.DHCPMsgTypeAck, layers.NewDHCPOption(optRapidCommit, nil))
+			case s.m.typ == dhcpv4.MessageTypeDiscover:
+				return serverReply(s.m, dhcpv4.MessageTypeAck, dhcpv4.OptGeneric(dhcpv4.OptionRapidCommit, nil))
 			case nak && s.kind == "unicast":
-				return serverReply(s.m, layers.DHCPMsgTypeNak)
+				return serverReply(s.m, dhcpv4.MessageTypeNak)
 			}
 			return nil
 		}
@@ -373,7 +375,7 @@ func TestExpiryAndNak(t *testing.T) {
 		msgs := f.messages()
 		discovers := 0
 		for _, s := range msgs {
-			if s.m.typ == layers.DHCPMsgTypeDiscover {
+			if s.m.typ == dhcpv4.MessageTypeDiscover {
 				discovers++
 			}
 		}
@@ -383,11 +385,11 @@ func TestExpiryAndNak(t *testing.T) {
 		// networkd asks for the address of the ended lease (option 50).
 		var last sent
 		for _, s := range msgs {
-			if s.m.typ == layers.DHCPMsgTypeDiscover {
+			if s.m.typ == dhcpv4.MessageTypeDiscover {
 				last = s
 			}
 		}
-		if got := optionTypes(last.m); !slices.Equal(got, []int{53, 61, 55, 57, 50, 80, 12}) || !net.IP(option(last.m, layers.DHCPOptRequestIP)).Equal(testAddr) {
+		if got := optionTypes(last.m); !slices.Equal(got, []int{53, 61, 55, 57, 50, 80, 12}) || !net.IP(option(last.m, dhcpv4.OptionRequestedIPAddress)).Equal(testAddr) {
 			t.Errorf("nak=%v: DISCOVER after the lease = %v, want 53,61,55,57,50,80,12 with the old address", nak, got)
 		}
 	}
@@ -399,8 +401,8 @@ func TestExpiryAndNak(t *testing.T) {
 func TestRebootAndRelease(t *testing.T) {
 	f := newFakeNet()
 	f.answer = func(s sent) []byte {
-		if s.m.typ == layers.DHCPMsgTypeDiscover || s.m.typ == layers.DHCPMsgTypeRequest {
-			return serverReply(s.m, layers.DHCPMsgTypeAck, layers.NewDHCPOption(optRapidCommit, nil))
+		if s.m.typ == dhcpv4.MessageTypeDiscover || s.m.typ == dhcpv4.MessageTypeRequest {
+			return serverReply(s.m, dhcpv4.MessageTypeAck, dhcpv4.OptGeneric(dhcpv4.OptionRapidCommit, nil))
 		}
 		return nil
 	}
@@ -421,12 +423,12 @@ func TestRebootAndRelease(t *testing.T) {
 		t.Fatalf("sent %d messages, want DISCOVER, REQUEST, RELEASE", len(msgs))
 	}
 	r := msgs[1]
-	if r.m.typ != layers.DHCPMsgTypeRequest || r.kind != "broadcast" || r.m.ciaddr != nil ||
-		!slices.Equal(optionTypes(r.m), []int{53, 61, 55, 57, 50, 12}) || !net.IP(option(r.m, layers.DHCPOptRequestIP)).Equal(testAddr) {
+	if r.m.typ != dhcpv4.MessageTypeRequest || r.kind != "broadcast" || r.m.ciaddr != nil ||
+		!slices.Equal(optionTypes(r.m), []int{53, 61, 55, 57, 50, 12}) || !net.IP(option(r.m, dhcpv4.OptionRequestedIPAddress)).Equal(testAddr) {
 		t.Errorf("INIT-REBOOT REQUEST = %s ciaddr %s options %v", r.kind, r.m.ciaddr, optionTypes(r.m))
 	}
 	rel := msgs[2]
-	if rel.m.typ != layers.DHCPMsgTypeRelease || rel.kind != "unicast" || !rel.dst.Equal(testServer) || !rel.m.ciaddr.Equal(testAddr) ||
+	if rel.m.typ != dhcpv4.MessageTypeRelease || rel.kind != "unicast" || !rel.dst.Equal(testServer) || !rel.m.ciaddr.Equal(testAddr) ||
 		!slices.Equal(optionTypes(rel.m), []int{53, 61}) {
 		t.Errorf("RELEASE = %v %s to %s ciaddr %s", rel.m.typ, rel.kind, rel.dst, rel.m.ciaddr)
 	}
@@ -439,8 +441,8 @@ func TestRebootAndRelease(t *testing.T) {
 func TestRebootEndsRenewal(t *testing.T) {
 	f := newFakeNet()
 	f.answer = func(s sent) []byte {
-		if s.m.typ == layers.DHCPMsgTypeDiscover || s.kind == "broadcast" && s.m.ciaddr == nil {
-			return serverReply(s.m, layers.DHCPMsgTypeAck, layers.NewDHCPOption(optRapidCommit, nil))
+		if s.m.typ == dhcpv4.MessageTypeDiscover || s.kind == "broadcast" && s.m.ciaddr == nil {
+			return serverReply(s.m, dhcpv4.MessageTypeAck, dhcpv4.OptGeneric(dhcpv4.OptionRapidCommit, nil))
 		}
 		return nil
 	}
@@ -469,7 +471,7 @@ func TestRebootEndsRenewal(t *testing.T) {
 	c.Stop()
 	msgs := f.messages()
 	last := msgs[len(msgs)-1]
-	if last.kind != "broadcast" || last.m.typ != layers.DHCPMsgTypeRequest || last.m.ciaddr != nil {
+	if last.kind != "broadcast" || last.m.typ != dhcpv4.MessageTypeRequest || last.m.ciaddr != nil {
 		t.Fatalf("last message = %s %v ciaddr %s, want the INIT-REBOOT REQUEST", last.kind, last.m.typ, last.m.ciaddr)
 	}
 }
@@ -478,16 +480,16 @@ func TestRebootEndsRenewal(t *testing.T) {
 func TestIgnoresForeignReplies(t *testing.T) {
 	f := newFakeNet()
 	f.answer = func(s sent) []byte {
-		if s.m.typ != layers.DHCPMsgTypeDiscover {
+		if s.m.typ != dhcpv4.MessageTypeDiscover {
 			return nil
 		}
 		other := *s.m
 		other.mac = net.HardwareAddr{2, 0, 0, 0, 0, 1}
-		f.queue = append(f.queue, serverReply(&other, layers.DHCPMsgTypeAck, layers.NewDHCPOption(optRapidCommit, nil)))
+		f.queue = append(f.queue, serverReply(&other, dhcpv4.MessageTypeAck, dhcpv4.OptGeneric(dhcpv4.OptionRapidCommit, nil)))
 		wrong := *s.m
 		wrong.xid++
-		f.queue = append(f.queue, serverReply(&wrong, layers.DHCPMsgTypeAck, layers.NewDHCPOption(optRapidCommit, nil)))
-		return serverReply(s.m, layers.DHCPMsgTypeAck, layers.NewDHCPOption(optRapidCommit, nil))
+		f.queue = append(f.queue, serverReply(&wrong, dhcpv4.MessageTypeAck, dhcpv4.OptGeneric(dhcpv4.OptionRapidCommit, nil)))
+		return serverReply(s.m, dhcpv4.MessageTypeAck, dhcpv4.OptGeneric(dhcpv4.OptionRapidCommit, nil))
 	}
 	bound := make(chan *Lease, 1)
 	c := f.client()
@@ -502,11 +504,7 @@ func TestIgnoresForeignReplies(t *testing.T) {
 }
 
 func TestEncodePadsToMinimumSize(t *testing.T) {
-	b, err := (&message{typ: layers.DHCPMsgTypeDiscover, xid: 1, mac: testMAC}).encode()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(b) < minMessageSize {
+	if b := (&message{typ: dhcpv4.MessageTypeDiscover, xid: 1, mac: testMAC}).encode(); len(b) < minMessageSize {
 		t.Fatalf("message is %d bytes, want at least %d", len(b), minMessageSize)
 	}
 }
@@ -535,18 +533,18 @@ func count(msgs []sent, ok func(sent) bool) int {
 // starts over with a DISCOVER after five REQUESTs.
 func TestSelectingIgnoresOtherTypesAndRetriesFiveTimes(t *testing.T) {
 	f := newFakeNet()
-	f.answer = func(s sent) []byte { return serverReply(s.m, layers.DHCPMsgTypeOffer) }
+	f.answer = func(s sent) []byte { return serverReply(s.m, dhcpv4.MessageTypeOffer) }
 	bound := make(chan *Lease, 1)
 	c := f.client()
 	c.OnBound = func(l *Lease) { bound <- l }
 	c.Start()
-	isDiscover := func(s sent) bool { return s.m.typ == layers.DHCPMsgTypeDiscover }
+	isDiscover := func(s sent) bool { return s.m.typ == dhcpv4.MessageTypeDiscover }
 	f.waitFor(t, "the second DISCOVER", func(m []sent) bool { return count(m, isDiscover) >= 2 })
 	close(f.stopped)
 	c.Stop()
 	msgs := f.messages()
 	second := slices.IndexFunc(msgs[1:], isDiscover) + 1
-	if n := count(msgs[:second], func(s sent) bool { return s.m.typ == layers.DHCPMsgTypeRequest }); n != 5 {
+	if n := count(msgs[:second], func(s sent) bool { return s.m.typ == dhcpv4.MessageTypeRequest }); n != 5 {
 		t.Errorf("%d REQUESTs before the second DISCOVER, want 5", n)
 	}
 	select {
@@ -560,8 +558,8 @@ func TestSelectingIgnoresOtherTypesAndRetriesFiveTimes(t *testing.T) {
 func TestRebootTriesOnce(t *testing.T) {
 	f := newFakeNet()
 	f.answer = func(s sent) []byte {
-		if s.m.typ == layers.DHCPMsgTypeDiscover {
-			return serverReply(s.m, layers.DHCPMsgTypeAck, layers.NewDHCPOption(optRapidCommit, nil))
+		if s.m.typ == dhcpv4.MessageTypeDiscover {
+			return serverReply(s.m, dhcpv4.MessageTypeAck, dhcpv4.OptGeneric(dhcpv4.OptionRapidCommit, nil))
 		}
 		return nil
 	}
@@ -575,7 +573,7 @@ func TestRebootTriesOnce(t *testing.T) {
 	<-bound // the DISCOVER after two INIT-REBOOTs
 	close(f.stopped)
 	c.Stop()
-	if n := count(f.messages(), func(s sent) bool { return s.m.typ == layers.DHCPMsgTypeRequest }); n != 1 {
+	if n := count(f.messages(), func(s sent) bool { return s.m.typ == dhcpv4.MessageTypeRequest }); n != 1 {
 		t.Errorf("%d INIT-REBOOT REQUESTs, want 1", n)
 	}
 }
@@ -585,8 +583,8 @@ func TestRenewWait(t *testing.T) {
 	f := newFakeNet()
 	lease := binary.BigEndian.AppendUint32(nil, 600)
 	f.answer = func(s sent) []byte {
-		if s.m.typ == layers.DHCPMsgTypeDiscover {
-			return serverReply(s.m, layers.DHCPMsgTypeAck, layers.NewDHCPOption(optRapidCommit, nil), layers.NewDHCPOption(layers.DHCPOptLeaseTime, lease))
+		if s.m.typ == dhcpv4.MessageTypeDiscover {
+			return serverReply(s.m, dhcpv4.MessageTypeAck, dhcpv4.OptGeneric(dhcpv4.OptionRapidCommit, nil), dhcpv4.OptGeneric(dhcpv4.OptionIPAddressLeaseTime, lease))
 		}
 		return nil
 	}
@@ -617,10 +615,10 @@ func TestNakFromOtherServerIgnored(t *testing.T) {
 	other := net.IPv4(192, 168, 10, 99).To4()
 	f.answer = func(s sent) []byte {
 		switch {
-		case s.m.typ == layers.DHCPMsgTypeDiscover:
-			return serverReply(s.m, layers.DHCPMsgTypeAck, layers.NewDHCPOption(optRapidCommit, nil))
+		case s.m.typ == dhcpv4.MessageTypeDiscover:
+			return serverReply(s.m, dhcpv4.MessageTypeAck, dhcpv4.OptGeneric(dhcpv4.OptionRapidCommit, nil))
 		case s.kind == "unicast":
-			return serverReply(s.m, layers.DHCPMsgTypeNak, layers.NewDHCPOption(layers.DHCPOptServerID, other))
+			return serverReply(s.m, dhcpv4.MessageTypeNak, dhcpv4.OptServerIdentifier(other))
 		}
 		return nil
 	}
@@ -636,7 +634,7 @@ func TestNakFromOtherServerIgnored(t *testing.T) {
 	c.Stop()
 	msgs := f.messages()
 	first := slices.IndexFunc(msgs, isRebind)
-	if n := count(msgs[:first], func(s sent) bool { return s.m.typ == layers.DHCPMsgTypeDiscover }); n != 1 {
+	if n := count(msgs[:first], func(s sent) bool { return s.m.typ == dhcpv4.MessageTypeDiscover }); n != 1 {
 		t.Fatalf("%d DISCOVERs: a NAK from another server ended the lease", n)
 	}
 }
@@ -647,9 +645,9 @@ func TestLeaseExpiresInInitAfterFailedReboot(t *testing.T) {
 	f := newFakeNet()
 	first := true
 	f.answer = func(s sent) []byte {
-		if first && s.m.typ == layers.DHCPMsgTypeDiscover {
+		if first && s.m.typ == dhcpv4.MessageTypeDiscover {
 			first = false
-			return serverReply(s.m, layers.DHCPMsgTypeAck, layers.NewDHCPOption(optRapidCommit, nil))
+			return serverReply(s.m, dhcpv4.MessageTypeAck, dhcpv4.OptGeneric(dhcpv4.OptionRapidCommit, nil))
 		}
 		return nil
 	}
@@ -679,8 +677,8 @@ func TestLeaseExpiresInInitAfterFailedReboot(t *testing.T) {
 func TestRebootWhileOpening(t *testing.T) {
 	f := newFakeNet()
 	f.answer = func(s sent) []byte {
-		if s.m.typ == layers.DHCPMsgTypeDiscover || s.kind == "broadcast" && s.m.ciaddr == nil {
-			return serverReply(s.m, layers.DHCPMsgTypeAck, layers.NewDHCPOption(optRapidCommit, nil))
+		if s.m.typ == dhcpv4.MessageTypeDiscover || s.kind == "broadcast" && s.m.ciaddr == nil {
+			return serverReply(s.m, dhcpv4.MessageTypeAck, dhcpv4.OptGeneric(dhcpv4.OptionRapidCommit, nil))
 		}
 		return nil
 	}
@@ -708,8 +706,8 @@ func TestRebootWhileOpening(t *testing.T) {
 func TestRebootEndsBlockingReceive(t *testing.T) {
 	f := newFakeNet()
 	f.answer = func(s sent) []byte {
-		if s.m.typ == layers.DHCPMsgTypeDiscover || s.kind == "broadcast" && s.m.ciaddr == nil {
-			return serverReply(s.m, layers.DHCPMsgTypeAck, layers.NewDHCPOption(optRapidCommit, nil))
+		if s.m.typ == dhcpv4.MessageTypeDiscover || s.kind == "broadcast" && s.m.ciaddr == nil {
+			return serverReply(s.m, dhcpv4.MessageTypeAck, dhcpv4.OptGeneric(dhcpv4.OptionRapidCommit, nil))
 		}
 		return nil
 	}
@@ -728,7 +726,7 @@ func TestRebootEndsBlockingReceive(t *testing.T) {
 	<-bound
 	close(f.stopped)
 	c.Stop()
-	if n := count(f.messages(), func(s sent) bool { return s.kind == "broadcast" && s.m.typ == layers.DHCPMsgTypeRequest }); n != 1 {
+	if n := count(f.messages(), func(s sent) bool { return s.kind == "broadcast" && s.m.typ == dhcpv4.MessageTypeRequest }); n != 1 {
 		t.Fatalf("%d INIT-REBOOTs, want 1", n)
 	}
 }
@@ -741,10 +739,10 @@ func TestBindDropsPendingReboot(t *testing.T) {
 	f := newFakeNet()
 	f.answer = func(s sent) []byte {
 		switch s.m.typ {
-		case layers.DHCPMsgTypeDiscover:
-			return serverReply(s.m, layers.DHCPMsgTypeOffer)
-		case layers.DHCPMsgTypeRequest:
-			return serverReply(s.m, layers.DHCPMsgTypeAck)
+		case dhcpv4.MessageTypeDiscover:
+			return serverReply(s.m, dhcpv4.MessageTypeOffer)
+		case dhcpv4.MessageTypeRequest:
+			return serverReply(s.m, dhcpv4.MessageTypeAck)
 		}
 		return nil
 	}
@@ -767,7 +765,7 @@ func TestBindDropsPendingReboot(t *testing.T) {
 	}
 	close(f.stopped)
 	c.Stop()
-	if n := count(f.messages(), func(s sent) bool { return s.m.typ == layers.DHCPMsgTypeRequest }); n != 1 {
+	if n := count(f.messages(), func(s sent) bool { return s.m.typ == dhcpv4.MessageTypeRequest }); n != 1 {
 		t.Fatalf("%d REQUESTs, want 1: no INIT-REBOOT for the lease just bound", n)
 	}
 }
@@ -776,7 +774,7 @@ func TestBindDropsPendingReboot(t *testing.T) {
 var otherServer = net.IPv4(192, 168, 10, 99).To4()
 
 func nakFromOther(m *message) []byte {
-	return serverReply(m, layers.DHCPMsgTypeNak, layers.NewDHCPOption(layers.DHCPOptServerID, otherServer))
+	return serverReply(m, dhcpv4.MessageTypeNak, dhcpv4.OptServerIdentifier(otherServer))
 }
 
 // REQUESTING ignores a DHCPNAK from another server than that of the offer
@@ -785,11 +783,11 @@ func TestNakFromOtherServerIgnoredInRequesting(t *testing.T) {
 	f := newFakeNet()
 	f.answer = func(s sent) []byte {
 		switch s.m.typ {
-		case layers.DHCPMsgTypeDiscover:
-			return serverReply(s.m, layers.DHCPMsgTypeOffer)
-		case layers.DHCPMsgTypeRequest:
+		case dhcpv4.MessageTypeDiscover:
+			return serverReply(s.m, dhcpv4.MessageTypeOffer)
+		case dhcpv4.MessageTypeRequest:
 			f.queue = append(f.queue, nakFromOther(s.m)) // f.mu is held
-			return serverReply(s.m, layers.DHCPMsgTypeAck)
+			return serverReply(s.m, dhcpv4.MessageTypeAck)
 		}
 		return nil
 	}
@@ -804,7 +802,7 @@ func TestNakFromOtherServerIgnoredInRequesting(t *testing.T) {
 	}
 	close(f.stopped)
 	c.Stop()
-	if n := count(f.messages(), func(s sent) bool { return s.m.typ == layers.DHCPMsgTypeDiscover }); n != 1 {
+	if n := count(f.messages(), func(s sent) bool { return s.m.typ == dhcpv4.MessageTypeDiscover }); n != 1 {
 		t.Fatalf("%d DISCOVERs, want 1", n)
 	}
 }
@@ -814,11 +812,11 @@ func TestNakFromOtherServerIgnoredInRebooting(t *testing.T) {
 	f := newFakeNet()
 	f.answer = func(s sent) []byte {
 		switch {
-		case s.m.typ == layers.DHCPMsgTypeDiscover:
-			return serverReply(s.m, layers.DHCPMsgTypeAck, layers.NewDHCPOption(optRapidCommit, nil))
-		case s.m.typ == layers.DHCPMsgTypeRequest && s.kind == "broadcast":
+		case s.m.typ == dhcpv4.MessageTypeDiscover:
+			return serverReply(s.m, dhcpv4.MessageTypeAck, dhcpv4.OptGeneric(dhcpv4.OptionRapidCommit, nil))
+		case s.m.typ == dhcpv4.MessageTypeRequest && s.kind == "broadcast":
 			f.queue = append(f.queue, nakFromOther(s.m))
-			return serverReply(s.m, layers.DHCPMsgTypeAck)
+			return serverReply(s.m, dhcpv4.MessageTypeAck)
 		}
 		return nil
 	}
@@ -832,7 +830,7 @@ func TestNakFromOtherServerIgnoredInRebooting(t *testing.T) {
 	<-bound
 	close(f.stopped)
 	c.Stop()
-	if n := count(f.messages(), func(s sent) bool { return s.m.typ == layers.DHCPMsgTypeDiscover }); n != 1 {
+	if n := count(f.messages(), func(s sent) bool { return s.m.typ == dhcpv4.MessageTypeDiscover }); n != 1 {
 		t.Fatalf("%d DISCOVERs: the NAK of another server ended the INIT-REBOOT", n)
 	}
 }
@@ -843,8 +841,8 @@ func TestNakFromOtherServerIgnoredInRebooting(t *testing.T) {
 func TestStaleRebootTokenNoInitReboot(t *testing.T) {
 	f := newFakeNet()
 	f.answer = func(s sent) []byte {
-		if s.m.typ == layers.DHCPMsgTypeDiscover {
-			return serverReply(s.m, layers.DHCPMsgTypeAck, layers.NewDHCPOption(optRapidCommit, nil))
+		if s.m.typ == dhcpv4.MessageTypeDiscover {
+			return serverReply(s.m, dhcpv4.MessageTypeAck, dhcpv4.OptGeneric(dhcpv4.OptionRapidCommit, nil))
 		}
 		return nil
 	}
@@ -869,7 +867,7 @@ func TestStaleRebootTokenNoInitReboot(t *testing.T) {
 	waitLen(2)             // the next wait: for T1 again, or of the INIT-REBOOT
 	close(f.stopped)
 	c.Stop()
-	if n := count(f.messages(), func(s sent) bool { return s.m.typ == layers.DHCPMsgTypeRequest }); n != 0 {
+	if n := count(f.messages(), func(s sent) bool { return s.m.typ == dhcpv4.MessageTypeRequest }); n != 0 {
 		t.Fatalf("%d REQUESTs after a stale token, want none", n)
 	}
 	f.mu.Lock()

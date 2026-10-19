@@ -12,7 +12,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/google/gopacket/layers"
+	"github.com/insomniacslk/dhcp/dhcpv4"
 	"github.com/telekom/BOOTy/pkg/network/dhcp4"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
@@ -24,16 +24,15 @@ import (
 // networkdParams is the parameter request list (option 55) of networkd:
 // subnet mask, router, DNS, host name, domain name, MTU, static routes,
 // NTP, captive portal, domain search, SIP servers, classless routes.
-var networkdParams = []layers.DHCPOpt{1, 3, 6, 12, 15, 26, 33, 42, 114, 119, 120, 121}
+var networkdParams = []dhcpv4.OptionCode{
+	dhcpv4.OptionSubnetMask, dhcpv4.OptionRouter, dhcpv4.OptionDomainNameServer, dhcpv4.OptionHostName,
+	dhcpv4.OptionDomainName, dhcpv4.OptionInterfaceMTU, dhcpv4.OptionStaticRoutingTable, dhcpv4.OptionNTPServers,
+	dhcpv4.OptionURL, dhcpv4.OptionDNSDomainSearchList, dhcpv4.OptionSIPServers, dhcpv4.OptionClasslessStaticRoute,
+}
 
-const (
-	dhcpOptStaticRoutes    layers.DHCPOpt = 33
-	dhcpOptDomainSearch    layers.DHCPOpt = 119
-	dhcpOptClasslessRoutes layers.DHCPOpt = 121
-	// systemdEnterprise is the IANA enterprise number of systemd in its
-	// DUID-EN (sd-dhcp-duid.h).
-	systemdEnterprise = 43793
-)
+// systemdEnterprise is the IANA enterprise number of systemd in its
+// DUID-EN (sd-dhcp-duid.h).
+const systemdEnterprise = 43793
 
 // dhcpClientID is the client identifier (option 61) of networkd: type 255,
 // a 4 byte IAID of the interface and a DUID-EN (type 2) with the systemd
@@ -63,17 +62,6 @@ var fallbackMachineID = sync.OnceValue(func() string {
 	return hex.EncodeToString(b)
 })
 
-// leaseOption returns the payload of a lease option that the client keeps
-// in OtherOptions.
-func leaseOption(lease *dhcp4.Lease, opt layers.DHCPOpt) ([]byte, bool) {
-	for _, o := range lease.OtherOptions {
-		if o.Type == opt {
-			return o.Data, true
-		}
-	}
-	return nil, false
-}
-
 // dhcpRoute is one route of a lease: a destination and a gateway, or no
 // gateway for an on-link destination.
 type dhcpRoute struct {
@@ -86,113 +74,47 @@ type dhcpRoute struct {
 // valid destinations; an option whose length is not a multiple of 8 is
 // ignored as a whole, like networkd.
 func staticRoutes(data []byte) []dhcpRoute {
-	if len(data)%8 != 0 {
+	var ips dhcpv4.IPs
+	if ips.FromBytes(data) != nil || len(ips)%2 != 0 {
 		return nil
 	}
 	var out []dhcpRoute
-	for b := data; len(b) >= 8; b = b[8:] {
-		dst := net.IP(append([]byte(nil), b[:4]...))
+	for ; len(ips) > 0; ips = ips[2:] {
+		dst := ips[0]
 		if dst.IsUnspecified() || dst[0] >= 224 {
 			continue // no classful mask for class D and E
 		}
 		mask := dst.DefaultMask()
-		out = append(out, dhcpRoute{dst: &net.IPNet{IP: dst.Mask(mask), Mask: mask}, gw: net.IP(append([]byte(nil), b[4:8]...))})
+		out = append(out, dhcpRoute{dst: &net.IPNet{IP: dst.Mask(mask), Mask: mask}, gw: ips[1]})
 	}
 	return out
 }
 
-// classlessRoutes decodes option 121 (RFC 3442). A malformed option is
-// ignored as a whole, like networkd does.
+// classlessRoutes decodes option 121 (RFC 3442), with the destinations
+// masked. A malformed option is ignored as a whole, like networkd does.
 func classlessRoutes(data []byte) ([]dhcpRoute, bool) {
-	var out []dhcpRoute
-	for b := data; len(b) > 0; {
-		width := int(b[0])
-		n := (width + 7) / 8
-		if width > 32 || len(b) < 1+n+4 {
-			return nil, false
-		}
-		dst := make(net.IP, net.IPv4len)
-		copy(dst, b[1:1+n])
-		mask := net.CIDRMask(width, 32)
-		gw := net.IP(append([]byte(nil), b[1+n:5+n]...))
-		out = append(out, dhcpRoute{dst: &net.IPNet{IP: dst.Mask(mask), Mask: mask}, gw: gw})
-		b = b[5+n:]
+	var routes dhcpv4.Routes
+	if routes.FromBytes(data) != nil {
+		return nil, false
+	}
+	out := make([]dhcpRoute, 0, len(routes))
+	for _, r := range routes {
+		out = append(out, dhcpRoute{dst: &net.IPNet{IP: r.Dest.IP.Mask(r.Dest.Mask), Mask: r.Dest.Mask}, gw: r.Router})
 	}
 	return out, len(out) > 0
 }
 
-// domainSearch decodes option 119 (RFC 3397): DNS names in wire format,
-// with compression pointers into the option. A malformed option (a
-// truncated name, a pointer that does not point back, a reserved label
-// type) is ignored as a whole, like networkd (-EBADMSG).
-func domainSearch(data []byte) []string {
-	var out []string
-	for off := 0; off < len(data); {
-		name, next, ok := dnsName(data, off)
-		if !ok {
-			return nil
-		}
-		if name != "" {
-			out = append(out, name)
-		}
-		off = next
-	}
-	return out
-}
-
-// dnsName reads the name at off and returns it and the offset after it.
-func dnsName(data []byte, off int) (name string, next int, ok bool) {
-	var labels []string
-	next, wire := -1, 0
-	for jumps := 0; off < len(data) && jumps < 64; {
-		l := int(data[off])
-		switch {
-		case l == 0:
-			if next < 0 {
-				next = off + 1
-			}
-			return strings.Join(labels, "."), next, true
-		case l&0xc0 == 0xc0:
-			if off+1 >= len(data) {
-				return "", 0, false
-			}
-			if next < 0 {
-				next = off + 2
-			}
-			ptr := (l&0x3f)<<8 | int(data[off+1])
-			if ptr >= off {
-				return "", 0, false // a pointer must point back
-			}
-			off = ptr
-			jumps++
-		case l&0xc0 != 0:
-			return "", 0, false // label types 01 and 10 are reserved
-		case off+1+l <= len(data):
-			labels = append(labels, string(data[off+1:off+1+l]))
-			if wire += 1 + l; wire > 254 {
-				return "", 0, false // over 255 octets (RFC 1035 2.3.4)
-			}
-			off += 1 + l
-		default:
-			return "", 0, false
-		}
-	}
-	return "", 0, false
-}
+// domainSearch decodes option 119 (dhcp4.SearchDomains).
+var domainSearch = dhcp4.SearchDomains
 
 // leaseRouteSet returns the routes of a lease: option 121, or without it
 // option 33 and a default route through the first router that is not
 // 0.0.0.0 (none when all are), like networkd-dhcp4.c.
 func leaseRouteSet(lease *dhcp4.Lease) []dhcpRoute {
-	if data, ok := leaseOption(lease, dhcpOptClasslessRoutes); ok {
-		if routes, ok := classlessRoutes(data); ok {
-			return routes
-		}
+	if routes, ok := classlessRoutes(lease.Options.Get(dhcpv4.OptionClasslessStaticRoute)); ok {
+		return routes
 	}
-	var routes []dhcpRoute
-	if data, ok := leaseOption(lease, dhcpOptStaticRoutes); ok {
-		routes = staticRoutes(data)
-	}
+	routes := staticRoutes(lease.Options.Get(dhcpv4.OptionStaticRoutingTable))
 	if i := slices.IndexFunc(lease.Router, func(r net.IP) bool { return r.To4() != nil && !r.IsUnspecified() }); i >= 0 {
 		routes = append(routes, dhcpRoute{dst: &net.IPNet{IP: net.IPv4zero, Mask: net.CIDRMask(0, 32)}, gw: lease.Router[i]})
 	}
@@ -314,10 +236,8 @@ func leaseSearchDomains(lease *dhcp4.Lease) []string {
 		}
 	}
 	add(leaseDomain(lease.DomainName))
-	if data, ok := leaseOption(lease, dhcpOptDomainSearch); ok {
-		for _, d := range domainSearch(data) {
-			add(d)
-		}
+	for _, d := range domainSearch(lease.Options.Get(dhcpv4.OptionDNSDomainSearchList)) {
+		add(d)
 	}
 	return out
 }

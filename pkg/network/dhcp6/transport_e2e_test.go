@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/insomniacslk/dhcp/dhcpv6"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
 	"golang.org/x/net/ipv6"
@@ -78,7 +79,7 @@ func TestTransportOnVeth(t *testing.T) {
 			if err != nil {
 				return
 			}
-			if buf[0] == msgSolicit {
+			if dhcpv6.MessageType(buf[0]) == msgSolicit {
 				_, _ = conn.WriteTo(serverReply(buf[:n], msgReply, true), from)
 			}
 		}
