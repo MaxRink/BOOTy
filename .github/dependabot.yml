@@ -27,6 +27,12 @@ updates:
       - /test/e2e/assets/busybox
     schedule:
       interval: weekly
+    ignore:
+      # test/e2e/clab/networkd-test.Dockerfile is the systemd-networkd 249
+      # reference (Ubuntu 22.04, what the legacy ramdisk sends). Newer Ubuntu
+      # releases ship a newer systemd that changes what the LLDP parity tests
+      # compare, so the base image is moved on purpose, not by Dependabot.
+      - dependency-name: ubuntu
     groups:
       docker-major:
         group-by: dependency-name
