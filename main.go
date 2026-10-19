@@ -1381,6 +1381,8 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (_ network
 	ignored := setPeerVars(netCfg)
 	if npCfg != nil {
 		mergeNetplanConfig(netCfg, npCfg)
+		// The legacy ramdisk reads these files with udev names on every NIC.
+		netCfg.UdevNames = true
 	}
 	if err := applyNativeSessions(&cfg.Network.BGP, netCfg); err != nil {
 		return nil, err

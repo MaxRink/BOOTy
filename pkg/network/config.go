@@ -71,6 +71,10 @@ type Config struct {
 	// NICWait is the longest wait for configured NICs that do not exist
 	// yet (NIC_WAIT_SECONDS).
 	NICWait time.Duration
+	// UdevNames gives every other physical NIC its predictable name too,
+	// like udev in the legacy ramdisk: set for provisioner netplan input,
+	// the input the legacy ramdisk reads.
+	UdevNames bool
 
 	// InterfaceNames are the interface names that the netplan files
 	// (ethernet IDs without a match block) and frr.conf ("neighbor X

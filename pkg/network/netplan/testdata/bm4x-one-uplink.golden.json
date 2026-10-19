@@ -25,6 +25,7 @@
   "StaticMatch": null,
   "LinkRenames": null,
   "NICWait": 0,
+  "UdevNames": false,
   "InterfaceNames": [
     "ens1f0np0",
     "ens1f0np0"

@@ -31,6 +31,7 @@
     }
   ],
   "NICWait": 0,
+  "UdevNames": false,
   "InterfaceNames": null,
   "BondInterfaces": "",
   "BondMode": "",

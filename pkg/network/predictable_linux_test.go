@@ -5,6 +5,7 @@ package network
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"os"
@@ -16,6 +17,8 @@ import (
 	"time"
 
 	"github.com/vishvananda/netlink"
+
+	"github.com/telekom/BOOTy/pkg/network/netname"
 )
 
 // fakeNICSysfs gives eth0 the path name enp1s0 and eth1 enp2s0.
@@ -95,6 +98,55 @@ func TestApplyPredictableNames(t *testing.T) {
 	}
 	if len(renamed) != 0 || listed {
 		t.Fatalf("renames = %v, NICs listed = %v, want none and false", renamed, listed)
+	}
+}
+
+// With UdevNames (provisioner netplan input) every NIC gets its udev name,
+// like in the legacy ramdisk, except a NIC that the config names by its
+// kernel name.
+func TestApplyPredictableNamesUdevNames(t *testing.T) {
+	restore := snapshotNICFns()
+	defer restore()
+	oldSysfs := predictableSysfs
+	predictableSysfs = fakeNICSysfs(t)
+	byName, down, setName, up, exists := renameLinkByName, renameLinkSetDown, renameLinkSetName, renameLinkSetUp, linkExists
+	t.Cleanup(func() {
+		predictableSysfs = oldSysfs
+		renameLinkByName, renameLinkSetDown, renameLinkSetName, renameLinkSetUp, linkExists = byName, down, setName, up, exists
+	})
+	linkExists = func(name string) bool { return name == "eth0" || name == "eth1" }
+	mac, _ := net.ParseMAC("02:00:00:00:00:01")
+	linkList = func() ([]netlink.Link, error) {
+		return []netlink.Link{
+			&netlink.Device{LinkAttrs: netlink.LinkAttrs{Name: "eth0", HardwareAddr: mac}},
+			&netlink.Device{LinkAttrs: netlink.LinkAttrs{Name: "eth1", HardwareAddr: mac}},
+		}, nil
+	}
+	renameLinkByName = func(name string) (netlink.Link, error) {
+		return &netlink.Device{LinkAttrs: netlink.LinkAttrs{Name: name}}, nil
+	}
+	renameLinkSetDown = func(netlink.Link) error { return nil }
+	renameLinkSetUp = func(netlink.Link) error { return nil }
+	var renamed []string
+	renameLinkSetName = func(l netlink.Link, name string) error {
+		renamed = append(renamed, l.Attrs().Name+">"+name)
+		return nil
+	}
+
+	// The legacy L2 netplan: match blocks only.
+	if err := ApplyPredictableNames(context.Background(), &Config{UdevNames: true}); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"eth0>enp1s0", "eth1>enp2s0"}; !reflect.DeepEqual(renamed, want) {
+		t.Fatalf("renames = %v, want %v", renamed, want)
+	}
+	// A config that names eth0 keeps it.
+	renamed = nil
+	if err := ApplyPredictableNames(context.Background(), &Config{UdevNames: true, StaticIface: "eth0"}); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"eth1>enp2s0"}; !reflect.DeepEqual(renamed, want) {
+		t.Fatalf("renames = %v, want %v", renamed, want)
 	}
 }
 
@@ -209,5 +261,113 @@ func TestWaitForConfiguredNICsProducedAndEnd(t *testing.T) {
 	err := ApplyPredictableNames(ctx, &Config{InterfaceNames: []string{"ens9f9"}, NICWait: 10 * time.Second})
 	if err == nil || time.Since(start) > 5*time.Second {
 		t.Fatalf("canceled wait = %v after %s, want an error at once", err, time.Since(start))
+	}
+}
+
+// udevPlan skips a NIC whose udev name exists, is the target of a
+// configured rename, is the first name of two NICs, or that has its udev
+// name already or is named by the config.
+func TestUdevPlanGuards(t *testing.T) {
+	restore := snapshotNICFns()
+	defer restore()
+	origNames, origExists := udevNames, linkExists
+	t.Cleanup(func() { udevNames, linkExists = origNames, origExists })
+	names := map[string][]string{
+		"eth0": {"enp1s0"}, "eth1": {"enp2s0"}, "eth2": {"enp3s0"}, "eth3": {"enp4s0"},
+		"eth4": {"enp5s0"}, "eth5": {"enp5s0"}, "enp6s0": {"enp6s0"}, "eth7": {"enp7s0"}, "eth8": nil,
+	}
+	udevNames = func(n string) []string { return names[n] }
+	linkExists = func(n string) bool { return n == "enp2s0" }
+	links := make([]netlink.Link, 0, 9)
+	for _, n := range []string{"eth0", "eth1", "eth2", "eth3", "eth4", "eth5", "enp6s0", "eth7", "eth8"} {
+		links = append(links, &netlink.Device{LinkAttrs: netlink.LinkAttrs{Name: n, HardwareAddr: net.HardwareAddr{2, 0, 0, 0, 0, byte(len(links) + 1)}}})
+	}
+	linkList = func() ([]netlink.Link, error) { return links, nil }
+	plan := []netname.Rename{{From: "eth9", To: "enp3s0"}, {From: "eth3", To: "enp10s0"}}
+	got, err := udevPlan(context.Background(), &Config{UdevNames: true, StaticIface: "eth7"}, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// eth1: enp2s0 exists; eth2: enp3s0 is a planned target; eth3: planned
+	// itself; eth4, eth5: same first name; enp6s0: has it; eth7:
+	// configured; eth8: no name.
+	if want := []netname.Rename{{From: "eth0", To: "enp1s0"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("udevPlan = %v, want %v", got, want)
+	}
+}
+
+// A failed udev rename is logged and skipped; the configured rename stays.
+func TestUdevNamesBestEffort(t *testing.T) {
+	restore := snapshotNICFns()
+	defer restore()
+	origNames, origExists := udevNames, linkExists
+	byName, down, setName, up := renameLinkByName, renameLinkSetDown, renameLinkSetName, renameLinkSetUp
+	t.Cleanup(func() {
+		udevNames, linkExists = origNames, origExists
+		renameLinkByName, renameLinkSetDown, renameLinkSetName, renameLinkSetUp = byName, down, setName, up
+	})
+	udevNames = func(n string) []string { return map[string][]string{"eth0": {"enp1s0"}, "eth1": {"enp2s0"}}[n] }
+	linkExists = func(n string) bool { return n == "eth0" || n == "eth1" }
+	linkList = func() ([]netlink.Link, error) {
+		return []netlink.Link{
+			&netlink.Device{LinkAttrs: netlink.LinkAttrs{Name: "eth0", HardwareAddr: net.HardwareAddr{2, 0, 0, 0, 0, 1}}},
+			&netlink.Device{LinkAttrs: netlink.LinkAttrs{Name: "eth1", HardwareAddr: net.HardwareAddr{2, 0, 0, 0, 0, 2}}},
+		}, nil
+	}
+	renameLinkByName = func(name string) (netlink.Link, error) {
+		return &netlink.Device{LinkAttrs: netlink.LinkAttrs{Name: name}}, nil
+	}
+	renameLinkSetDown = func(netlink.Link) error { return nil }
+	renameLinkSetUp = func(netlink.Link) error { return nil }
+	var renamed []string
+	renameLinkSetName = func(l netlink.Link, name string) error {
+		if name == "enp1s0" {
+			return errors.New("device busy")
+		}
+		renamed = append(renamed, l.Attrs().Name+">"+name)
+		return nil
+	}
+	if err := ApplyPredictableNames(context.Background(), &Config{UdevNames: true}); err != nil {
+		t.Fatalf("a failed udev rename failed the setup: %v", err)
+	}
+	if want := []string{"eth1>enp2s0"}; !reflect.DeepEqual(renamed, want) {
+		t.Fatalf("renames = %v, want %v", renamed, want)
+	}
+}
+
+// The netplan set-name renames run after udevPlan: a NIC they match and a
+// NIC whose udev name they set stay out, so a set-name swap by MAC works
+// (it did before the udev names).
+func TestUdevPlanSkipsSetName(t *testing.T) {
+	restore := snapshotNICFns()
+	defer restore()
+	origNames, origExists := udevNames, linkExists
+	t.Cleanup(func() { udevNames, linkExists = origNames, origExists })
+	names := map[string][]string{"eth0": {"enp1s0"}, "eth1": {"enp2s0"}, "eth2": {"enp3s0"}, "eth3": {"enp4s0"}}
+	udevNames = func(n string) []string { return names[n] }
+	linkExists = func(string) bool { return false }
+	mac := func(b byte) net.HardwareAddr { return net.HardwareAddr{2, 0, 0, 0, 0, b} }
+	linkList = func() ([]netlink.Link, error) {
+		return []netlink.Link{
+			&netlink.Device{LinkAttrs: netlink.LinkAttrs{Name: "eth0", HardwareAddr: mac(1)}},
+			&netlink.Device{LinkAttrs: netlink.LinkAttrs{Name: "eth1", HardwareAddr: mac(2)}},
+			&netlink.Device{LinkAttrs: netlink.LinkAttrs{Name: "eth2", HardwareAddr: mac(3)}},
+			&netlink.Device{LinkAttrs: netlink.LinkAttrs{Name: "eth3", HardwareAddr: mac(4)}},
+		}, nil
+	}
+	for _, tt := range []struct {
+		name    string
+		renames []LinkMatch
+		want    []netname.Rename
+	}{
+		{"swap by MAC", []LinkMatch{{MAC: "02:00:00:00:00:01", SetName: "enp2s0"}, {MAC: "02:00:00:00:00:02", SetName: "enp1s0"}},
+			[]netname.Rename{{From: "eth2", To: "enp3s0"}, {From: "eth3", To: "enp4s0"}}},
+		{"set-name to the udev name of another NIC", []LinkMatch{{MAC: "02:00:00:00:00:03", SetName: "enp1s0"}},
+			[]netname.Rename{{From: "eth1", To: "enp2s0"}, {From: "eth3", To: "enp4s0"}}},
+	} {
+		got, err := udevPlan(context.Background(), &Config{UdevNames: true, LinkRenames: tt.renames}, nil)
+		if err != nil || !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("%s: udevPlan = %v, %v, want %v", tt.name, got, err, tt.want)
+		}
 	}
 }
