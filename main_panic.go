@@ -24,9 +24,10 @@ var (
 	panicGetpid     = os.Getpid
 )
 
-// setPanicReboot sets kernel.panic unless the kernel command line has a
-// panic= parameter, which wins (for example panic=0 to keep a panicked host
-// for debugging). Only PID 1 sets it: kernel.panic is global for the host,
+// setPanicReboot sets kernel.panic unless the kernel command line sets it,
+// with panic= or sysctl.kernel.panic= (Linux 5.8, with either separator),
+// which wins (for example panic=0 to keep a panicked
+// host for debugging). Only PID 1 sets it: kernel.panic is global for the host,
 // and BOOTy also runs as a normal process (the containerlab e2e nodes), where
 // it must not change the CI runner's or a laptop's setting.
 func setPanicReboot() {
@@ -43,11 +44,26 @@ func setPanicReboot() {
 		if p == "--" {
 			break
 		}
-		if name, _, _ := strings.Cut(p, "="); name == "panic" {
+		if name, _, _ := strings.Cut(p, "="); setsKernelPanic(name) {
 			return
 		}
 	}
 	if err := os.WriteFile(kernelPanicPath, []byte(panicRebootSeconds), 0o644); err != nil { //nolint:gosec // procfs file
 		slog.Warn("kernel.panic not set", "error", err)
 	}
+}
+
+// setsKernelPanic reports a kernel command line parameter that sets
+// kernel.panic: panic, or a sysctl parameter for kernel/panic. Like the
+// kernel (fs/proc/proc_sysctl.c, process_sysctl_arg), "sysctl" is followed by
+// "." or "/", and every "." in the rest counts as "/".
+func setsKernelPanic(name string) bool {
+	if name == "panic" {
+		return true
+	}
+	rest, ok := strings.CutPrefix(name, "sysctl")
+	if !ok || rest == "" || (rest[0] != '.' && rest[0] != '/') {
+		return false
+	}
+	return strings.ReplaceAll(rest[1:], ".", "/") == "kernel/panic"
 }

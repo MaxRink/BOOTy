@@ -3,10 +3,12 @@
 package main
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
 	"testing"
 )
 
@@ -21,6 +23,12 @@ func TestSetPanicReboot(t *testing.T) {
 		{"console=ttyS0 panic=0", "unset"},
 		{"console=ttyS0 panic_on_warn=1", panicRebootSeconds},
 		{"console=ttyS0 -- panic=0", panicRebootSeconds},
+		{"console=ttyS0 sysctl.kernel.panic=0", "unset"},
+		{"console=ttyS0 sysctl.kernel/panic=0", "unset"},
+		{"console=ttyS0 sysctl/kernel/panic=0", "unset"},
+		{"console=ttyS0 sysctl/kernel.panic=0", "unset"},
+		{"console=ttyS0 sysctlkernel.panic=0", panicRebootSeconds},
+		{"console=ttyS0 sysctl.kernel.panic_on_oops=1", panicRebootSeconds},
 	} {
 		dir := t.TempDir()
 		procCmdlinePath = filepath.Join(dir, "cmdline")
@@ -74,13 +82,26 @@ func TestSetPanicRebootOnlyAsPID1(t *testing.T) {
 
 // main sets kernel.panic after the mounts, before the provisioning starts.
 func TestMainSetsPanicReboot(t *testing.T) {
-	b, err := os.ReadFile("main.go")
+	// The calls in the body of main, in source order; comments do not count.
+	f, err := parser.ParseFile(token.NewFileSet(), "main.go", nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	src := string(b)
-	mounts, panicCall, run := strings.Index(src, "setupMountsAndDevices()"), strings.Index(src, "setPanicReboot()"), strings.Index(src, "runCAPRF(ctx)")
-	if panicCall < 0 || mounts < 0 || run < 0 || panicCall < mounts || panicCall > run {
-		t.Fatal("main.go: setPanicReboot() must run after setupMountsAndDevices() and before runCAPRF")
+	pos := map[string]token.Pos{}
+	for _, d := range f.Decls {
+		if fn, ok := d.(*ast.FuncDecl); ok && fn.Name.Name == "main" && fn.Recv == nil {
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				if c, ok := n.(*ast.CallExpr); ok {
+					if id, ok := c.Fun.(*ast.Ident); ok && pos[id.Name] == 0 {
+						pos[id.Name] = c.Pos()
+					}
+				}
+				return true
+			})
+		}
+	}
+	mounts, panicCall, run := pos["setupMountsAndDevices"], pos["setPanicReboot"], pos["runCAPRF"]
+	if mounts == 0 || panicCall == 0 || run == 0 || panicCall < mounts || panicCall > run {
+		t.Fatal("main: setPanicReboot() must be called after setupMountsAndDevices() and before runCAPRF")
 	}
 }

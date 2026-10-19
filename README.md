@@ -246,11 +246,14 @@ kernel command line of an ISO boot is
 kernel errors only, and BOOTy logs the Secure Boot and lockdown state itself
 (`kernel security state`).
 
-Without a `panic=` parameter on the kernel command line (before `--`),
+Without a `panic=` or `sysctl.kernel.panic=` (with either separator, also
+`sysctl/kernel/panic=`) parameter on the kernel
+command line (before `--`),
 BOOTy sets `kernel.panic` to 10 when it starts as PID 1, so a kernel panic, also the "Attempted
 to kill init" panic when BOOTy itself crashes, reboots the host after 10 s
 instead of hanging; the ramdisk then boots again, as after a failed run. An
-explicit `panic=` (for example `panic=0` to keep a panicked host) wins. The
+explicit `panic=` or `sysctl.kernel.panic=` (for example `panic=0` to keep a
+panicked host) wins. The
 CAPRF ISOs set no `panic=`, so this covers them without a CAPRF change.
 The ISOs are amd64 only.
 
