@@ -84,7 +84,10 @@ func (w *fibWriter) run(ctx context.Context) {
 	// A new equal-cost path does not change the best path, so every
 	// received update triggers a reconcile too, and so does the drop of
 	// the paths of a peer that went down (a separate stream since GoBGP
-	// v4.8.0, pkg/server/server.go:5280).
+	// v4.8.0, pkg/server/server.go:1286). GoBGP 4.10 also sends a best path
+	// event for that drop when the best path does not change
+	// (pkg/server/server.go:1508); the AdjInWithdraw watch does not depend
+	// on that.
 	err := w.bgp.WatchEvent(ctx, server.WatchEventMessageCallbacks{OnBestPath: onPaths, OnPathUpdate: onPaths},
 		server.WatchBestPath(true), server.WatchUpdate(false, "", ""), server.WatchAdjInWithdraw())
 	if err != nil {

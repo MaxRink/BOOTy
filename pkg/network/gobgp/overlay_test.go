@@ -3238,6 +3238,10 @@ func TestRouteTargetMatchStateDetectsForeignRouteTargets(t *testing.T) {
 			path: mustPathWithRT(t, mustRTIPv4(t, "192.0.2.10", 4000)),
 		},
 		{
+			name: "4-octet AS specific RT",
+			path: mustPathWithRT(t, mustRT4(t, 70000, 4000)),
+		},
+		{
 			name: "raw unknown RT",
 			path: mustPathWithRT(t, mustRawRT(t, 0x01)),
 		},

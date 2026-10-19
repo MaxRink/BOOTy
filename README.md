@@ -92,7 +92,7 @@ CAPRF-compatible `/deploy/vars` file.
 |----------------------|---------|-------|
 | Go                   | 1.27+   | `GOOS=linux` for cross-compilation on macOS/Windows |
 | Docker / Buildx      | 20.10+  | Multi-arch builds (`linux/amd64`, `linux/arm64`) |
-| golangci-lint        | v2.12.2 | Installed into `bin/` by `make lint`, config in `.golangci.yml` |
+| golangci-lint        | v2.14.0 | Installed into `bin/` by `make lint`, config in `.golangci.yml` |
 | git-cliff            | 2.14.2  | `make changelog` only, for example `pipx install git-cliff==2.14.2` |
 | GNU Make             | 4.0+    | Build automation |
 | ContainerLab         | 0.44+   | E2E tests only (Linux) |

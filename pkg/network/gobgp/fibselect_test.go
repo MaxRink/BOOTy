@@ -235,3 +235,19 @@ func TestSelectRoutesPrefersLinkLocalNexthop(t *testing.T) {
 		t.Fatalf("selectRoutes() = %+v, %v; want next hop %v", got, err, want)
 	}
 }
+
+// An IPv4 path with the classic NEXT_HOP attribute (RFC 4271) and no
+// MP_REACH_NLRI is installed via that next hop.
+func TestSelectRoutesClassicNextHop(t *testing.T) {
+	p := testPath(t, "192.0.2.1", "192.0.2.1", []uint32{65500}, 100, true)
+	nh, err := bgp.NewPathAttributeNextHop(netip.MustParseAddr("192.0.2.7"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Attrs = []bgp.PathAttributeInterface{p.Attrs[0], p.Attrs[1], nh, p.Attrs[3]}
+	got, err := testSelector(4210000017, false, devOf(nil)).selectRoutes([]fibDest{dest(t, "198.51.100.1/32", p)})
+	want := []fibNexthop{{Addr: netip.MustParseAddr("192.0.2.7")}}
+	if err != nil || len(got) != 1 || !reflect.DeepEqual(got[0].Nexthops, want) {
+		t.Fatalf("selectRoutes() = %+v, %v; want next hop %v", got, err, want)
+	}
+}

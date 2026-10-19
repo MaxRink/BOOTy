@@ -15,6 +15,7 @@ import (
 	"time"
 
 	apipb "github.com/osrg/gobgp/v4/api"
+	"github.com/osrg/gobgp/v4/pkg/apiutil"
 	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
 	"github.com/osrg/gobgp/v4/pkg/server"
 )
@@ -323,5 +324,21 @@ func TestRestarterAcceptsLeafAfterReset(t *testing.T) {
 	}
 	if !reestablishAfterLeafReset(t, true, limit) {
 		t.Errorf("with the restarter BOOTy was not Established again within %v", limit)
+	}
+}
+
+// A GoBGP v4 peer event of a link-local peer has the zone in its address;
+// the restarter keys peers without it, as the v3 events did. The API
+// session state is the FSM state plus one.
+func TestPeerStateEventDropsZone(t *testing.T) {
+	p := peerStateEvent(&apiutil.PeerState{
+		NeighborAddress: netip.MustParseAddr("fe80::1%eth1"),
+		SessionState:    bgp.BGP_FSM_ESTABLISHED,
+		AdminState:      apipb.PeerState_ADMIN_STATE_UP,
+	})
+	s := p.GetState()
+	if s.GetNeighborAddress() != "fe80::1" || s.GetSessionState() != apipb.PeerState_SESSION_STATE_ESTABLISHED ||
+		s.GetAdminState() != apipb.PeerState_ADMIN_STATE_UP {
+		t.Fatalf("peerStateEvent() = %v, want fe80::1 established up", s)
 	}
 }

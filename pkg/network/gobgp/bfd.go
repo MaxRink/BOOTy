@@ -154,8 +154,8 @@ func bfdTimers(txMS, rxMS, mult uint32) bfd.Timers {
 // sends Cease/Administrative Reset, not Cease/BFD Down (RFC 9384), and
 // connects again after idleHoldAfterReset. FRR also starts a connect at
 // BFD Up; GoBGP has no API for that, its Active state connects within
-// 1.5 to 2 s by itself (pkg/server/fsm.go:967, minConnectRetryInterval 2
-// with 0.75 to 1 jitter since GoBGP v4.0.0).
+// 1.5 to 2 s by itself (pkg/server/fsm.go:980-982: minConnectRetryInterval
+// 2 with 0.75 to 1 jitter since GoBGP v4.0.0).
 //
 // Like bgpd, a BFD Down does not reset a BGP session that came up in the
 // same second (bss->last_event > peer->uptime, both in seconds): a

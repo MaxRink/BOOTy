@@ -7,6 +7,11 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+    ignore:
+      # go.mod replaces GoBGP with the fork tag v4.10.0-booty.2, so an
+      # upstream bump would not change the build. Move the fork tag by hand:
+      # docs/networking.md#gobgp-version-and-fork
+      - dependency-name: github.com/osrg/gobgp/v4
 
   - package-ecosystem: docker
     # Dockerfile discovery is not recursive. List each independent context so
