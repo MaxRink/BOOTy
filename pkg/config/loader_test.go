@@ -594,6 +594,7 @@ func TestLoadFullYAMLReference(t *testing.T) {
 		{"Time.NTPServers", fmt.Sprint(cfg.Time.NTPServers), "[ntp1.example.com 192.0.2.123:123]"},
 		{"Time.MaxSkewSeconds", cfg.Time.MaxSkewSeconds, 120},
 		{"Time.WriteRTC", *cfg.Time.WriteRTC, false},
+		{"Time.DHCPNTP", *cfg.Time.DHCPNTP, true},
 		{"Provision.TargetOS", cfg.Provision.TargetOS, TargetOSLinux},
 		{"Provision.ExtraKernelParams", cfg.Provision.ExtraKernelParams, "console=ttyS0,115200"},
 		{"Provision.FailureDomain", cfg.Provision.FailureDomain, "zone-a"},

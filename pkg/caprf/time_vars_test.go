@@ -6,13 +6,13 @@ import (
 )
 
 func TestParseVarsTimeOptions(t *testing.T) {
-	cfg, err := ParseVars(strings.NewReader("TIME_SYNC=Require\nNTP_SERVERS=\"ntp1.example.com, 192.0.2.1:123 2001:db8::1\"\nTIME_MAX_SKEW_SEC=60\nTIME_WRITE_RTC=no\n"))
+	cfg, err := ParseVars(strings.NewReader("TIME_SYNC=Require\nNTP_SERVERS=\"ntp1.example.com, 192.0.2.1:123 2001:db8::1\"\nTIME_MAX_SKEW_SEC=60\nTIME_WRITE_RTC=no\nTIME_DHCP_NTP=yes\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	tc := cfg.Time
 	if tc.Sync != "require" || strings.Join(tc.NTPServers, " ") != "ntp1.example.com 192.0.2.1:123 2001:db8::1" ||
-		tc.MaxSkewSeconds != 60 || tc.WriteRTC == nil || *tc.WriteRTC {
+		tc.MaxSkewSeconds != 60 || tc.WriteRTC == nil || *tc.WriteRTC || tc.DHCPNTP == nil || !*tc.DHCPNTP {
 		t.Fatalf("time = %+v", tc)
 	}
 
@@ -24,6 +24,7 @@ func TestParseVarsTimeOptions(t *testing.T) {
 	for _, bad := range []string{
 		"TIME_SYNC=sometimes",
 		"TIME_WRITE_RTC=maybe",
+		"TIME_DHCP_NTP=maybe",
 		"TIME_MAX_SKEW_SEC=x",
 		"TIME_MAX_SKEW_SEC=-5",
 		"TIME_MAX_SKEW_SEC=100000",

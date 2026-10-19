@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -245,6 +246,9 @@ func stubDHCPNetlink(t *testing.T) {
 		dhcpSetMTU, dhcpWriteResolvers = origMTU, origResolvers
 		dhcpLinkMaxMTU, dhcpIPv6Enabled = origMax, origV6
 	})
+	origDNS := dhcpSetDNSServers
+	t.Cleanup(func() { dhcpSetDNSServers = origDNS })
+	dhcpSetDNSServers = func([][]string) {}
 	dhcpLinkMaxMTU = func(int) int { return 0 }
 	dhcpIPv6Enabled = func(string) bool { return false }
 	dhcpSetMTU = func(netlink.Link, int) error { return nil }
@@ -1544,6 +1548,47 @@ func TestCarrierUpAroundFirstLease(t *testing.T) {
 		}
 		if fc.reboots != tt.want {
 			t.Errorf("%s (%s): %d reboots, want %d", tt.name, tt.events, fc.reboots, tt.want)
+		}
+	}
+}
+
+// The DNS servers per link for the fan-out: the configured ones, then per
+// NIC the DHCPv4 and DHCPv6 servers; with search domains only those NICs.
+func TestLinkServers(t *testing.T) {
+	d := NewDHCPMode()
+	d.resolvers = []string{"10.9.9.9", "10.9.9.8"}
+	d.nics = map[int]dhcpApplied{
+		1: {dns: []string{"10.0.2.3", "10.0.2.4"}},
+		2: {},
+		4: {dns: []string{"10.0.4.3"}},
+	}
+	d.v6 = map[int]*nic6{1: {dns: []string{"fd00:10::1"}}, 2: {dns: []string{"fd00:20::1"}}, 3: {dns: []string{"fd00:30::1", "fd00:30::2"}}}
+	want := [][]string{{"10.9.9.9", "10.9.9.8"}, {"10.0.2.3", "10.0.2.4", "fd00:10::1"}, {"fd00:20::1"}, {"fd00:30::1", "fd00:30::2"}, {"10.0.4.3"}}
+	if got := d.linkServers(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("linkServers = %v, want %v", got, want)
+	}
+	d.nics[4] = dhcpApplied{dns: []string{"10.0.4.3"}, domains: []string{"l2.example"}}
+	if got, want := d.linkServers(), [][]string{{"10.9.9.9", "10.9.9.8"}, {"10.0.4.3"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("linkServers with domains = %v, want %v", got, want)
+	}
+}
+
+// Teardown puts the plain Go resolver back when DHCP mode manages DNS,
+// and leaves it alone otherwise.
+func TestTeardownResetsDNSFanout(t *testing.T) {
+	stubDHCPNetlink(t)
+	for _, manage := range []bool{true, false} {
+		var calls [][][]string
+		dhcpSetDNSServers = func(l [][]string) { calls = append(calls, l) }
+		d := &DHCPMode{manageDNS: manage}
+		if err := d.Teardown(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if manage && (len(calls) != 1 || calls[0] != nil) {
+			t.Errorf("manageDNS: dhcpSetDNSServers calls %v, want one with nil", calls)
+		}
+		if !manage && len(calls) != 0 {
+			t.Errorf("keep resolv.conf: dhcpSetDNSServers calls %v, want none", calls)
 		}
 	}
 }

@@ -97,8 +97,16 @@ func TestSyncClockUsesDHCPNTPServers(t *testing.T) {
 	if err := syncClock(context.Background(), cfg, ""); err != nil {
 		t.Fatal(err)
 	}
+	if got := strings.Join(f.opts.NTPServers, ","); got != "ntp.example.com" {
+		t.Fatalf("NTPServers = %q, want only the configured server by default (legacy: no NTP)", got)
+	}
+	on := true
+	cfg.Time.DHCPNTP = &on
+	if err := syncClock(context.Background(), cfg, ""); err != nil {
+		t.Fatal(err)
+	}
 	if got := strings.Join(f.opts.NTPServers, ","); got != "ntp.example.com,10.0.2.3" {
-		t.Fatalf("NTPServers = %q, want the configured server, then the DHCP one", got)
+		t.Fatalf("NTPServers = %q, want the configured server, then the DHCP one with TIME_DHCP_NTP", got)
 	}
 }
 

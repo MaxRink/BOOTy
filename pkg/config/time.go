@@ -20,9 +20,14 @@ type TimeConfig struct {
 	Sync string `yaml:"sync" json:"sync"`
 
 	// NTPServers are the SNTP servers, as host or host:port, queried in
-	// order. Servers from DHCP option 42 follow them.
+	// order. With DHCPNTP the servers from DHCP option 42 follow them.
 	// Default: none
 	NTPServers []string `yaml:"ntpServers" json:"ntpServers"`
+
+	// DHCPNTP also queries the NTP servers of the DHCP leases (option 42).
+	// The legacy ramdisk has no NTP client, so it is off by default.
+	// Default: nil (false)
+	DHCPNTP *bool `yaml:"dhcpNTP,omitempty" json:"dhcpNTP,omitempty"`
 
 	// MaxSkewSeconds is the largest difference between the NTP time and the
 	// authenticated CAPRF Date time that BOOTy accepts. Above it BOOTy uses

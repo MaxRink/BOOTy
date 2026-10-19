@@ -19,14 +19,18 @@ func applyTimeVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 		if err := setIntField(&cfg.Time.MaxSkewSeconds, strings.TrimSpace(value)); err != nil {
 			return true, fmt.Errorf("invalid %s: %w", key, err)
 		}
-	case "TIME_WRITE_RTC":
+	case "TIME_WRITE_RTC", "TIME_DHCP_NTP":
 		b, set, err := parseStrictBoolVar(value)
 		if err != nil {
 			return true, fmt.Errorf("invalid %s: %w", key, err)
 		}
-		cfg.Time.WriteRTC = nil
+		field := &cfg.Time.WriteRTC
+		if key == "TIME_DHCP_NTP" {
+			field = &cfg.Time.DHCPNTP
+		}
+		*field = nil
 		if set {
-			cfg.Time.WriteRTC = &b
+			*field = &b
 		}
 	default:
 		return false, nil

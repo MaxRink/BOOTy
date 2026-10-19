@@ -151,8 +151,8 @@ callbacks, the crash artifact upload and the image download.
 
 - The connectivity check counts a certificate that is not valid at the local
   clock as reachable: the TLS server answered.
-- NTP: BOOTy queries `NTP_SERVERS` in order, then the NTP servers of the DHCP
-  lease (option 42), with SNTP (RFC 4330, 2 s per server). The first good
+- NTP: BOOTy queries `NTP_SERVERS` in order, then, with `TIME_DHCP_NTP`,
+  the NTP servers of the DHCP leases (option 42), with SNTP (RFC 4330, 2 s per server). The first good
   answer counts. CAPRF renders `NTP_SERVERS` into the vars file like any
   other key.
 - CAPRF `Date` header: BOOTy sends one `HEAD` request without credentials to
@@ -209,8 +209,9 @@ callbacks, the crash artifact upload and the image download.
 | Key | Default | Values | Description |
 |-----|---------|--------|-------------|
 | `TIME_SYNC` | (unset) (`auto`) | `off`, `auto`, `require` | `off` keeps the RTC time. `auto` syncs from the sources that answer and logs failures. `require` fails the run (`BOOTY-TIM-001`) when no source gives a usable time, or when the clock can not be set. Dry-run mode does not sync. YAML `time.sync`. |
-| `NTP_SERVERS` | (unset) | up to 8 hosts or `host:port`, comma or space separated | SNTP servers, queried before the DHCP option 42 servers. Default port 123. An IPv6 address with a port needs brackets (`[2001:db8::123]:123`). URLs are rejected. YAML `time.ntpServers` (list). |
+| `NTP_SERVERS` | (unset) | up to 8 hosts or `host:port`, comma or space separated | SNTP servers, queried before the DHCP option 42 servers (with `TIME_DHCP_NTP`). Default port 123. An IPv6 address with a port needs brackets (`[2001:db8::123]:123`). URLs are rejected. YAML `time.ntpServers` (list). |
 | `TIME_MAX_SKEW_SEC` | `0` (300) | integer, seconds, 1-86400 | Largest difference between the NTP time and the authenticated CAPRF `Date` time; above it BOOTy uses the `Date` time. Also the largest backward step of a plausible clock on the `Date` header alone. YAML `time.maxSkewSeconds`. |
+| `TIME_DHCP_NTP` | (unset) (`false`) | boolean (`true`, `false`, `1`, `0`, `yes`, `no`) | Also query the NTP servers of the DHCP leases (option 42), after `NTP_SERVERS`. Off by default like the legacy ramdisk, which has no NTP client. YAML `time.dhcpNTP`. |
 | `TIME_WRITE_RTC` | (unset) (`true`) | boolean (`true`, `false`, `1`, `0`, `yes`, `no`) | Write the synced time to the RTC in UTC after the clock was stepped. A failed write is logged. Other values are rejected. YAML `time.writeRTC`. |
 
 ## CAPRF legacy compatibility

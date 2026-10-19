@@ -1194,11 +1194,11 @@ The client is BOOTy's own (`pkg/network/dhcp4`), with the states of RFC
 - DHCP packets carry the IP TOS of networkd (CS6). Debug logging only, one
   line per message.
 
-The NTP servers (option 42) of all leases, by NIC and each once, go to the
-time sync, like networkd hands the servers of every link to timesyncd; a
-NIC without option 42 does not drop the servers of another NIC, and
-Teardown drops them all. The legacy ramdisk has no timesyncd, so it sends
-no NTP request.
+The NTP servers (option 42) of all leases, by NIC and each once, are kept
+for the time sync; a NIC without option 42 does not drop the servers of
+another NIC, and Teardown drops them all. The time sync queries them only
+with `TIME_DHCP_NTP=true`: the legacy ramdisk has no timesyncd and sends
+no NTP request, so by default BOOTy sends none either.
 
 The client sends the options of systemd-networkd (systemd 255, captured
 in the CAPRF L2 parity fixture), in its order after the message type: client
@@ -1241,6 +1241,20 @@ On every lease (also renewals and leases on the other NICs), BOOTy:
   setup. When the last lease ends, its servers leave resolv.conf. With
   `PROVISIONER_FILES_TARGET=ramdisk` and a provisioner `/etc/resolv.conf`,
   that file stays, as in the legacy ramdisk.
+
+Lookups work like systemd-resolved, which queries the current DNS server
+of every link at once (the Go resolver alone asks the first resolv.conf
+server and the next only after a timeout). The links are the configured
+servers and every NIC with a lease (its DHCPv4 servers, then its DHCPv6
+ones); when leases have search domains, only the NICs with one, as
+resolved routes a lookup to the links whose domains match. Each UDP query
+goes to the current server of every link: the first positive answer
+counts, a negative one (NXDOMAIN, SERVFAIL, REFUSED) only when every link
+answered and none better (resolved `dns_query_ready`). A link whose server
+fails or does not answer moves on to its next server. A truncated answer
+is asked again over TCP at the server that truncated it. The sockets stay
+open 2 s after the answer, so late answers get no ICMP port unreachable.
+Teardown goes back to the plain Go resolver.
 
 When the lease of a NIC ends (it expires before a renewal or rebind, or the
 server answers with DHCPNAK), BOOTy removes the address, default route,

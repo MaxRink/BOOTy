@@ -12,10 +12,11 @@ import (
 )
 
 // Size budgets in MiB, about 5% above main (default 36.1, gobgp 31.5,
-// slim 23.6, micro 10.3 MiB). Every MB is up to 0.5 s of boot time on
-// slow BMC virtual media; see docs/size-optimization.md.
+// slim 23.6, micro 10.3 MiB; micro is 10.9 MiB on main c5a17159, so its
+// budget is 5% above that). Every MB is up to 0.5 s of boot time on slow
+// BMC virtual media; see docs/size-optimization.md.
 const (
-	maxMicroInitramfsMB   = 11.0
+	maxMicroInitramfsMB   = 11.4
 	maxSlimInitramfsMB    = 25.0
 	maxGoBGPInitramfsMB   = 33.5
 	maxDefaultInitramfsMB = 38.0

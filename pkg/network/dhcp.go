@@ -426,6 +426,7 @@ var (
 	dhcpRouteAdd       = netlink.RouteAppend
 	dhcpRouteDel       = netlink.RouteDel
 	dhcpSetMTU         = netlink.LinkSetMTU
+	dhcpSetDNSServers  = dnsFanout.set
 	dhcpLinkMaxMTU     = linkMaxMTU
 	dhcpIPv6Enabled    = ipv6Enabled
 	dhcpWriteResolvers = ConfigureResolvConf
@@ -640,11 +641,46 @@ func (d *DHCPMode) writeResolvers() {
 	if content == d.written || d.written == "" && len(servers) == 0 {
 		return
 	}
+	dhcpSetDNSServers(d.linkServers())
 	if err := dhcpWriteResolvers(servers, search); err != nil {
 		d.log.Warn("failed to write the DHCP DNS servers", "servers", servers, "search", search, "error", err)
 		return
 	}
 	d.written = content
+}
+
+// linkServers returns the DNS servers per link that a lookup asks at once
+// (the current server of each, the next after a failure), like
+// systemd-resolved: the configured servers, then per NIC the servers of
+// its DHCPv4 lease and of its DHCPv6 lease. When some leases have search
+// domains, only those NICs count: resolved routes a lookup to the links
+// whose domains match it, not to a link without (a NIC with only DHCPv6).
+// The caller holds d.mu.
+func (d *DHCPMode) linkServers() [][]string {
+	var out [][]string
+	if len(d.resolvers) > 0 {
+		out = append(out, slices.Clone(d.resolvers))
+	}
+	idxs := slices.Collect(maps.Keys(d.nics))
+	for idx := range d.v6 {
+		if !slices.Contains(idxs, idx) {
+			idxs = append(idxs, idx)
+		}
+	}
+	if slices.ContainsFunc(idxs, func(i int) bool { return len(d.nics[i].domains) > 0 }) {
+		idxs = slices.DeleteFunc(idxs, func(i int) bool { return len(d.nics[i].domains) == 0 })
+	}
+	slices.Sort(idxs)
+	for _, idx := range idxs {
+		servers := slices.Clone(d.nics[idx].dns)
+		if v6 := d.v6[idx]; v6 != nil {
+			servers = append(servers, v6.dns...)
+		}
+		if len(servers) > 0 {
+			out = append(out, servers)
+		}
+	}
+	return out
 }
 
 // applyRoutes adds the routes of a lease (leaseRoutes) next to the routes
@@ -775,6 +811,9 @@ func (d *DHCPMode) WaitForConnectivity(ctx context.Context, target string, timeo
 func (d *DHCPMode) Teardown(_ context.Context) error {
 	d.stopClients()
 	d.mu.Lock()
+	if d.manageDNS {
+		dhcpSetDNSServers(nil) // the plain Go resolver again
+	}
 	applied := d.stale
 	for _, a := range d.nics {
 		applied = append(applied, a)

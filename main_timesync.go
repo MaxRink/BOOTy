@@ -40,7 +40,7 @@ func syncClock(ctx context.Context, cfg *config.MachineConfig, dateURL string) e
 	}
 	opts := timesync.Options{
 		Require:    mode == config.TimeSyncRequire,
-		NTPServers: ntpServers(cfg.Time.NTPServers, dhcpNTPServers()),
+		NTPServers: ntpServers(cfg.Time.NTPServers, leaseNTPServers(cfg)),
 		DateURL:    dateURL,
 		MaxSkew:    time.Duration(cfg.Time.MaxSkew()) * time.Second,
 		WriteRTC:   config.BoolOr(cfg.Time.WriteRTC, true),
@@ -50,6 +50,15 @@ func syncClock(ctx context.Context, cfg *config.MachineConfig, dateURL string) e
 		return &provision.CodedError{Code: provision.CodeNoTime, Err: fmt.Errorf("time sync: %w", err)}
 	}
 	return nil
+}
+
+// leaseNTPServers returns the DHCP option 42 servers with TIME_DHCP_NTP,
+// else none: the legacy ramdisk sends no NTP request.
+func leaseNTPServers(cfg *config.MachineConfig) []string {
+	if !config.BoolOr(cfg.Time.DHCPNTP, false) {
+		return nil
+	}
+	return dhcpNTPServers()
 }
 
 // ntpServers returns the configured servers, then the DHCP servers, without

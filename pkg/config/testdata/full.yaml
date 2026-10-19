@@ -461,6 +461,9 @@ time:
   # writeRTC (TIME_WRITE_RTC): write the synced time to the RTC (default: true)
   writeRTC: false
 
+  # dhcpNTP (TIME_DHCP_NTP): also query the DHCP option 42 servers (default: false)
+  dhcpNTP: true
+
 # ---------------------------------------------------------------------------
 # Provision — settings for the provisioning pipeline.
 # Only read when mode is "provision" or "dry-run".
