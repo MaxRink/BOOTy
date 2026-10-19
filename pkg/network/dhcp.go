@@ -30,13 +30,45 @@ type DHCPMode struct {
 	log *slog.Logger
 
 	mu      sync.Mutex
-	clients []dhcpClient
+	clients map[int]*nicClient  // by link index
 	nics    map[int]dhcpApplied // by link index: what the current lease configured
 	stale   []dhcpApplied       // state that could not be removed; Teardown retries
 	// stopped is set before the clients stop; a lease that arrives after it
 	// is not applied.
 	stopped bool
+	// expiry ends the lease of a NIC at its expiry time. go-dhclient v1.0.2
+	// does not: after a failed renewal it renews again forever and never
+	// reaches the expiry, so OnExpire only comes for a DHCPNAK.
+	expiry map[int]leaseTimer
+	// restarts are client restarts in progress; Teardown waits for them.
+	restarts sync.WaitGroup
+	// retry restarts the client of a NIC whose lease was refused, after
+	// retryWait (doubled per refusal up to 64 s, reset by a lease).
+	retry     map[int]*time.Timer
+	retryWait map[int]time.Duration
 }
+
+// nicClient is the running DHCP client of one NIC and how to start a fresh
+// one for it.
+type nicClient struct {
+	client dhcpClient
+	start  func() dhcpClient
+}
+
+// dhcpStart starts a client; tests replace it.
+var dhcpStart = func(c dhcpClient) dhcpClient {
+	c.Start()
+	return c
+}
+
+// leaseTimer is the expiry timer of the lease of one NIC.
+type leaseTimer struct {
+	timer *time.Timer
+	at    time.Time // the expiry time it was armed for
+}
+
+// dhcpAfterFunc is time.AfterFunc; tests replace it.
+var dhcpAfterFunc = time.AfterFunc
 
 // dhcpApplied is the address, default route and NTP servers a lease
 // configured.
@@ -59,8 +91,8 @@ var (
 	dhcpLinkByName  = netlink.LinkByName
 	dhcpLinkSetUp   = netlink.LinkSetUp
 	dhcpPrepareLink = promoteSecondaries
-	dhcpNewClient   = func(iface *net.Interface, hostname string, onBound dhclient.Callback) dhcpClient {
-		return newDHCPClient(iface, hostname, onBound)
+	dhcpNewClient   = func(iface *net.Interface, hostname string, onBound, onExpire dhclient.Callback) dhcpClient {
+		return newDHCPClient(iface, hostname, onBound, onExpire)
 	}
 )
 
@@ -153,34 +185,116 @@ func (d *DHCPMode) startClient(iface *net.Interface, hostname string, leased cha
 		d.log.Warn("Cannot bring up link for DHCP", "interface", iface.Name, "error", err)
 		return
 	}
-	client := dhcpNewClient(iface, hostname, d.onBound(link, iface.Name, leased))
-	client.Start()
+	start := func() dhcpClient { return dhcpStart(d.clientFor(iface, link, hostname, leased)) }
+	nc := &nicClient{client: start(), start: start}
 	d.mu.Lock()
-	d.clients = append(d.clients, client)
+	if d.clients == nil {
+		d.clients = map[int]*nicClient{}
+	}
+	d.clients[link.Attrs().Index] = nc
 	d.mu.Unlock()
 }
 
 // stopClients stops every DHCP client, all at once: go-dhclient's Stop
-// waits up to its 5 s response timeout on a NIC without a server.
+// waits up to its 5 s response timeout on a NIC without a server. A client
+// is stopped once, by whoever takes it out of d.clients (go-dhclient panics
+// on a second Stop).
 func (d *DHCPMode) stopClients() {
 	d.mu.Lock()
 	d.stopped = true
 	clients := d.clients
 	d.clients = nil
+	for idx, t := range d.retry {
+		t.Stop()
+		delete(d.retry, idx)
+	}
 	d.mu.Unlock()
 	var wg sync.WaitGroup
 	for _, c := range clients {
-		wg.Go(c.Stop)
+		wg.Go(c.client.Stop)
 	}
 	wg.Wait()
+}
+
+// takeForRestart takes the client of a NIC out of d.clients and restarts
+// it; Teardown waits for the restart. The caller holds d.mu and does not
+// after the call.
+func (d *DHCPMode) takeForRestart(idx int, ifName string) {
+	nc := d.clients[idx]
+	delete(d.clients, idx)
+	if nc == nil || d.stopped {
+		d.mu.Unlock()
+		return
+	}
+	d.restarts.Add(1)
+	d.mu.Unlock()
+	defer d.restarts.Done()
+	d.restartClient(idx, ifName, nc)
+}
+
+// retryAfterRefusal restarts the client of a NIC whose lease was refused
+// (no lifetime, no server identifier): go-dhclient stays bound to it and
+// would send REQUESTs without end. Like networkd, which ignores such an
+// ACK and tries again, the restart comes after a backoff of 2 s, doubled
+// per refusal up to 64 s.
+func (d *DHCPMode) retryAfterRefusal(idx int, ifName string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.stopped || d.retry[idx] != nil {
+		return
+	}
+	wait := min(max(2*d.retryWait[idx], 2*time.Second), 64*time.Second)
+	if d.retryWait == nil {
+		d.retryWait, d.retry = map[int]time.Duration{}, map[int]*time.Timer{}
+	}
+	d.retryWait[idx] = wait
+	d.retry[idx] = dhcpAfterFunc(wait, func() {
+		d.mu.Lock()
+		delete(d.retry, idx)
+		d.takeForRestart(idx, ifName)
+	})
+}
+
+// restartClient replaces the client of a NIC whose lease ended with a fresh
+// one, which starts in INIT with a DHCPDISCOVER (RFC 2131 section 4.4.5),
+// like networkd's client_initialize and client_start. go-dhclient keeps the
+// old lease after failed renewals and would only send DHCPREQUESTs for it
+// to the old server. The caller took nc out of d.clients and does not hold
+// d.mu: Stop waits for the client, whose OnBound may wait for d.mu.
+func (d *DHCPMode) restartClient(idx int, ifName string, nc *nicClient) {
+	nc.client.Stop()
+	d.mu.Lock()
+	stopped := d.stopped
+	d.mu.Unlock()
+	if stopped {
+		return
+	}
+	fresh := nc.start()
+	d.mu.Lock()
+	if d.stopped {
+		d.mu.Unlock()
+		fresh.Stop()
+		return
+	}
+	if d.clients == nil {
+		d.clients = map[int]*nicClient{}
+	}
+	d.clients[idx] = &nicClient{client: fresh, start: nc.start}
+	d.mu.Unlock()
+	d.log.Info("DHCP client restarted after the lease ended", "iface", ifName)
+}
+
+// clientFor builds the DHCP client of one NIC with its lease callbacks.
+func (d *DHCPMode) clientFor(iface *net.Interface, link netlink.Link, hostname string, leased chan<- string) dhcpClient {
+	return dhcpNewClient(iface, hostname, d.onBound(link, iface.Name, leased), d.onExpire(link, iface.Name))
 }
 
 // newDHCPClient builds a client that requests the default parameters
 // (subnet mask, router, DNS, MTU and more) and sends the hostname.
 // dhclient only adds the parameter request list when no option is set, so
 // adding the hostname alone would drop it.
-func newDHCPClient(iface *net.Interface, hostname string, onBound dhclient.Callback) *dhclient.Client {
-	client := &dhclient.Client{Iface: iface, OnBound: onBound}
+func newDHCPClient(iface *net.Interface, hostname string, onBound, onExpire dhclient.Callback) *dhclient.Client {
+	client := &dhclient.Client{Iface: iface, OnBound: onBound, OnExpire: onExpire}
 	for _, param := range dhclient.DefaultParamsRequestList {
 		client.AddParamRequest(param)
 	}
@@ -228,8 +342,12 @@ func replaceLeaseAddr(link netlink.Link, addr *netlink.Addr) error {
 func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- string) func(*dhclient.Lease) {
 	return func(lease *dhclient.Lease) {
 		addr, err := leaseAddr(lease)
+		if err == nil {
+			err = leaseUsable(lease)
+		}
 		if err != nil {
 			d.log.Warn("ignoring DHCP lease", "iface", ifName, "error", err)
+			d.retryAfterRefusal(link.Attrs().Index, ifName)
 			return
 		}
 		d.mu.Lock()
@@ -237,16 +355,93 @@ func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- strin
 		if d.stopped {
 			return
 		}
+		delete(d.retryWait, link.Attrs().Index)
 		if err := d.apply(link, addr, lease); err != nil {
 			d.log.Warn("failed to apply DHCP lease", "iface", ifName, "error", err)
 			return
 		}
+		d.armExpiry(link, ifName, lease.Expire)
 		d.publishNTP()
 		d.log.Info("DHCP lease applied", "iface", ifName, "addr", addr.IPNet.String())
 		select {
 		case leased <- ifName:
 		default:
 		}
+	}
+}
+
+// onExpire returns the callback for the end of a lease of one NIC that
+// go-dhclient reports: a DHCPNAK, or an expiry it notices. RFC 2131
+// sections 4.4.5 and 3.2 say the client then stops using the address and
+// starts over in INIT, so the address and default route of the lease go.
+// The client keeps running; its next lease is applied like any other.
+func (d *DHCPMode) onExpire(link netlink.Link, ifName string) func(*dhclient.Lease) {
+	return func(*dhclient.Lease) {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		d.endLease(link, ifName)
+	}
+}
+
+// armExpiry (re)starts the expiry timer of the lease of a NIC; each bound
+// lease, also a renewal, moves it. A zero expiry disarms it. The caller
+// holds d.mu.
+func (d *DHCPMode) armExpiry(link netlink.Link, ifName string, at time.Time) {
+	idx := link.Attrs().Index
+	if old, ok := d.expiry[idx]; ok {
+		old.timer.Stop()
+		delete(d.expiry, idx)
+	}
+	if at.IsZero() {
+		return
+	}
+	if d.expiry == nil {
+		d.expiry = map[int]leaseTimer{}
+	}
+	d.expiry[idx] = leaseTimer{at: at, timer: dhcpAfterFunc(time.Until(at), func() {
+		d.mu.Lock()
+		// A renewal may have moved the expiry while this timer fired.
+		if cur, ok := d.expiry[idx]; !ok || !cur.at.Equal(at) {
+			d.mu.Unlock()
+			return
+		}
+		d.log.Warn("DHCP lease expired without renewal", "iface", ifName)
+		d.endLease(link, ifName)
+		d.takeForRestart(idx, ifName)
+	})}
+}
+
+// endLease removes the address and default route of the lease of a NIC
+// and its expiry timer. State that cannot be removed stays tracked for
+// Teardown. The caller holds d.mu.
+func (d *DHCPMode) endLease(link netlink.Link, ifName string) {
+	idx := link.Attrs().Index
+	if t, ok := d.expiry[idx]; ok {
+		t.timer.Stop()
+		delete(d.expiry, idx)
+	}
+	a, ok := d.nics[idx]
+	if !ok {
+		return
+	}
+	delete(d.nics, idx)
+	d.publishNTP() // its NTP servers go with the lease
+	removed := true
+	if a.route != nil {
+		if err := dhcpRouteDel(a.route); err != nil && !errors.Is(err, syscall.ESRCH) {
+			d.log.Warn("failed to remove the default route of an ended DHCP lease", "iface", ifName, "error", err)
+			d.stale = append(d.stale, dhcpApplied{link: link, route: a.route})
+			removed = false
+		}
+	}
+	if err := dhcpAddrDel(link, a.addr); err != nil && !errors.Is(err, syscall.EADDRNOTAVAIL) {
+		d.log.Warn("failed to remove the address of an ended DHCP lease", "iface", ifName, "error", err)
+		d.stale = append(d.stale, dhcpApplied{link: link, addr: a.addr})
+		removed = false
+	}
+	if removed {
+		d.log.Warn("DHCP lease ended (expired or refused), address removed until a new lease", "iface", ifName,
+			"addr", a.addr.IPNet.String())
 	}
 }
 
@@ -354,6 +549,19 @@ func (d *DHCPMode) publishNTP() {
 	setDHCPNTPList(servers)
 }
 
+// leaseUsable rejects a lease without a lifetime or a server identifier,
+// like networkd (sd-dhcp-client.c client_parse_message): applying it would
+// end it at once, and the client would apply it again in a loop.
+func leaseUsable(lease *dhclient.Lease) error {
+	if !lease.Expire.After(lease.Bound) {
+		return fmt.Errorf("lease has no lifetime")
+	}
+	if ip := lease.ServerID.To4(); ip == nil || ip.IsUnspecified() {
+		return fmt.Errorf("lease has no server identifier")
+	}
+	return nil
+}
+
 // leaseAddr builds the interface address from a lease. A lease without a
 // subnet mask option gets the classful default mask, like other clients.
 func leaseAddr(lease *dhclient.Lease) (*netlink.Addr, error) {
@@ -380,7 +588,12 @@ func (d *DHCPMode) WaitForConnectivity(ctx context.Context, target string, timeo
 // routes that their leases configured, so a network retry starts clean.
 func (d *DHCPMode) Teardown(_ context.Context) error {
 	d.stopClients()
+	d.restarts.Wait() // a restart that began before the stop
 	d.mu.Lock()
+	for _, t := range d.expiry {
+		t.timer.Stop()
+	}
+	d.expiry = nil
 	applied := d.stale
 	for _, a := range d.nics {
 		applied = append(applied, a)

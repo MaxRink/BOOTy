@@ -33,7 +33,7 @@ func TestDHCPNetlinkLeaseAppliesTwice(t *testing.T) {
 	t.Cleanup(func() { _ = netlink.LinkDel(link) })
 
 	d := NewDHCPMode()
-	lease := &dhclient.Lease{FixedAddress: net.ParseIP("198.51.100.7")}
+	lease := live(&dhclient.Lease{FixedAddress: net.ParseIP("198.51.100.7")})
 	for attempt := 1; attempt <= 2; attempt++ {
 		leased := make(chan string, 1)
 		d.onBound(link, link.Name, leased)(lease)
@@ -81,7 +81,7 @@ func TestDHCPNetlinkLeaseReplacesOtherPrefix(t *testing.T) {
 	}
 
 	d := NewDHCPMode()
-	lease := &dhclient.Lease{FixedAddress: net.ParseIP("198.51.100.7"), Netmask: net.CIDRMask(24, 32)}
+	lease := live(&dhclient.Lease{FixedAddress: net.ParseIP("198.51.100.7"), Netmask: net.CIDRMask(24, 32)})
 	leased := make(chan string, 1)
 	d.onBound(link, link.Name, leased)(lease)
 	select {
@@ -118,7 +118,7 @@ func TestDHCPNetlinkLeasesOnTwoNICs(t *testing.T) {
 			t.Fatalf("link up: %v", err)
 		}
 		t.Cleanup(func() { _ = netlink.LinkDel(link) })
-		lease := &dhclient.Lease{FixedAddress: net.ParseIP(net4 + ".7"), Netmask: net.CIDRMask(24, 32), Router: []net.IP{net.ParseIP(net4 + ".1")}}
+		lease := live(&dhclient.Lease{FixedAddress: net.ParseIP(net4 + ".7"), Netmask: net.CIDRMask(24, 32), Router: []net.IP{net.ParseIP(net4 + ".1")}})
 		for range 2 {
 			leased := make(chan string, 1)
 			d.onBound(link, link.Name, leased)(lease)
@@ -179,9 +179,9 @@ func TestDHCPNetlinkNewAddressSameSubnet(t *testing.T) {
 	}
 	d := NewDHCPMode()
 	for _, ip := range []string{"198.51.100.7", "198.51.100.8"} {
-		d.onBound(link, link.Name, make(chan string, 1))(&dhclient.Lease{
+		d.onBound(link, link.Name, make(chan string, 1))(live(&dhclient.Lease{
 			FixedAddress: net.ParseIP(ip), Netmask: net.CIDRMask(24, 32), Router: []net.IP{net.ParseIP("198.51.100.1")},
-		})
+		}))
 	}
 	addrs, err := netlink.AddrList(link, netlink.FAMILY_V4)
 	if err != nil || len(addrs) != 1 || addrs[0].IPNet.String() != "198.51.100.8/24" {

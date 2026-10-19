@@ -201,7 +201,7 @@ func TestDHCPSetup_ContextCancelPropagates(t *testing.T) {
 
 func TestNewDHCPClientRequestsDefaultParams(t *testing.T) {
 	for _, hostname := range []string{"(none)", ""} {
-		client := newDHCPClient(&net.Interface{Name: "eth0"}, hostname, nil)
+		client := newDHCPClient(&net.Interface{Name: "eth0"}, hostname, nil, nil)
 
 		var params []byte
 		var gotHostname []byte
@@ -265,7 +265,36 @@ func lease24(ip string, router ...string) *dhclient.Lease {
 	for _, r := range router {
 		l.Router = append(l.Router, net.ParseIP(r))
 	}
+	return live(l)
+}
+
+// live gives a test lease a server identifier and a 2 min lifetime.
+func live(l *dhclient.Lease) *dhclient.Lease {
+	l.ServerID = net.IPv4(10, 0, 2, 1)
+	l.Bound = time.Now()
+	l.Renew, l.Rebind, l.Expire = l.Bound.Add(time.Minute), l.Bound.Add(105*time.Second), l.Bound.Add(2*time.Minute)
 	return l
+}
+
+// A lease without a lifetime or a server identifier is not applied, like
+// networkd: it would end at once and come back in a loop.
+func TestOnBoundRejectsLeaseWithoutLifetimeOrServer(t *testing.T) {
+	stubDHCPNetlink(t)
+	added := 0
+	dhcpAddrReplace = func(netlink.Link, *netlink.Addr) error { added++; return nil }
+	d := NewDHCPMode()
+	noLife := lease24("10.0.2.15", "10.0.2.2")
+	noLife.Expire = noLife.Bound
+	noServer := lease24("10.0.2.15", "10.0.2.2")
+	noServer.ServerID = nil
+	zeroServer := lease24("10.0.2.15", "10.0.2.2")
+	zeroServer.ServerID = net.IPv4zero
+	for _, l := range []*dhclient.Lease{noLife, noServer, zeroServer} {
+		d.onBound(dummyLink("eth0", 1), "eth0", make(chan string, 1))(l)
+	}
+	if added != 0 || len(d.nics) != 0 {
+		t.Fatalf("applied %d leases without a lifetime or server: %v", added, d.nics)
+	}
 }
 
 func TestOnBoundReplacesStateAndTeardownRemovesIt(t *testing.T) {
@@ -475,7 +504,7 @@ func TestOnBoundRenewalDropsRouteAndRestoresMask(t *testing.T) {
 
 	// Renewal with a new mask whose route fails restores the old mask.
 	failRoute = true
-	bound(&dhclient.Lease{FixedAddress: net.ParseIP("10.0.2.15"), Netmask: net.CIDRMask(16, 32), Router: []net.IP{net.ParseIP("10.0.2.2")}})
+	bound(live(&dhclient.Lease{FixedAddress: net.ParseIP("10.0.2.15"), Netmask: net.CIDRMask(16, 32), Router: []net.IP{net.ParseIP("10.0.2.2")}}))
 	if want := []string{"10.0.2.15/24", "10.0.2.15/24", "10.0.2.15/16", "10.0.2.15/24"}; !slices.Equal(set, want) {
 		t.Fatalf("addresses set = %v, want %v", set, want)
 	}
@@ -551,7 +580,7 @@ func stubDHCPSetup(t *testing.T, onBound func(name string, cb dhclient.Callback)
 	})
 	clients := map[string]*fakeDHCPClient{}
 	var mu sync.Mutex
-	dhcpNewClient = func(iface *net.Interface, _ string, cb dhclient.Callback) dhcpClient {
+	dhcpNewClient = func(iface *net.Interface, _ string, cb, _ dhclient.Callback) dhcpClient {
 		c := &fakeDHCPClient{}
 		if onBound != nil {
 			name := iface.Name
@@ -719,5 +748,328 @@ func TestOnBoundAfterStopIgnored(t *testing.T) {
 	d.onBound(dummyLink("eth0", 1), "eth0", make(chan string, 1))(lease24("10.0.2.15", "10.0.2.2"))
 	if added != 0 || len(d.nics) != 0 {
 		t.Fatalf("a lease after the stop was applied: %d addresses, %v", added, d.nics)
+	}
+}
+
+// TestOnExpireRemovesLeaseState checks RFC 2131 sections 4.4.5 and 3.2: when
+// the lease of a NIC ends (expired, or DHCPNAK) the client stops using the
+// address, so the address and default route of that NIC go and the other
+// NIC keeps its lease; the next lease of the NIC is applied again.
+func TestOnExpireRemovesLeaseState(t *testing.T) {
+	stubDHCPNetlink(t)
+	var addrs, delAddrs []*netlink.Addr
+	var delRoutes []*netlink.Route
+	dhcpAddrReplace = func(_ netlink.Link, a *netlink.Addr) error { addrs = append(addrs, a); return nil }
+	dhcpAddrDel = func(_ netlink.Link, a *netlink.Addr) error { delAddrs = append(delAddrs, a); return nil }
+	dhcpRouteAdd = func(*netlink.Route) error { return nil }
+	dhcpRouteDel = func(r *netlink.Route) error { delRoutes = append(delRoutes, r); return nil }
+	t.Cleanup(func() { setDHCPNTPServers(nil) })
+
+	d := NewDHCPMode()
+	eth0, eth1 := dummyLink("eth0", 7), dummyLink("eth1", 8)
+	bound0 := d.onBound(eth0, "eth0", make(chan string, 2))
+	bound0(lease24("10.0.2.15", "10.0.2.2"))
+	d.onBound(eth1, "eth1", make(chan string, 2))(lease24("10.0.3.15", "10.0.3.2"))
+
+	d.onExpire(eth0, "eth0")(nil)
+	if len(delAddrs) != 1 || delAddrs[0].IPNet.String() != "10.0.2.15/24" || len(delRoutes) != 1 || delRoutes[0].LinkIndex != 7 {
+		t.Fatalf("ended lease removed addrs=%v routes=%v, want 10.0.2.15/24 and its default route", delAddrs, delRoutes)
+	}
+	if _, ok := d.nics[7]; ok {
+		t.Fatal("eth0 still has lease state")
+	}
+	if _, ok := d.nics[8]; !ok {
+		t.Fatal("eth1 lost its lease")
+	}
+	d.onExpire(eth0, "eth0")(nil) // a NAK after the expiry changes nothing
+	if len(delAddrs) != 1 {
+		t.Fatalf("second end removed again: %v", delAddrs)
+	}
+
+	bound0(lease24("10.0.2.15", "10.0.2.2"))
+	if _, ok := d.nics[7]; !ok || len(addrs) != 3 {
+		t.Fatalf("new lease: %d address sets, state %v, want the address again", len(addrs), d.nics)
+	}
+}
+
+func TestNewDHCPClientSetsExpireCallback(t *testing.T) {
+	called := false
+	client := newDHCPClient(&net.Interface{Name: "eth0"}, "", nil, func(*dhclient.Lease) { called = true })
+	if client.OnExpire == nil {
+		t.Fatal("client has no OnExpire callback")
+	}
+	client.OnExpire(nil)
+	if !called {
+		t.Fatal("OnExpire is not the given callback")
+	}
+}
+
+// fakeAfterFunc records the expiry timers instead of starting them.
+type fakeAfterFunc struct {
+	funcs  []func()
+	timers []*time.Timer
+}
+
+func (f *fakeAfterFunc) install(t *testing.T) {
+	t.Helper()
+	orig := dhcpAfterFunc
+	t.Cleanup(func() { dhcpAfterFunc = orig })
+	dhcpAfterFunc = func(_ time.Duration, fn func()) *time.Timer {
+		f.funcs = append(f.funcs, fn)
+		tm := time.NewTimer(time.Hour) // never fires in the test
+		f.timers = append(f.timers, tm)
+		return tm
+	}
+}
+
+// RFC 2131 section 4.4.5: a lease that expires without a renewal ends,
+// even though go-dhclient v1.0.2 never calls OnExpire after a failed
+// renewal. Each renewal moves the expiry, and a timer of an older lease
+// does nothing.
+func TestLeaseExpiryTimerEndsLease(t *testing.T) {
+	stubDHCPNetlink(t)
+	var delAddrs []*netlink.Addr
+	dhcpAddrDel = func(_ netlink.Link, a *netlink.Addr) error { delAddrs = append(delAddrs, a); return nil }
+	t.Cleanup(func() { setDHCPNTPServers(nil) })
+	var timers fakeAfterFunc
+	timers.install(t)
+
+	d := NewDHCPMode()
+	eth0 := dummyLink("eth0", 7)
+	bound := d.onBound(eth0, "eth0", make(chan string, 4))
+	first := lease24("10.0.2.15", "10.0.2.2")
+	first.Expire = time.Now().Add(time.Hour)
+	bound(first)
+	renewed := lease24("10.0.2.15", "10.0.2.2")
+	renewed.Expire = time.Now().Add(2 * time.Hour)
+	bound(renewed)
+	if len(timers.funcs) != 2 {
+		t.Fatalf("armed %d expiry timers, want one per bound lease", len(timers.funcs))
+	}
+	timers.funcs[0]() // the timer of the first lease, after the renewal
+	if len(delAddrs) != 0 {
+		t.Fatalf("an old expiry timer removed the renewed lease: %v", delAddrs)
+	}
+	timers.funcs[1]()
+	if len(delAddrs) != 1 || delAddrs[0].IPNet.String() != "10.0.2.15/24" {
+		t.Fatalf("expiry removed %v, want 10.0.2.15/24", delAddrs)
+	}
+	if _, ok := d.nics[7]; ok {
+		t.Fatal("eth0 still has lease state after the expiry")
+	}
+}
+
+// Teardown stops the expiry timers.
+func TestTeardownStopsLeaseExpiry(t *testing.T) {
+	stubDHCPNetlink(t)
+	t.Cleanup(func() { setDHCPNTPServers(nil) })
+	var timers fakeAfterFunc
+	timers.install(t)
+	d := NewDHCPMode()
+	l := lease24("10.0.2.15", "10.0.2.2")
+	l.Expire = time.Now().Add(time.Hour)
+	d.onBound(dummyLink("eth0", 7), "eth0", make(chan string, 1))(l)
+	if err := d.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(timers.timers) != 1 || timers.timers[0].Stop() {
+		t.Fatal("Teardown did not stop the expiry timer")
+	}
+}
+
+// A delete that fails keeps the state tracked for Teardown.
+func TestEndLeaseKeepsFailedDeletesForTeardown(t *testing.T) {
+	stubDHCPNetlink(t)
+	t.Cleanup(func() { setDHCPNTPServers(nil) })
+	boom := errors.New("boom")
+	d := NewDHCPMode()
+	eth0 := dummyLink("eth0", 7)
+	d.onBound(eth0, "eth0", make(chan string, 1))(lease24("10.0.2.15", "10.0.2.2"))
+	dhcpRouteDel = func(*netlink.Route) error { return boom }
+	dhcpAddrDel = func(netlink.Link, *netlink.Addr) error { return boom }
+	d.onExpire(eth0, "eth0")(nil)
+	if len(d.stale) != 2 || d.stale[0].route == nil || d.stale[1].addr == nil {
+		t.Fatalf("stale state %+v, want the route and the address", d.stale)
+	}
+	var routes, addrs int
+	dhcpRouteDel = func(*netlink.Route) error { routes++; return nil }
+	dhcpAddrDel = func(netlink.Link, *netlink.Addr) error { addrs++; return nil }
+	if err := d.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if routes != 1 || addrs != 1 {
+		t.Fatalf("Teardown removed %d routes and %d addresses, want the stale ones", routes, addrs)
+	}
+}
+
+// Setup builds every NIC's client with the lease end callback.
+func TestClientForWiresOnExpire(t *testing.T) {
+	d := NewDHCPMode()
+	c, ok := d.clientFor(&net.Interface{Name: "eth0"}, dummyLink("eth0", 7), "", make(chan string, 1)).(*dhclient.Client)
+	if !ok || c.OnBound == nil || c.OnExpire == nil {
+		t.Fatal("the NIC client has no OnBound or OnExpire callback")
+	}
+}
+
+// fakeRestartClient counts Start and Stop; onStop runs inside Stop.
+type fakeRestartClient struct {
+	starts, stops int
+	onStop        func()
+}
+
+func (c *fakeRestartClient) Start() { c.starts++ }
+func (c *fakeRestartClient) Stop() {
+	c.stops++
+	if c.onStop != nil {
+		c.onStop()
+	}
+}
+
+// RFC 2131 section 4.4.5: after the expiry the client starts over in INIT.
+// go-dhclient keeps the old lease after failed renewals, so BOOTy replaces
+// the client of the NIC, like networkd. The old client stops without d.mu
+// held (its OnBound may wait for d.mu), and after Teardown a restart stops
+// the fresh client again.
+func TestLeaseExpiryRestartsTheClient(t *testing.T) {
+	stubDHCPNetlink(t)
+	t.Cleanup(func() { setDHCPNTPServers(nil) })
+	var timers fakeAfterFunc
+	timers.install(t)
+
+	d := NewDHCPMode()
+	eth0 := dummyLink("eth0", 7)
+	old := &fakeRestartClient{}
+	old.onStop = func() {
+		if !d.mu.TryLock() {
+			t.Error("the old client stopped with d.mu held")
+			return
+		}
+		d.mu.Unlock()
+	}
+	var fresh []*fakeRestartClient
+	start := func() dhcpClient {
+		c := &fakeRestartClient{starts: 1}
+		fresh = append(fresh, c)
+		return c
+	}
+	d.clients = map[int]*nicClient{7: {client: old, start: start}}
+	l := lease24("10.0.2.15", "10.0.2.2")
+	l.Expire = time.Now().Add(time.Hour)
+	d.onBound(eth0, "eth0", make(chan string, 2))(l)
+	timers.funcs[0]()
+	if old.stops != 1 || len(fresh) != 1 || d.clients[7] == nil || d.clients[7].client != fresh[0] {
+		t.Fatalf("old stops %d, fresh clients %d, NIC client %+v; want the old one stopped and a fresh one in place",
+			old.stops, len(fresh), d.clients[7])
+	}
+
+	if err := d.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if fresh[0].stops != 1 {
+		t.Fatalf("Teardown stopped the fresh client %d times, want once", fresh[0].stops)
+	}
+	d.restartClient(7, "eth0", &nicClient{client: &fakeRestartClient{}, start: start})
+	if len(fresh) != 1 || len(d.clients) != 0 {
+		t.Fatalf("a restart after Teardown started a client: %d fresh, %d clients", len(fresh), len(d.clients))
+	}
+	d.onBound(eth0, "eth0", make(chan string, 1))(lease24("10.0.2.16", "10.0.2.2"))
+	if len(d.nics) != 0 {
+		t.Fatalf("a lease after Teardown was applied: %+v", d.nics)
+	}
+}
+
+// A DHCPNAK (OnExpire) also stops the expiry timer; go-dhclient starts
+// over itself.
+func TestOnExpireStopsLeaseExpiryTimer(t *testing.T) {
+	stubDHCPNetlink(t)
+	t.Cleanup(func() { setDHCPNTPServers(nil) })
+	var timers fakeAfterFunc
+	timers.install(t)
+	d := NewDHCPMode()
+	eth0 := dummyLink("eth0", 7)
+	l := lease24("10.0.2.15", "10.0.2.2")
+	l.Expire = time.Now().Add(time.Hour)
+	d.onBound(eth0, "eth0", make(chan string, 1))(l)
+	d.onExpire(eth0, "eth0")(nil)
+	if len(timers.timers) != 1 || timers.timers[0].Stop() || len(d.expiry) != 0 {
+		t.Fatal("the expiry timer still runs after the DHCPNAK")
+	}
+}
+
+// Teardown waits for a client restart that began before it, and the
+// restart starts no client after the stop.
+func TestTeardownWaitsForRestart(t *testing.T) {
+	stubDHCPNetlink(t)
+	d := NewDHCPMode()
+	stopped := make(chan struct{})
+	old := &fakeRestartClient{onStop: func() { time.Sleep(300 * time.Millisecond); close(stopped) }}
+	var mu sync.Mutex
+	var fresh []*fakeRestartClient
+	start := func() dhcpClient {
+		c := &fakeRestartClient{}
+		mu.Lock()
+		fresh = append(fresh, c)
+		mu.Unlock()
+		return c
+	}
+	d.clients = map[int]*nicClient{7: {client: old, start: start}}
+	d.mu.Lock()
+	go d.takeForRestart(7, "eth0")
+	time.Sleep(50 * time.Millisecond) // the old client is stopping
+	if err := d.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-stopped:
+	default:
+		t.Fatal("Teardown returned while the restart still stopped the old client")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, c := range fresh {
+		if c.stops != 1 {
+			t.Fatalf("a fresh client runs after Teardown (stops %d)", c.stops)
+		}
+	}
+	if len(d.clients) != 0 {
+		t.Fatalf("clients after Teardown: %v", d.clients)
+	}
+}
+
+// A refused lease (no server identifier) restarts the client after a
+// backoff of 2 s, doubled per refusal; a lease resets it.
+func TestRefusedLeaseRestartsWithBackoff(t *testing.T) {
+	stubDHCPNetlink(t)
+	orig := dhcpAfterFunc
+	t.Cleanup(func() { dhcpAfterFunc = orig })
+	var waits []time.Duration
+	var fire func()
+	dhcpAfterFunc = func(d time.Duration, fn func()) *time.Timer {
+		if d <= 64*time.Second { // not the 2 min expiry timer of the lease
+			waits, fire = append(waits, d), fn
+		}
+		return time.NewTimer(time.Hour)
+	}
+	d := NewDHCPMode()
+	link := dummyLink("eth0", 1)
+	started := 0
+	start := func() dhcpClient { started++; return &fakeRestartClient{} }
+	old := &fakeRestartClient{}
+	d.clients = map[int]*nicClient{1: {client: old, start: start}}
+	refused := lease24("10.0.2.15", "10.0.2.2")
+	refused.ServerID = nil
+	bound := d.onBound(link, "eth0", make(chan string, 4))
+	bound(refused)
+	bound(refused) // a retry is pending: no second one
+	fire()
+	bound(refused)
+	fire()
+	bound(lease24("10.0.2.15", "10.0.2.2"))
+	bound(refused)
+	if want := []time.Duration{2 * time.Second, 4 * time.Second, 2 * time.Second}; !slices.Equal(waits, want) {
+		t.Fatalf("retry waits = %v, want %v", waits, want)
+	}
+	if old.stops != 1 || started != 2 {
+		t.Fatalf("old client stops %d, fresh clients %d, want 1 and 2", old.stops, started)
 	}
 }
