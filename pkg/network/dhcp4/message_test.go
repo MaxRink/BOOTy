@@ -40,6 +40,8 @@ func TestDecodeReplyChecks(t *testing.T) {
 		{"short", good[:239], false},
 		{"OFFER without yiaddr", reply4(layers.DHCPMsgTypeOffer, net.IPv4zero, sid, lt), false},
 		{"ACK without server ID", reply4(layers.DHCPMsgTypeAck, testAddr, lt), false},
+		{"ACK with server ID 0.0.0.0", reply4(layers.DHCPMsgTypeAck, testAddr, lt, layers.NewDHCPOption(layers.DHCPOptServerID, net.IPv4zero.To4())), false},
+		{"OFFER with server ID 0.0.0.0", reply4(layers.DHCPMsgTypeOffer, testAddr, lt, layers.NewDHCPOption(layers.DHCPOptServerID, net.IPv4zero.To4())), false},
 		{"ACK without lease time", reply4(layers.DHCPMsgTypeAck, testAddr, sid), false},
 		{"NAK without server ID", reply4(layers.DHCPMsgTypeNak, net.IPv4zero), false},
 		{"NAK", reply4(layers.DHCPMsgTypeNak, net.IPv4zero, sid), true},

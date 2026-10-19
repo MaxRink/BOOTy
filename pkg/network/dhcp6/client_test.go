@@ -6,6 +6,7 @@ import (
 	"net"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -298,5 +299,380 @@ func TestFirstSolicitAboveIRT(t *testing.T) {
 	}
 	if got := c.next(requestRT, 0); got != 900*time.Millisecond {
 		t.Errorf("first REQUEST RT = %s, want 0.9s", got)
+	}
+}
+
+// replyFrom is serverReply from server with the extra options.
+func replyFrom(msg []byte, typ byte, server []byte, extra ...option) []byte {
+	r := serverReply(msg, typ, false)
+	opts := parseOptions(r[4:])
+	for i := range opts {
+		if opts[i].code == optServerID {
+			opts[i].data = server
+		}
+	}
+	return encode(typ, xidOf(msg), append(opts, extra...))
+}
+
+func pref(p byte) option { return option{optPreference, []byte{p}} }
+
+// RFC 8415 18.2.9: the ADVERTISEs of the first RT are collected and the
+// one with the highest preference wins; preference 255, or an ADVERTISE
+// after the first RT, is taken at once.
+func TestAdvertisePreference(t *testing.T) {
+	a, b, cs := []byte{0, 1, 0, 1, 'a'}, []byte{0, 1, 0, 1, 'b'}, []byte{0, 1, 0, 1, 'c'}
+	for _, tt := range []struct {
+		name   string
+		advs   func(n int, msg []byte) [][]byte // the ADVERTISEs to SOLICIT n
+		server []byte
+		after  time.Duration // REQUEST time after the start
+	}{
+		{"highest preference of the first RT", func(n int, msg []byte) [][]byte {
+			return [][]byte{replyFrom(msg, msgAdvertise, a, pref(5)), replyFrom(msg, msgAdvertise, b, pref(10)), replyFrom(msg, msgAdvertise, cs)}
+		}, b, 1010 * time.Millisecond},
+		{"preference 255 at once", func(n int, msg []byte) [][]byte {
+			return [][]byte{replyFrom(msg, msgAdvertise, a, pref(10)), replyFrom(msg, msgAdvertise, b, pref(255)), replyFrom(msg, msgAdvertise, cs, pref(255))}
+		}, b, 0},
+		{"after the first RT at once", func(n int, msg []byte) [][]byte {
+			if n == 1 {
+				return nil
+			}
+			return [][]byte{replyFrom(msg, msgAdvertise, a)}
+		}, a, 1010 * time.Millisecond},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFakeNet()
+			start := f.now
+			var solicits int
+			var reqAt time.Time
+			f.answer = func(msg []byte) []byte {
+				switch msg[0] {
+				case msgSolicit:
+					solicits++
+					advs := tt.advs(solicits, msg)
+					if len(advs) == 0 {
+						return nil
+					}
+					f.queue = append(f.queue, advs[1:]...)
+					return advs[0]
+				case msgRequest:
+					if reqAt.IsZero() {
+						reqAt = f.now
+					}
+					return serverReply(msg, msgReply, false)
+				}
+				return nil
+			}
+			bound := make(chan *Lease, 1)
+			c := f.client(true)
+			c.OnBound = func(l *Lease) { bound <- l }
+			c.Start()
+			select {
+			case <-bound:
+			case <-time.After(5 * time.Second):
+				t.Fatal("no lease")
+			}
+			close(f.stopped)
+			c.Stop()
+			var req []byte
+			for _, m := range f.messages() {
+				if m[0] == msgRequest {
+					req = m
+					break
+				}
+			}
+			if sid, _ := find(parseOptions(req[4:]), optServerID); !bytes.Equal(sid, tt.server) {
+				t.Errorf("REQUEST to server %q, want %q", sid, tt.server)
+			}
+			if got := reqAt.Sub(start); got != tt.after {
+				t.Errorf("REQUEST after %s, want %s", got, tt.after)
+			}
+		})
+	}
+}
+
+// socketTransport keeps its own replies: a reply that arrives after a
+// receive timed out waits on this socket only.
+type socketTransport struct {
+	f     *fakeNet
+	queue [][]byte
+	late  []byte
+}
+
+func (s *socketTransport) send(msg []byte) error {
+	s.f.mu.Lock()
+	defer s.f.mu.Unlock()
+	s.f.sent = append(s.f.sent, msg)
+	switch {
+	case msg[0] == msgSolicit && len(s.f.sent) == 1:
+		s.late = serverReply(msg, msgAdvertise, false) // after the first RT
+	case msg[0] == msgRequest:
+		s.queue = append(s.queue, serverReply(msg, msgReply, false))
+	}
+	return nil
+}
+
+func (s *socketTransport) receive(timeout time.Duration) ([]byte, error) {
+	s.f.mu.Lock()
+	defer s.f.mu.Unlock()
+	if len(s.queue) > 0 {
+		r := s.queue[0]
+		s.queue = s.queue[1:]
+		return r, nil
+	}
+	s.f.now = s.f.now.Add(timeout)
+	if s.late != nil {
+		s.queue, s.late = append(s.queue, s.late), nil
+	}
+	return nil, errTimeout
+}
+
+func (s *socketTransport) close() error { return nil }
+
+// An ADVERTISE that answers the first SOLICIT after its RT is read on the
+// same socket during the retransmission: one socket per transaction.
+func TestLateAdvertiseSameSocket(t *testing.T) {
+	f := newFakeNet()
+	var opens int
+	bound := make(chan *Lease, 1)
+	c := f.client(true)
+	c.newTransport = func(*net.Interface) (transport, error) {
+		f.mu.Lock()
+		opens++
+		f.mu.Unlock()
+		return &socketTransport{f: f}, nil
+	}
+	c.OnBound = func(l *Lease) { bound <- l }
+	c.Start()
+	select {
+	case <-bound:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the late ADVERTISE was lost")
+	}
+	close(f.stopped)
+	c.Stop()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if opens != 1 {
+		t.Errorf("sockets opened = %d, want 1 for the transaction", opens)
+	}
+}
+
+func (f *fakeNet) countType(typ byte) int {
+	n := 0
+	for _, m := range f.messages() {
+		if m[0] == typ {
+			n++
+		}
+	}
+	return n
+}
+
+// otherServer is a second DHCPv6 server.
+var otherServer = []byte{0, 1, 0, 1, 8, 8, 8, 8}
+
+// noBindingFrom is a REPLY of server whose IA_NA has the status NoBinding.
+func noBindingFrom(msg, server []byte) []byte {
+	r := noBinding(msg)
+	opts := parseOptions(r[4:])
+	for i := range opts {
+		if opts[i].code == optServerID {
+			opts[i].data = server
+		}
+	}
+	return encode(msgReply, xidOf(msg), opts)
+}
+
+// noBinding is a REPLY whose IA_NA has the status NoBinding.
+func noBinding(msg []byte) []byte {
+	clientID, _ := find(parseOptions(msg[4:]), optClientID)
+	ia := binary.BigEndian.AppendUint32(nil, 7)
+	ia = append(ia, make([]byte, 8)...)
+	ia = append(ia, 0, byte(optStatusCode), 0, 2, 0, byte(statusNoBinding))
+	return encode(msgReply, xidOf(msg), []option{{optServerID, testServer}, {optClientID, clientID}, {optIANA, ia}})
+}
+
+// RFC 8415 18.2.10.1: NoBinding in the REPLY to a RENEW makes the client
+// send a REQUEST for the address; when the server has no binding for that
+// either, the lease ends at once (networkd) instead of rebinding.
+func TestRenewNoBindingRequests(t *testing.T) {
+	for _, answered := range []bool{true, false} {
+		f := newFakeNet()
+		f.answer = func(msg []byte) []byte {
+			switch msg[0] {
+			case msgSolicit:
+				return serverReply(msg, msgReply, true)
+			case msgRenew:
+				return noBindingFrom(msg, otherServer)
+			case msgRequest:
+				if answered {
+					return serverReply(msg, msgReply, false)
+				}
+				return noBinding(msg)
+			}
+			return nil
+		}
+		bound, expired := make(chan *Lease, 4), make(chan *Lease, 1)
+		c := f.client(true)
+		c.OnBound = func(l *Lease) { bound <- l }
+		c.OnExpire = func(l *Lease) { expired <- l }
+		c.Start()
+		<-bound
+		f.tick(t)
+		want := bound
+		if !answered {
+			want = expired // and then a new SOLICIT binds again
+		}
+		select {
+		case <-want:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("answered %v: no lease or expiry after NoBinding", answered)
+		}
+		if answered && len(expired) != 0 {
+			t.Fatal("the lease expired although the REQUEST was answered")
+		}
+		close(f.stopped)
+		c.Stop()
+		var types []byte
+		for _, m := range f.messages() {
+			if len(types) == 0 || types[len(types)-1] != m[0] {
+				types = append(types, m[0])
+			}
+		}
+		if len(types) < 3 || types[1] != msgRenew || types[2] != msgRequest || slices.Contains(types, msgRebind) || f.countType(msgRequest) != 1 {
+			t.Fatalf("answered %v: message types %v, want SOLICIT, RENEW, one REQUEST and no REBIND", answered, types)
+		}
+		req := f.messages()[2]
+		if ia, _ := find(parseOptions(req[4:]), optIANA); !bytes.Contains(ia, testAddr.To16()) {
+			t.Errorf("REQUEST IA_NA %x without the address", ia)
+		}
+		if sid, _ := find(parseOptions(req[4:]), optServerID); !bytes.Equal(sid, otherServer) {
+			t.Errorf("REQUEST to server %x, want %x that answered NoBinding", sid, otherServer)
+		}
+	}
+}
+
+// A stateless client waits the information refresh time of the REPLY
+// (option 32, at least 600 s) before it asks again; a day without it.
+func TestInformationWaitsRefreshTime(t *testing.T) {
+	for _, tt := range []struct {
+		opt  []byte
+		want time.Duration
+	}{{[]byte{0, 0, 0x0e, 0x10}, time.Hour}, {[]byte{0, 0, 0, 0}, 600 * time.Second}, {nil, 24 * time.Hour}} {
+		f := newFakeNet()
+		f.answer = func(msg []byte) []byte {
+			if msg[0] != msgInformationRequest {
+				return nil
+			}
+			r := serverReply(msg, msgReply, false)
+			if tt.opt != nil {
+				r = encode(msgReply, xidOf(msg), append(parseOptions(r[4:]), option{optInfoRefresh, tt.opt}))
+			}
+			return r
+		}
+		bound := make(chan *Lease, 2)
+		c := f.client(false)
+		c.OnBound = func(l *Lease) { bound <- l }
+		c.Start()
+		<-bound
+		var waits []time.Duration
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+			f.mu.Lock()
+			waits = slices.Clone(f.waits)
+			f.mu.Unlock()
+			if len(waits) > 0 {
+				break
+			}
+		}
+		close(f.stopped)
+		c.Stop()
+		if !slices.Equal(waits, []time.Duration{tt.want}) {
+			t.Errorf("option 32 %x: waits %v, want %s", tt.opt, waits, tt.want)
+		}
+	}
+}
+
+// The REQUEST after NoBinding stops at the end of the valid lifetime of
+// the address (180 s; NoBinding at T1, 60 s): eight REQUESTs fit, not ten.
+func TestNoBindingRequestBoundedByLifetime(t *testing.T) {
+	f := newFakeNet()
+	f.answer = func(msg []byte) []byte {
+		switch msg[0] {
+		case msgSolicit:
+			return serverReply(msg, msgReply, true)
+		case msgRenew:
+			return noBinding(msg)
+		}
+		return nil
+	}
+	bound, expired := make(chan *Lease, 4), make(chan *Lease, 1)
+	c := f.client(true)
+	c.OnBound = func(l *Lease) { bound <- l }
+	c.OnExpire = func(l *Lease) { expired <- l }
+	c.Start()
+	l := <-bound
+	f.tick(t)
+	select {
+	case <-expired:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no expiry")
+	}
+	f.mu.Lock()
+	now := f.now
+	f.mu.Unlock()
+	close(f.stopped)
+	c.Stop()
+	if n := f.countType(msgRequest); n != 8 {
+		t.Errorf("%d REQUESTs after NoBinding, want 8 within the valid lifetime", n)
+	}
+	if now.After(l.Expire) {
+		t.Errorf("the lease ended at %s, after its expiry %s", now, l.Expire)
+	}
+}
+
+// countTransport counts the sockets that are open.
+type countTransport struct {
+	fakeTransport
+	open *atomic.Int32
+}
+
+func (c *countTransport) close() error { c.open.Add(-1); return nil }
+
+// A stateless client closes its socket before the information refresh
+// wait.
+func TestInformationClosesSocketBeforeWait(t *testing.T) {
+	f := newFakeNet()
+	f.answer = func(msg []byte) []byte {
+		if msg[0] == msgInformationRequest {
+			return serverReply(msg, msgReply, false)
+		}
+		return nil
+	}
+	var open atomic.Int32
+	c := f.client(false)
+	c.newTransport = func(*net.Interface) (transport, error) {
+		open.Add(1)
+		return &countTransport{fakeTransport{f: f}, &open}, nil
+	}
+	openAtWait := make(chan int32, 1)
+	after := c.after
+	c.after = func(d time.Duration) <-chan time.Time {
+		select {
+		case openAtWait <- open.Load():
+		default:
+		}
+		return after(d)
+	}
+	c.Start()
+	var got int32
+	select {
+	case got = <-openAtWait:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no refresh wait")
+	}
+	close(f.stopped)
+	c.Stop()
+	if got != 0 {
+		t.Fatalf("%d sockets open during the information refresh wait, want 0", got)
 	}
 }

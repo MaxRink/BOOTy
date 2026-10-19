@@ -771,3 +771,110 @@ func TestBindDropsPendingReboot(t *testing.T) {
 		t.Fatalf("%d REQUESTs, want 1: no INIT-REBOOT for the lease just bound", n)
 	}
 }
+
+// otherServer is a second DHCP server on the segment.
+var otherServer = net.IPv4(192, 168, 10, 99).To4()
+
+func nakFromOther(m *message) []byte {
+	return serverReply(m, layers.DHCPMsgTypeNak, layers.NewDHCPOption(layers.DHCPOptServerID, otherServer))
+}
+
+// REQUESTING ignores a DHCPNAK from another server than that of the offer
+// and takes the ACK after it, like networkd.
+func TestNakFromOtherServerIgnoredInRequesting(t *testing.T) {
+	f := newFakeNet()
+	f.answer = func(s sent) []byte {
+		switch s.m.typ {
+		case layers.DHCPMsgTypeDiscover:
+			return serverReply(s.m, layers.DHCPMsgTypeOffer)
+		case layers.DHCPMsgTypeRequest:
+			f.queue = append(f.queue, nakFromOther(s.m)) // f.mu is held
+			return serverReply(s.m, layers.DHCPMsgTypeAck)
+		}
+		return nil
+	}
+	bound := make(chan *Lease, 1)
+	c := f.client()
+	c.OnBound = func(l *Lease) { bound <- l }
+	c.Start()
+	select {
+	case <-bound:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no lease: the NAK of another server ended the REQUEST")
+	}
+	close(f.stopped)
+	c.Stop()
+	if n := count(f.messages(), func(s sent) bool { return s.m.typ == layers.DHCPMsgTypeDiscover }); n != 1 {
+		t.Fatalf("%d DISCOVERs, want 1", n)
+	}
+}
+
+// REBOOTING ignores a DHCPNAK from another server than that of the lease.
+func TestNakFromOtherServerIgnoredInRebooting(t *testing.T) {
+	f := newFakeNet()
+	f.answer = func(s sent) []byte {
+		switch {
+		case s.m.typ == layers.DHCPMsgTypeDiscover:
+			return serverReply(s.m, layers.DHCPMsgTypeAck, layers.NewDHCPOption(optRapidCommit, nil))
+		case s.m.typ == layers.DHCPMsgTypeRequest && s.kind == "broadcast":
+			f.queue = append(f.queue, nakFromOther(s.m))
+			return serverReply(s.m, layers.DHCPMsgTypeAck)
+		}
+		return nil
+	}
+	bound := make(chan *Lease, 4)
+	c := f.client()
+	c.OnBound = f.bound(bound)
+	c.Start()
+	<-bound
+	f.boundWait(t)
+	c.Reboot()
+	<-bound
+	close(f.stopped)
+	c.Stop()
+	if n := count(f.messages(), func(s sent) bool { return s.m.typ == layers.DHCPMsgTypeDiscover }); n != 1 {
+		t.Fatalf("%d DISCOVERs: the NAK of another server ended the INIT-REBOOT", n)
+	}
+}
+
+// A wake-up token without the reboot flag (the run loop took the flag
+// before Reboot sent the token) does not start a second INIT-REBOOT: the
+// bound client waits again.
+func TestStaleRebootTokenNoInitReboot(t *testing.T) {
+	f := newFakeNet()
+	f.answer = func(s sent) []byte {
+		if s.m.typ == layers.DHCPMsgTypeDiscover {
+			return serverReply(s.m, layers.DHCPMsgTypeAck, layers.NewDHCPOption(optRapidCommit, nil))
+		}
+		return nil
+	}
+	bound := make(chan *Lease, 4)
+	c := f.client()
+	c.OnBound = func(l *Lease) { bound <- l }
+	c.Start()
+	<-bound
+	waitLen := func(n int) {
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+			f.mu.Lock()
+			got := len(f.waits)
+			f.mu.Unlock()
+			if got >= n {
+				return
+			}
+		}
+	}
+	waitLen(1) // the wait for T1
+	waits := 1
+	c.reboot <- struct{}{} // the stale token
+	waitLen(2)             // the next wait: for T1 again, or of the INIT-REBOOT
+	close(f.stopped)
+	c.Stop()
+	if n := count(f.messages(), func(s sent) bool { return s.m.typ == layers.DHCPMsgTypeRequest }); n != 0 {
+		t.Fatalf("%d REQUESTs after a stale token, want none", n)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.waits) <= waits {
+		t.Fatal("the bound client does not wait again after the stale token")
+	}
+}

@@ -174,6 +174,10 @@ func TestInfoRefresh(t *testing.T) {
 	if err != nil || r.lease.InfoRefresh != time.Hour {
 		t.Fatalf("InfoRefresh = %s, %v", r.lease.InfoRefresh, err)
 	}
+	r, err = decode(encode(msgReply, 1, []option{{optServerID, testServer}, client, {optInfoRefresh, []byte{0, 0, 0, 0}}}), 7, time.Now())
+	if err != nil || r.lease.InfoRefresh != 600*time.Second {
+		t.Fatalf("InfoRefresh of 0 = %s, %v; want 600s (IRT_MINIMUM)", r.lease.InfoRefresh, err)
+	}
 	for in, want := range map[time.Duration]time.Duration{0: 24 * time.Hour, time.Minute: 600 * time.Second, time.Hour: time.Hour} {
 		if got := infoRefresh(in); got != want {
 			t.Errorf("infoRefresh(%s) = %s, want %s", in, got, want)

@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -1652,5 +1653,127 @@ func TestSourceRoutesSkipHostRoutes(t *testing.T) {
 	got := sourceRoutes(main, link, addr)
 	if len(got) != 2 || routeDst(got[0]) != "10.0.2.0/24" || got[1].Gw == nil || got[0].Table != 10007 || got[1].Table != 10007 {
 		t.Fatalf("source routes = %v", got)
+	}
+}
+
+// A failed link watch subscribes again: the done channel of the old
+// subscription closes (upstream netlink keeps its socket until then) and
+// the new one lists the links, so NICs whose events were lost are seen.
+func TestLinkWatchResubscribes(t *testing.T) {
+	stubDHCPSetup(t, func(name string, cb dhcp4.Callback) {
+		if name == "eth0" {
+			cb(lease24("10.0.2.15", "10.0.2.2"))
+		}
+	})
+	type sub struct {
+		done <-chan struct{}
+		list bool
+	}
+	subs := make(chan sub, 2)
+	var calls atomic.Int32
+	dhcpSubscribe = func(ch chan<- netlink.LinkUpdate, done <-chan struct{}, o netlink.LinkSubscribeOptions) error {
+		subs <- sub{done, o.ListExisting}
+		if calls.Add(1) == 1 {
+			close(ch) // the receive failed (ENOBUFS)
+			return nil
+		}
+		go func() { <-done; close(ch) }()
+		return nil
+	}
+	d := NewDHCPMode()
+	if err := d.Setup(context.Background(), &Config{}); err != nil {
+		t.Fatal(err)
+	}
+	first, second := <-subs, <-subs
+	select {
+	case <-first.done:
+	case <-time.After(time.Second):
+		t.Fatal("the failed subscription is not closed")
+	}
+	if first.list || !second.list {
+		t.Errorf("ListExisting = %v, %v; want only the second subscription to list the links", first.list, second.list)
+	}
+	if err := d.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-second.done:
+	case <-time.After(time.Second):
+		t.Fatal("Teardown does not close the subscription")
+	}
+}
+
+// The link watch handles the carrier of a NIC with a client first: no NIC
+// listing, and a cache entry that marks its key as no NIC does not hide it.
+func TestLinkUpdateCarrierFirst(t *testing.T) {
+	stubDHCPNetlink(t)
+	orig := dhcpInterfaces
+	t.Cleanup(func() { dhcpInterfaces = orig })
+	lookups := 0
+	dhcpInterfaces = func(context.Context) ([]net.Interface, error) { lookups++; return nil, nil }
+	d := NewDHCPMode()
+	fc := &fakeDHCPClient{}
+	d.clients = map[int]*nicClient{1: {client: fc, link: dummyLink("eth0", 1), down: true}}
+	u := netlink.LinkUpdate{Link: dummyLink("eth0", 1)}
+	u.Header.Type = unix.RTM_NEWLINK
+	u.Flags = unix.IFF_UP | unix.IFF_LOWER_UP
+	d.linkUpdate(u, map[linkKey]bool{{1, "eth0"}: true}, "h", make(chan string, 1))
+	d.bg.Wait()
+	if fc.reboots != 1 || lookups != 0 {
+		t.Fatalf("reboots %d, NIC lookups %d; want the INIT-REBOOT and no lookup", fc.reboots, lookups)
+	}
+}
+
+// The link watch logs a failed receive (it subscribes again), skips a
+// message of another sender without the warning, and says nothing once the
+// subscription is closed (Teardown).
+func TestLinkWatchErrors(t *testing.T) {
+	var buf bytes.Buffer
+	d := NewDHCPMode()
+	d.log = slog.New(slog.NewTextHandler(&buf, nil)) // Info and up
+	sub := make(chan struct{})
+	logErr := d.linkWatchError(sub)
+	logErr(errors.New("Wrong sender portid 1234, expected 0"))
+	if buf.Len() != 0 {
+		t.Fatalf("a message of another sender logged %q", buf.String())
+	}
+	logErr(errors.New("Receive failed: no buffer space available"))
+	if !strings.Contains(buf.String(), "subscribing again") {
+		t.Fatalf("a failed receive logged %q", buf.String())
+	}
+	buf.Reset()
+	close(sub)
+	logErr(errors.New("Receive failed: use of closed file"))
+	if buf.Len() != 0 {
+		t.Fatalf("the closed subscription logged %q", buf.String())
+	}
+}
+
+// When Setup fails after the link watch started (no NIC list), the watch
+// stops: its subscription closes.
+func TestSetupFailureStopsLinkWatch(t *testing.T) {
+	stubDHCPNetlink(t)
+	origIfaces, origSub := dhcpInterfaces, dhcpSubscribe
+	t.Cleanup(func() { dhcpInterfaces, dhcpSubscribe = origIfaces, origSub })
+	dhcpInterfaces = func(context.Context) ([]net.Interface, error) { return nil, errors.New("no sysfs") }
+	subs := make(chan (<-chan struct{}), 1)
+	dhcpSubscribe = func(ch chan<- netlink.LinkUpdate, done <-chan struct{}, _ netlink.LinkSubscribeOptions) error {
+		subs <- done
+		go func() { <-done; close(ch) }()
+		return nil
+	}
+	d := NewDHCPMode()
+	if err := d.Setup(context.Background(), &Config{}); err == nil {
+		t.Fatal("Setup without a NIC list succeeded")
+	}
+	select {
+	case done := <-subs:
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("the link watch runs on after the failed Setup")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no link watch")
 	}
 }

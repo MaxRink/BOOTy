@@ -13,6 +13,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"net"
+	"slices"
 	"sync"
 	"time"
 )
@@ -138,55 +139,89 @@ func (c *Client) stopped() bool {
 func (c *Client) run() {
 	defer close(c.done)
 	for !c.stopped() {
-		if !c.Stateful {
-			c.information()
-			continue
-		}
 		c.mu.Lock()
 		l := c.lease
 		c.mu.Unlock()
-		if l == nil {
+		switch {
+		case !c.Stateful:
+			c.information()
+		case l == nil:
 			c.solicit()
-			continue
+		default:
+			c.extend(l)
 		}
-		c.extend(l)
+		c.endTransaction()
 	}
 }
 
 // solicit runs SOLICIT (rapid commit) and, after an ADVERTISE, REQUEST.
+// During the first retransmission timeout it collects the ADVERTISEs and
+// requests from the one with the highest preference; preference 255 or an
+// ADVERTISE after the first timeout ends the wait at once (RFC 8415
+// 18.2.9, like sd-dhcp6-client client_receive_advertise). A REPLY with
+// rapid commit binds at once.
 func (c *Client) solicit() {
 	start, xid := c.now(), rand.Uint32()&0xffffff //nolint:gosec // a transaction ID
 	var rt time.Duration
-	for !c.stopped() {
+	var best *reply
+	for n := 1; !c.stopped(); n++ {
 		rt = c.next(solicitRT, rt)
-		r, err := c.exchange(func() []byte { return c.solicitMsg(xid, start) }, xid, rt, msgAdvertise, msgReply)
+		var bound *Lease
+		_ = c.exchange(func() []byte { return c.solicitMsg(xid, start) }, xid, rt, func(r reply) bool {
+			switch {
+			case r.typ == msgReply && r.rapidCommit && r.hasAddr:
+				bound = &r.lease
+				return true
+			case r.typ == msgAdvertise && r.hasAddr && r.status == 0:
+				if best == nil || r.pref > best.pref {
+					best = &r
+				}
+				return r.pref == 255 || n > 1
+			}
+			return false
+		}, msgAdvertise, msgReply)
 		switch {
-		case err != nil:
-			continue
-		case r.typ == msgReply && r.rapidCommit && r.hasAddr:
-			c.bind(&r.lease)
+		case c.stopped():
 			return
-		case r.typ == msgAdvertise && r.hasAddr && r.status == 0:
-			c.request(&r.lease)
+		case bound != nil:
+			c.bind(bound)
+			return
+		case best != nil:
+			c.request(&best.lease, time.Time{})
 			return
 		}
 	}
 }
 
-// request asks for an advertised address, up to ten times.
-func (c *Client) request(adv *Lease) {
+// request asks for an advertised (or, after NoBinding, the current)
+// address, up to ten times, until a REPLY with NoBinding or until until
+// (when set: the end of the valid lifetime of the current address); it
+// tells whether a REPLY bound it.
+func (c *Client) request(adv *Lease, until time.Time) bool {
 	start, xid := c.now(), rand.Uint32()&0xffffff //nolint:gosec // a transaction ID
 	var rt time.Duration
 	for n := 0; n < 10 && !c.stopped(); n++ {
 		rt = c.next(requestRT, rt)
-		r, err := c.exchange(func() []byte {
+		if !until.IsZero() {
+			left := until.Sub(c.now())
+			if left <= 0 {
+				return false
+			}
+			rt = min(rt, left)
+		}
+		r, err := c.exchangeOne(func() []byte {
 			return encode(msgRequest, xid, c.withTail(start, option{optServerID, adv.ServerID}, iaOption(optIANA, c.IAID, adv)))
 		}, xid, rt, msgReply)
-		if err == nil && r.hasAddr {
+		switch {
+		case err != nil:
+		case r.iaStatus == statusNoBinding:
+			return false // like networkd: start over
+		case r.hasAddr:
 			c.bind(&r.lease)
-			return
+			return true
 		}
 	}
+	return false
 }
 
 // extend waits for T1, renews until T2, rebinds until the valid lifetime
@@ -201,8 +236,12 @@ func (c *Client) extend(l *Lease) {
 		typ   byte
 		until time.Time
 	}{{msgRenew, l.Rebind}, {msgRebind, l.Expire}} {
-		if c.phase(l, phase.typ, phase.until) || c.stopped() {
+		bound, noBinding := c.phase(l, phase.typ, phase.until)
+		if bound || c.stopped() {
 			return
+		}
+		if noBinding {
+			break
 		}
 	}
 	c.mu.Lock()
@@ -214,17 +253,20 @@ func (c *Client) extend(l *Lease) {
 }
 
 // phase sends RENEW or REBIND until a REPLY binds the address or until is
-// reached; it tells whether the address is bound again.
-func (c *Client) phase(l *Lease, typ byte, until time.Time) bool {
+// reached; it tells whether the address is bound again. A REPLY with
+// NoBinding for the IA makes the client send a REQUEST to that server
+// (RFC 8415 18.2.10.1); noBinding then tells that the REQUEST failed too,
+// and the lease ends at once, like networkd ends it on NoBinding.
+func (c *Client) phase(l *Lease, typ byte, until time.Time) (bound, noBinding bool) {
 	start, xid := c.now(), rand.Uint32()&0xffffff //nolint:gosec // a transaction ID
 	var rt time.Duration
 	for !c.stopped() {
 		left := until.Sub(c.now())
 		if left <= 0 {
-			return false
+			return false, false
 		}
 		rt = min(c.next(renewRT, rt), left)
-		r, err := c.exchange(func() []byte {
+		r, err := c.exchangeOne(func() []byte {
 			opts := []option{iaOption(optIANA, c.IAID, l)}
 			if typ == msgRenew {
 				opts = append([]option{{optServerID, l.ServerID}}, opts...)
@@ -235,12 +277,18 @@ func (c *Client) phase(l *Lease, typ byte, until time.Time) bool {
 			opts = append(opts, oro(optDNSServers, optSNTPServers, optNTPServer, optCaptivePortal), option{optClientID, c.DUID}, elapsed(c.now().Sub(start)))
 			return encode(typ, xid, opts)
 		}, xid, rt, msgReply)
-		if err == nil && r.hasAddr {
+		switch {
+		case err != nil:
+		case r.iaStatus == statusNoBinding:
+			req := *l
+			req.ServerID = r.lease.ServerID
+			return c.request(&req, l.Expire), true
+		case r.hasAddr:
 			c.bind(&r.lease)
-			return true
+			return true, false
 		}
 	}
-	return false
+	return false, false
 }
 
 // infoRefresh is the wait before the next INFORMATION-REQUEST: option 32,
@@ -260,7 +308,7 @@ func (c *Client) information() {
 	var rt time.Duration
 	for !c.stopped() {
 		rt = c.next(infoRT, rt)
-		r, err := c.exchange(func() []byte {
+		r, err := c.exchangeOne(func() []byte {
 			return encode(msgInformationRequest, xid, []option{
 				oro(optDNSServers, optSNTPServers, optNTPServer, optCaptivePortal), {optClientID, c.DUID}, elapsed(c.now().Sub(start)),
 			})
@@ -271,6 +319,7 @@ func (c *Client) information() {
 		if c.OnBound != nil {
 			c.OnBound(&r.lease)
 		}
+		c.endTransaction()
 		select {
 		case <-c.stop:
 		case <-c.after(infoRefresh(r.lease.InfoRefresh)):
@@ -346,44 +395,53 @@ func (c *Client) release() {
 	}
 }
 
-// exchange sends the message of build and waits up to timeout for a reply
-// of one of the types with the transaction ID and our client ID.
-func (c *Client) exchange(build func() []byte, xid uint32, timeout time.Duration, types ...byte) (reply, error) {
+// exchangeOne returns the first reply of one of the types.
+func (c *Client) exchangeOne(build func() []byte, xid uint32, timeout time.Duration, types ...byte) (reply, error) {
+	var r reply
+	err := c.exchange(build, xid, timeout, func(x reply) bool { r = x; return true }, types...)
+	return r, err
+}
+
+// exchange sends the message of build and passes every reply of one of the
+// types with the transaction ID and our client ID to take, until take
+// returns true (nil) or timeout ends. The socket stays open for the whole
+// transaction (endTransaction closes it), so a late reply to an earlier
+// transmission is still read (RFC 8415 section 15).
+func (c *Client) exchange(build func() []byte, xid uint32, timeout time.Duration, take func(reply) bool, types ...byte) error {
 	tr, err := c.open()
 	if err != nil {
-		return reply{}, c.pause(timeout)
+		return c.pause(timeout)
 	}
-	defer c.closeTransport(tr)
 	msg := build()
 	c.Log.Debug("DHCPv6 send", "type", msg[0], "wait", timeout)
 	if err := tr.send(msg); err != nil {
 		c.Log.Debug("DHCPv6 send", "error", err)
-		return reply{}, c.pause(timeout)
+		c.closeTransport(tr)
+		return c.pause(timeout)
 	}
 	deadline := c.now().Add(timeout)
 	for {
 		left := deadline.Sub(c.now())
 		if left <= 0 {
-			return reply{}, errTimeout
+			return errTimeout
 		}
 		b, err := tr.receive(left)
 		if c.stopped() {
-			return reply{}, errStopped
+			return errStopped
 		}
 		if err != nil {
 			if errors.Is(err, errTimeout) {
-				return reply{}, err
+				return err
 			}
-			return reply{}, c.pause(left)
+			c.closeTransport(tr)
+			return c.pause(left)
 		}
 		r, err := decode(b, c.IAID, c.now())
-		if err != nil || r.xid != xid || !bytes.Equal(r.clientID, c.DUID) {
+		if err != nil || r.xid != xid || !bytes.Equal(r.clientID, c.DUID) || !slices.Contains(types, r.typ) {
 			continue
 		}
-		for _, t := range types {
-			if r.typ == t {
-				return r, nil
-			}
+		if take(r) {
+			return nil
 		}
 	}
 }
@@ -397,7 +455,14 @@ func (c *Client) pause(d time.Duration) error {
 	}
 }
 
+// open returns the socket of the transaction, opening one if needed.
 func (c *Client) open() (transport, error) {
+	c.mu.Lock()
+	tr := c.tr
+	c.mu.Unlock()
+	if tr != nil {
+		return tr, nil
+	}
 	tr, err := c.newTransport(c.Iface)
 	if err != nil {
 		return nil, err
@@ -410,6 +475,16 @@ func (c *Client) open() (transport, error) {
 	}
 	c.tr = tr
 	return tr, nil
+}
+
+// endTransaction closes the socket of the transaction.
+func (c *Client) endTransaction() {
+	c.mu.Lock()
+	tr := c.tr
+	c.mu.Unlock()
+	if tr != nil {
+		c.closeTransport(tr)
+	}
 }
 
 func (c *Client) closeTransport(tr transport) {

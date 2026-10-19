@@ -140,7 +140,8 @@ func (r *reply) usable(hasLease bool) bool {
 	switch r.typ {
 	case layers.DHCPMsgTypeOffer, layers.DHCPMsgTypeAck:
 		yi := r.lease.FixedAddress
-		return yi != nil && !yi.IsUnspecified() && r.lease.ServerID != nil && hasLease && !r.overload
+		sid := r.lease.ServerID // networkd: server_address == 0 is no server
+		return yi != nil && !yi.IsUnspecified() && sid != nil && !sid.IsUnspecified() && hasLease && !r.overload
 	case layers.DHCPMsgTypeNak:
 		return r.lease.ServerID != nil
 	default:

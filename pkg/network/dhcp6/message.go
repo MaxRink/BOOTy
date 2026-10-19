@@ -27,6 +27,7 @@ const (
 	optIANA          uint16 = 3
 	optIAAddr        uint16 = 5
 	optORO           uint16 = 6
+	optPreference    uint16 = 7
 	optElapsedTime   uint16 = 8
 	optStatusCode    uint16 = 13
 	optRapidCommit   uint16 = 14
@@ -41,6 +42,10 @@ const (
 	optCaptivePortal uint16 = 103
 )
 
+// statusNoBinding is the status code of an IA the server has no binding
+// for (RFC 8415 section 21.13).
+const statusNoBinding uint16 = 3
+
 // Lease is the address a REPLY assigns (IA_NA) and its options.
 type Lease struct {
 	Addr      net.IP
@@ -49,8 +54,8 @@ type Lease struct {
 	ServerID  []byte
 	DNS       []net.IP
 	Domains   []string
-	// InfoRefresh is the information refresh time (option 32) of a
-	// stateless REPLY, 0 when absent.
+	// InfoRefresh is the information refresh time (option 32, at least
+	// 600 s) of a stateless REPLY, 0 when absent.
 	InfoRefresh time.Duration
 
 	Bound  time.Time
@@ -105,6 +110,8 @@ type reply struct {
 	clientID    []byte
 	rapidCommit bool
 	status      uint16 // top-level status code, 0 = success
+	iaStatus    uint16 // status code of our IA_NA, 0 = success
+	pref        byte   // server preference (option 7), 0 when absent
 	lease       Lease
 	hasAddr     bool
 }
@@ -128,6 +135,9 @@ func decode(b []byte, iaid uint32, now time.Time) (reply, error) {
 		return reply{}, errNoServer
 	}
 	_, r.rapidCommit = find(opts, optRapidCommit)
+	if p, ok := find(opts, optPreference); ok && len(p) == 1 {
+		r.pref = p[0]
+	}
 	if st, ok := find(opts, optStatusCode); ok && len(st) >= 2 {
 		r.status = binary.BigEndian.Uint16(st)
 	}
@@ -139,10 +149,18 @@ func decode(b []byte, iaid uint32, now time.Time) (reply, error) {
 	r.lease.otherOptions(opts)
 	for _, o := range opts {
 		if o.code == optIANA && len(o.data) >= 12 && binary.BigEndian.Uint32(o.data) == iaid {
-			r.hasAddr = r.lease.ia(o.data, now)
+			r.iaNA(o.data, now)
 		}
 	}
 	return r, nil
+}
+
+// iaNA reads our IA_NA: its status code and its address.
+func (r *reply) iaNA(b []byte, now time.Time) {
+	if st, ok := find(parseOptions(b[12:]), optStatusCode); ok && len(st) >= 2 {
+		r.iaStatus = binary.BigEndian.Uint16(st)
+	}
+	r.hasAddr = r.lease.ia(b, now)
 }
 
 // otherOptions reads the domain search list (24) and the information
@@ -152,7 +170,8 @@ func (l *Lease) otherOptions(opts []option) {
 		l.Domains = domainList(dl)
 	}
 	if v, ok := find(opts, optInfoRefresh); ok && len(v) == 4 {
-		l.InfoRefresh = time.Duration(binary.BigEndian.Uint32(v)) * time.Second
+		// At least IRT_MINIMUM, also for 0 (RFC 8415 21.23).
+		l.InfoRefresh = max(time.Duration(binary.BigEndian.Uint32(v))*time.Second, 600*time.Second)
 	}
 }
 

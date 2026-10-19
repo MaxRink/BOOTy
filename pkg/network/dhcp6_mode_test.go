@@ -36,12 +36,13 @@ func stubDHCPv6(t *testing.T) *dhcp6Stub {
 	stubDHCPNetlink(t)
 	s := &dhcp6Stub{}
 	origRA, origNew, origAdd, origDel := dhcp6WatchRA, dhcp6New, dhcp6AddrAdd, dhcp6AddrDel
-	origRS, origWait := dhcp6SendRS, dhcp6RSWait
+	origRS, origWait, origDelay := dhcp6SendRS, dhcp6RSWait, dhcp6RSDelay
 	t.Cleanup(func() {
 		dhcp6WatchRA, dhcp6New, dhcp6AddrAdd, dhcp6AddrDel = origRA, origNew, origAdd, origDel
-		dhcp6SendRS, dhcp6RSWait = origRS, origWait
+		dhcp6SendRS, dhcp6RSWait, dhcp6RSDelay = origRS, origWait, origDelay
 	})
 	dhcp6RSWait = 20 * time.Millisecond
+	dhcp6RSDelay = func() time.Duration { return 0 }
 	dhcp6SendRS = func(string, net.HardwareAddr) error { s.mu.Lock(); s.rs++; s.mu.Unlock(); return nil }
 	dhcp6WatchRA = func(ctx context.Context, _ *net.Interface, fn func(bool, bool)) error {
 		s.ra = fn
@@ -244,4 +245,36 @@ func TestDHCPv6LinkLocalDNSAndDomains(t *testing.T) {
 	if want := []string{"fe80::1%eth0 search v6.example"}; !slices.Equal(s.written, want) {
 		t.Fatalf("resolv.conf = %q, want %q", s.written, want)
 	}
+}
+
+// The first router solicitation after a carrier return waits 0.5 s to 1 s
+// (RFC 4861 6.3.7 MAX_RTR_SOLICITATION_DELAY, sd-ndisc starts at 0.5 s).
+func TestRouterSolicitationDelay(t *testing.T) {
+	for range 100 {
+		if d := dhcp6RSDelay(); d < 500*time.Millisecond || d >= time.Second {
+			t.Fatalf("dhcp6RSDelay() = %s, want 0.5 s to 1 s", d)
+		}
+	}
+	stubDHCPv6(t)
+	sent := make(chan time.Time, 3)
+	dhcp6SendRS = func(string, net.HardwareAddr) error { sent <- time.Now(); return nil }
+	dhcp6RSDelay = func() time.Duration { return 150 * time.Millisecond }
+	d := NewDHCPMode()
+	link := dummyLink("eth0", 1)
+	d.clients = map[int]*nicClient{1: {client: &fakeDHCPClient{}, link: link}}
+	d.v6 = map[int]*nic6{1: {link: link}}
+	d.watchDone = make(chan struct{})
+	start := time.Now()
+	ended := make(chan struct{})
+	go func() { d.solicitRA(1); close(ended) }()
+	select {
+	case at := <-sent:
+		if at.Sub(start) < 150*time.Millisecond {
+			t.Fatalf("the first RS after %s, want the delay of 150 ms", at.Sub(start))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no router solicitation")
+	}
+	close(d.watchDone)
+	<-ended
 }

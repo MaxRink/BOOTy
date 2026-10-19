@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math/rand/v2"
 	"net"
 	"slices"
 	"sync"
@@ -55,6 +56,13 @@ var (
 	dhcp6AddrDel = netlink.AddrDel
 	dhcp6SendRS  = sendRS
 	dhcp6RSWait  = 4 * time.Second // RTR_SOLICITATION_INTERVAL, RFC 4861
+	// dhcp6RSDelay is the wait before the first router solicitation:
+	// sd-ndisc sends it 0.5 s after the start with 1 s timer accuracy, and
+	// RFC 4861 6.3.7 asks for a random delay of up to
+	// MAX_RTR_SOLICITATION_DELAY (1 s): 0.5 s to 1 s, random.
+	dhcp6RSDelay = func() time.Duration {
+		return 500*time.Millisecond + rand.N(500*time.Millisecond) //nolint:gosec // timing jitter
+	}
 )
 
 // listenICMPv6 opens an ICMPv6 socket bound to the NIC.
@@ -295,8 +303,17 @@ func (d *DHCPMode) stop6(idx int, all bool) {
 // which starts DHCPv6 again: networkd restarts its NDisc client with the
 // carrier and sends router solicitations (captured in the CAPRF L2 fault
 // windows); the kernel sends them only when the link comes up. It tries
-// three times, 4 s apart (RFC 4861), until a client runs.
+// three times, 4 s apart (RFC 4861), until a client runs, the first time
+// after dhcp6RSDelay.
 func (d *DHCPMode) solicitRA(idx int) {
+	d.mu.Lock()
+	done := d.watchDone
+	d.mu.Unlock()
+	select {
+	case <-done:
+		return
+	case <-time.After(dhcp6RSDelay()):
+	}
 	for range 3 {
 		d.mu.Lock()
 		n, nc, done := d.v6[idx], d.clients[idx], d.watchDone
