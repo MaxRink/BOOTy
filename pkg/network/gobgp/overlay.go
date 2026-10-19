@@ -902,7 +902,7 @@ func (o *OverlayTier) handleType3Path(p *apipb.Path, route *apipb.EVPNInclusiveM
 func (o *OverlayTier) processType5Update(p *apipb.Path, route *apipb.EVPNIPPrefixRoute, vtep string, withdraw bool) {
 	routerMAC, err := extractRouterMAC(p)
 	converted := false
-	if reason := type5Unusable(route, err); reason != "" && !withdraw {
+	if reason := type5Unusable(route, err, o.type5LocalVNI()); reason != "" && !withdraw {
 		// The update replaces the path of the same route key, so the
 		// old path goes too, as for a withdraw (RFC 7606 section 2).
 		o.log.Warn("type-5 route treated as withdraw", "prefix", route.GetIpPrefix(), "len", route.GetIpPrefixLen(),
@@ -930,7 +930,11 @@ func (o *OverlayTier) processType5Update(p *apipb.Path, route *apipb.EVPNIPPrefi
 //     use; the RFC treats it as withdraw when it has no overlay index.
 //   - An ESI overlay index with a label: installed through the BGP next
 //     hop, like FRR (the RFC asks for a Type-1 resolution first).
-func type5Unusable(route *apipb.EVPNIPPrefixRoute, macErr error) string {
+//   - In the L3VNI (Type-5-only) mode, a label other than the local VNI
+//     without a gateway IP: zebra sees a D-VNI next hop and installs it
+//     only on a single VXLAN device, which BOOTy does not use, so FRR does
+//     not install the route either (localVNI 0 skips the check).
+func type5Unusable(route *apipb.EVPNIPPrefixRoute, macErr error, localVNI uint32) string {
 	esi := route.GetEsi()
 	esiSet := esi.GetType() != 0 || slices.ContainsFunc(esi.GetValue(), func(b byte) bool { return b != 0 })
 	gw := net.ParseIP(route.GetGwAddress())
@@ -942,8 +946,23 @@ func type5Unusable(route *apipb.EVPNIPPrefixRoute, macErr error) string {
 		return "both ESI and gateway IP are set"
 	case !gwSet && route.GetLabel() == 0:
 		return "label is zero without a gateway IP overlay index"
+	case !gwSet && localVNI != 0 && route.GetLabel() != localVNI:
+		return fmt.Sprintf("VNI %d is not the local L3VNI %d", route.GetLabel(), localVNI)
 	}
 	return ""
+}
+
+// type5LocalVNI is the VNI a received Type-5 route must carry, or 0 for no
+// check. It applies only in the Type-5-only (L3VNI) mode, where the
+// provision VNI is the L3VNI of the VRF, like FRR's VRF L3VNI. In the
+// "Type-5 with gateway" and L2 modes the provision VNI is an L2VNI; FRR
+// imports no Type-5 routes there at all (a VRF without L3VNI), so BOOTy
+// keeps its current handling instead of guessing a VNI.
+func (o *OverlayTier) type5LocalVNI() uint32 {
+	if o.cfg == nil || !o.cfg.Type5Only {
+		return 0
+	}
+	return uint32(o.cfg.ProvisionVNI) //nolint:gosec // validated 1..16777215
 }
 
 // handleType5Route installs or removes a kernel route for an IP prefix
