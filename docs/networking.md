@@ -912,7 +912,8 @@ locally assigned port ID unchanged; check it on a leaf before relying on it.
 Fabric NICs are the NICs in `BGP_INTERFACES`, or all detected physical NICs
 when it is empty. BOOTy waits up to 10 s for the listed NICs. In unnumbered
 and dual mode, BOOTy sends an IPv6 Router Advertisement on each fabric NIC
-every 10 s, so that FRR peers learn the BOOTy link-local address. Teardown
+every 10 s with router lifetime 30 s (zebra's default for that interval),
+so that FRR peers learn the BOOTy link-local address. Teardown
 stops these RAs with a final RA with router lifetime 0 (RFC 4861 section
 6.2.5), so no neighbor keeps BOOTy as a default router.
 

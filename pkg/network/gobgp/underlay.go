@@ -54,8 +54,13 @@ const (
 	// defaultHopLimit is the default IPv6 Cur Hop Limit advertised in RAs.
 	defaultHopLimit = 64
 
-	// raLifetime is the router lifetime of the periodic RAs in seconds.
-	raLifetime = 1800
+	// raLifetime is the router lifetime of the periodic RAs in seconds,
+	// like zebra: without a configured lifetime it sends
+	// MAX(1, 0.003 * MaxRtrAdvInterval in ms) (zebra/rtadv.c), 30 s for the
+	// 10 s interval that bgpd sets for unnumbered peers
+	// (BGP_UNNUM_DEFAULT_RA_INTERVAL). RFC 4861 6.2.1 allows 0 or
+	// MaxRtrAdvInterval to 9000 s.
+	raLifetime = uint16(3 * raInterval / time.Second)
 
 	// mandatedHopLimit is the hop limit mandated by RFC 4861 §6.1.2.
 	// FRR's zebra silently drops RAs with any other value.
