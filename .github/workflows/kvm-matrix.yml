@@ -330,6 +330,12 @@ jobs:
             setup: ""
           - scenario: mirror-boot-failover
             qemu_extra: ""
+            # Linux 6.19+ stores a logical block size in new md superblocks that the
+            # target OS kernel (<= 6.18) refuses, so provision with a pinned 6.8
+            # kernel instead of the runner kernel (7.x since runner image 20261018).
+            kernel_debs: |
+              b1f19b3c6ce0684e6884fec1abb9b88bc55362b37147d03a75d8ef0244a820f1  https://launchpad.net/ubuntu/+archive/primary/+files/linux-image-6.8.0-1071-azure_6.8.0-1071.79_amd64.deb
+              d27fd905b01bf76b8a14c9ac88eb55c76a79f8025a7c2c15b8481ac786153ce0  https://launchpad.net/ubuntu/+archive/primary/+files/linux-modules-6.8.0-1071-azure_6.8.0-1071.79_amd64.deb
             test_tag: e2e
             test_regex: "^TestMirroredRootBootFailoverVM$"
             # Two subtests of at most 8 + 6 + 6 minutes plus image preparation.
@@ -347,6 +353,12 @@ jobs:
               sudo apt-get install -y --no-install-recommends cloud-guest-utils efibootmgr
           - scenario: mirror-boot-failover-separate-boot
             qemu_extra: ""
+            # Linux 6.19+ stores a logical block size in new md superblocks that the
+            # target OS kernel (<= 6.18) refuses, so provision with a pinned 6.8
+            # kernel instead of the runner kernel (7.x since runner image 20261018).
+            kernel_debs: |
+              b1f19b3c6ce0684e6884fec1abb9b88bc55362b37147d03a75d8ef0244a820f1  https://launchpad.net/ubuntu/+archive/primary/+files/linux-image-6.8.0-1071-azure_6.8.0-1071.79_amd64.deb
+              d27fd905b01bf76b8a14c9ac88eb55c76a79f8025a7c2c15b8481ac786153ce0  https://launchpad.net/ubuntu/+archive/primary/+files/linux-modules-6.8.0-1071-azure_6.8.0-1071.79_amd64.deb
             test_tag: e2e
             test_regex: "^TestMirroredRootBootFailoverVM$"
             # Two subtests of at most 8 + 6 + 6 minutes plus image preparation.
@@ -512,9 +524,29 @@ jobs:
           cd ..
 
       - name: Prepare kernel
+        env:
+          KERNEL_DEBS: ${{ matrix.kernel_debs || '' }}
         run: |
-          KERNEL=$(ls /boot/vmlinuz-* 2>/dev/null | head -1)
-          if [ -z "$KERNEL" ]; then
+          set -euo pipefail
+          KERNEL=$(ls /boot/vmlinuz-* 2>/dev/null | head -1 || true)
+          if [ -n "$KERNEL_DEBS" ]; then
+            # Unpack the pinned kernel image and modules packages. The modules go
+            # to /lib/modules so the e2e helpers copy them into the guest
+            # initramfs like the runner kernel's.
+            mkdir -p /tmp/kernel-pkg
+            while read -r sha url; do
+              [ -n "$url" ] || continue
+              deb=/tmp/kernel-pkg/$(basename "$url")
+              curl -fsSL --retry 3 -o "$deb" "$url"
+              echo "$sha  $deb" | sha256sum -c -
+              dpkg-deb -x "$deb" /tmp/kernel-pkg/root
+            done <<< "$KERNEL_DEBS"
+            KERNEL=$(ls /tmp/kernel-pkg/root/boot/vmlinuz-* | head -1)
+            RELEASE=$(basename "$KERNEL" | sed 's/^vmlinuz-//')
+            sudo mkdir -p /lib/modules
+            sudo cp -a "/tmp/kernel-pkg/root/lib/modules/$RELEASE" /lib/modules/
+            sudo depmod "$RELEASE"
+          elif [ -z "$KERNEL" ]; then
             echo "No kernel found in /boot, extracting from package"
             apt-get download linux-image-$(uname -r) 2>/dev/null || apt-get download linux-image-generic
             dpkg-deb -x linux-image*.deb /tmp/kernel-extract
