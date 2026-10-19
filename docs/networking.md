@@ -1112,6 +1112,45 @@ A physical NIC that appears after Setup (a driver that brings up its
 ports late) gets its own client too, like networkd matches a link when udev
 announces it.
 
+A NIC that loses carrier keeps its lease state (address, routes, DNS and
+NTP servers). When the carrier is back, the client confirms its address
+with an INIT-REBOOT DHCPREQUEST (requested address only) at once, and the
+ACK applies the lease again, as the legacy ramdisk does (captured in the
+CAPRF L2 fault windows). Without an answer to the INIT-REBOOT request the
+client goes on in INIT, and the kept lease still ends at its expiry
+(address, routes, DNS and NTP servers go). Only a carrier loss after the
+lease was bound leads to an INIT-REBOOT: when a NIC gets its carrier only
+after its client started, the carrier restarts the DISCOVER without the
+backoff, and if the first lease binds meanwhile, the client sends no
+INIT-REBOOT for it (seen in the kindmetal boot window, where networkd sends
+none either).
+
+networkd (the legacy ramdisk) drops the lease with the carrier; BOOTy
+keeps it, so nothing has to be restored. Both ways recover the same in the
+CAPRF kindmetal L2 fault runs (5 s link flap, 60 s port down on the NIC
+that carries the image stream):
+
+| Carrier loss handling (jobs) | Link flap | Port down |
+|---|---|---|
+| legacy ramdisk, networkd drops the lease (407787205, 407821697, 407841673, 407857343) | 24 min, 8 min, 5 s, over 300 s | 77 s, 5 s, 83 s |
+| BOOTy, lease dropped (407821698, 407841674) | 5 s, 130 s | 152 s, 5 s |
+| BOOTy, lease kept (407794667, 407810408, 407857344) | 5 s, 5 s, 130 s | 26 s, 5 s, 6 s |
+
+The long recoveries most likely have one cause in both ramdisks: with two
+default routes of the same metric, the kernel takes the first one whose
+gateway it does not consider dead (`fib_select_default`). The carrier
+loss flushes the neighbour entry of the gateway of the NIC, and the next
+route lookup can move to the default route of the other NIC. The captures
+fit this: in job 407857344 the first connection after the flap leaves
+through the other NIC before the VM asks for its gateway again (ARP), and
+the image connection's FIN later leaves there too, with the source
+address of the first NIC. The image connection,
+bound to the address of the first NIC, then sends through the other NIC
+and stalls until BOOTy's download retry opens a new connection (about
+2 min); the legacy ramdisk has no such retry. Source routing per NIC
+would keep the connection on its NIC; neither networkd's configuration
+nor BOOTy sets it up.
+
 The client is BOOTy's own (`pkg/network/dhcp4`), with the states of RFC
 2131 and the behaviour of networkd (systemd 255):
 
@@ -1127,8 +1166,10 @@ The client is BOOTy's own (`pkg/network/dhcp4`), with the states of RFC
   expires. Like every networkd broadcast it has the IP source 0.0.0.0
   (the lease address is in `ciaddr`), as captured in kindmetal.
 - INIT-REBOOT (`Reboot`): DHCPREQUEST with only the requested address,
-  sent once; without an answer the client goes to INIT, like networkd.
-  DHCP mode calls it when the carrier returns (wired in #793).
+  sent once and at once: `Reboot` ends any wait of the client (a renewal
+  or rebind that cannot reach the server while the NIC has no carrier,
+  the INIT backoff), like networkd restarts its client when the carrier
+  returns; without an answer the client goes to INIT.
 - DHCPRELEASE at stop (Teardown, before kexec or reboot) from the lease
   address to the server, with the client identifier only, like networkd
   (`SendRelease=yes`; the legacy ramdisk sends it, captured in kindmetal).

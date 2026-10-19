@@ -248,6 +248,9 @@ func stubDHCPNetlink(t *testing.T) {
 	dhcpLinkMaxMTU = func(int) int { return 0 }
 	dhcpIPv6Enabled = func(string) bool { return false }
 	dhcpSetMTU = func(netlink.Link, int) error { return nil }
+	origCarrier := dhcpCarrier
+	t.Cleanup(func() { dhcpCarrier = origCarrier })
+	dhcpCarrier = func(int) bool { return true }
 	dhcpWriteResolvers = func([]string, []string) error { t.Fatal("unexpected resolv.conf write"); return nil }
 	dhcpAddrReplace = func(netlink.Link, *netlink.Addr) error { return nil }
 	dhcpAddrDel = func(netlink.Link, *netlink.Addr) error { return nil }
@@ -256,7 +259,7 @@ func stubDHCPNetlink(t *testing.T) {
 }
 
 func dummyLink(name string, index int) *netlink.Dummy {
-	return &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: name, Index: index}}
+	return &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: name, Index: index, RawFlags: unix.IFF_UP | unix.IFF_LOWER_UP}}
 }
 
 func lease24(ip string, router ...string) *dhcp4.Lease {
@@ -543,9 +546,15 @@ func TestOnBoundRenewalTracksAddressWhenRollbackFails(t *testing.T) {
 // fakeDHCPClient records Start and Stop; Stop takes a while, like
 // a client waiting for a reply.
 type fakeDHCPClient struct {
-	mu               sync.Mutex
-	started, stopped int
-	onStart          func()
+	mu                        sync.Mutex
+	started, stopped, reboots int
+	onStart                   func()
+}
+
+func (c *fakeDHCPClient) Reboot() {
+	c.mu.Lock()
+	c.reboots++
+	c.mu.Unlock()
 }
 
 func (c *fakeDHCPClient) Start() {
@@ -1344,5 +1353,189 @@ func TestStartClientAfterStop(t *testing.T) {
 	d.startClient(&net.Interface{Name: "eth1", Index: 2}, "", make(chan string, 1))
 	if len(d.clients) != 0 || clients["eth0"].stopped != 1 {
 		t.Fatalf("clients %v, own client stops %d: want none kept and it stopped", d.clients, clients["eth0"].stopped)
+	}
+}
+
+// Unlike networkd a NIC without carrier keeps its lease state (address,
+// routes); when the carrier is back the client confirms the address
+// (INIT-REBOOT), like networkd.
+func TestCarrierLossKeepsLeaseAndReturnReboots(t *testing.T) {
+	clients := stubDHCPSetup(t, func(name string, cb dhcp4.Callback) {
+		if name == "eth0" {
+			cb(lease24("10.0.2.15", "10.0.2.2"))
+		}
+	})
+	var mu sync.Mutex
+	var addrDeleted, routesDeleted []string
+	dhcpAddrDel = func(_ netlink.Link, a *netlink.Addr) error {
+		mu.Lock()
+		addrDeleted = append(addrDeleted, a.IPNet.String())
+		mu.Unlock()
+		return nil
+	}
+	dhcpRouteDel = func(r *netlink.Route) error {
+		mu.Lock()
+		routesDeleted = append(routesDeleted, routeDst(r))
+		mu.Unlock()
+		return nil
+	}
+	updates := make(chan chan<- netlink.LinkUpdate, 1)
+	dhcpSubscribe = func(ch chan<- netlink.LinkUpdate, done <-chan struct{}, _ netlink.LinkSubscribeOptions) error {
+		updates <- ch
+		go func() { <-done; close(ch) }()
+		return nil
+	}
+	d := NewDHCPMode()
+	if err := d.Setup(context.Background(), &Config{}); err != nil {
+		t.Fatal(err)
+	}
+	ch := <-updates
+	update := func(carrier bool) {
+		u := netlink.LinkUpdate{Link: dummyLink("eth0", 1)}
+		u.Header.Type = unix.RTM_NEWLINK
+		if carrier {
+			u.Flags = unix.IFF_UP | unix.IFF_LOWER_UP
+		} else {
+			u.Flags = unix.IFF_UP
+		}
+		ch <- u
+	}
+	waitFor := func(what string, ok func() bool) {
+		t.Helper()
+		for deadline := time.Now().Add(5 * time.Second); !ok(); time.Sleep(10 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out waiting for %s", what)
+			}
+		}
+	}
+	update(true) // carrier as before: nothing happens
+	update(false)
+	waitFor("the carrier loss", func() bool { d.mu.Lock(); defer d.mu.Unlock(); return d.clients[1].down })
+	update(false) // still down: nothing more
+	update(true)
+	c := clients["eth0"]
+	waitFor("the INIT-REBOOT", func() bool { c.mu.Lock(); defer c.mu.Unlock(); return c.reboots == 1 })
+	mu.Lock()
+	if len(addrDeleted) != 0 || len(routesDeleted) != 0 {
+		t.Errorf("carrier loss deleted addresses %v and routes %v, want the lease kept", addrDeleted, routesDeleted)
+	}
+	mu.Unlock()
+	d.mu.Lock()
+	kept := d.nics[1]
+	d.mu.Unlock()
+	if kept.addr == nil || len(kept.routes) != 2 {
+		t.Errorf("lease state after carrier loss = %+v, want the address and both routes", kept)
+	}
+	if err := d.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !slices.Equal(addrDeleted, []string{"10.0.2.15/24"}) || len(routesDeleted) != 2 {
+		t.Fatalf("Teardown deleted addresses %v routes %v, want the lease state once", addrDeleted, routesDeleted)
+	}
+}
+
+// carrierChange: a NEWLINK with unchanged carrier sends no INIT-REBOOT, and
+// after the stop nothing reacts to the carrier.
+func TestCarrierChangeUnchangedAndStopped(t *testing.T) {
+	stubDHCPNetlink(t)
+	d := NewDHCPMode()
+	c := &fakeDHCPClient{}
+	d.clients = map[int]*nicClient{1: {client: c, link: dummyLink("eth0", 1)}}
+	update := func(carrier bool) netlink.LinkUpdate {
+		u := netlink.LinkUpdate{Link: dummyLink("eth0", 1)}
+		u.Header.Type = unix.RTM_NEWLINK
+		u.Flags = unix.IFF_UP
+		if carrier {
+			u.Flags |= unix.IFF_LOWER_UP
+		}
+		return u
+	}
+	for range 3 {
+		d.carrierChange(update(true))
+	}
+	d.carrierChange(update(false))
+	d.carrierChange(update(false))
+	if c.reboots != 0 {
+		t.Fatalf("%d INIT-REBOOTs without a carrier return", c.reboots)
+	}
+	d.mu.Lock()
+	d.stopped = true
+	d.mu.Unlock()
+	if !d.carrierChange(update(true)) || c.reboots != 0 {
+		t.Fatalf("after the stop: reboots %d, want 0 and the NIC still known", c.reboots)
+	}
+}
+
+// A NIC that has no carrier when its client starts counts as down: its
+// first carrier sends the INIT-REBOOT (in INIT: a DISCOVER without the
+// backoff), like networkd starts its client with the carrier.
+func TestStartClientWithoutCarrier(t *testing.T) {
+	clients := stubDHCPSetup(t, nil)
+	dhcpLinkByName = func(name string) (netlink.Link, error) {
+		l := dummyLink(name, int(name[3]-'0')+1)
+		l.RawFlags = unix.IFF_UP // no carrier
+		return l, nil
+	}
+	d := NewDHCPMode()
+	d.startClient(&net.Interface{Name: "eth0", Index: 1}, "", make(chan string, 1))
+	d.startClient(&net.Interface{Name: "eth1", Index: 2}, "", make(chan string, 1))
+	up := netlink.LinkUpdate{Link: dummyLink("eth0", 1)}
+	up.Header.Type = unix.RTM_NEWLINK
+	up.Flags = unix.IFF_UP | unix.IFF_LOWER_UP
+	d.carrierChange(up)
+	if c := clients["eth0"]; c.reboots != 1 {
+		t.Fatalf("reboots = %d, want 1 at the first carrier", c.reboots)
+	}
+}
+
+// The console order of kindmetal: the client starts before the NIC has
+// carrier, and the carrier comes up around the first ACK. Carrier before
+// the lease restarts the DISCOVER once (dhcp4 drops that request when the
+// lease binds); a carrier that was up when the lease bound (its event
+// late) does nothing. A carrier loss after the lease, or a lease bound
+// while the carrier is gone, makes the return confirm the lease, once.
+func TestCarrierUpAroundFirstLease(t *testing.T) {
+	stubDHCPNetlink(t)
+	for _, tt := range []struct {
+		name   string
+		events string // c: carrier up, l: carrier lost, u: carrier up without its event yet, b: lease bound
+		want   int
+	}{
+		{"carrier before the lease", "cbc", 1},
+		{"carrier event after the lease", "ubc", 0},
+		{"loss after the lease", "ublc", 1},
+		{"carrier, lease, loss, return", "cbclc", 2},
+		{"loss during the first exchange, ACK while down", "lbc", 1},
+		{"renewal ACK while down", "cblbc", 2},
+	} {
+		d := NewDHCPMode()
+		fc := &fakeDHCPClient{}
+		link := dummyLink("eth0", 1)
+		d.clients = map[int]*nicClient{1: {client: fc, link: link, down: true}} // started without carrier
+		carrier := false
+		dhcpCarrier = func(int) bool { return carrier }
+		for _, e := range tt.events {
+			switch e {
+			case 'b':
+				d.onBound(link, "eth0", make(chan string, 1))(lease24("10.0.2.15", "10.0.2.2"))
+				continue
+			case 'u':
+				carrier = true
+				continue
+			}
+			carrier = e == 'c'
+			u := netlink.LinkUpdate{Link: dummyLink("eth0", 1)}
+			u.Header.Type = unix.RTM_NEWLINK
+			u.Flags = unix.IFF_UP
+			if carrier {
+				u.Flags |= unix.IFF_LOWER_UP
+			}
+			d.carrierChange(u)
+		}
+		if fc.reboots != tt.want {
+			t.Errorf("%s (%s): %d reboots, want %d", tt.name, tt.events, fc.reboots, tt.want)
+		}
 	}
 }

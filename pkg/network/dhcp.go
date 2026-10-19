@@ -53,6 +53,12 @@ type DHCPMode struct {
 // nicClient is the running DHCP client of one NIC.
 type nicClient struct {
 	client dhcpClient
+	link   netlink.Link
+	// down is set while the NIC has no carrier.
+	down bool
+	// lost is set when the NIC lost carrier after its current lease was
+	// bound: only then does the carrier's return confirm the lease.
+	lost bool
 }
 
 // dhcpStart starts a client; tests replace it.
@@ -79,12 +85,20 @@ type dhcpApplied struct {
 type dhcpClient interface {
 	Start()
 	Stop()
+	// Reboot confirms the lease address with an INIT-REBOOT request.
+	Reboot()
 }
 
 // Seams for Setup tests.
 var (
-	dhcpInterfaces  = physicalInterfaces
-	dhcpLinkByName  = netlink.LinkByName
+	dhcpInterfaces = physicalInterfaces
+	dhcpLinkByName = netlink.LinkByName
+	// dhcpCarrier tells whether the NIC has carrier now (IFF_LOWER_UP); an
+	// error counts as carrier.
+	dhcpCarrier = func(index int) bool {
+		l, err := netlink.LinkByIndex(index)
+		return err != nil || l.Attrs().RawFlags&unix.IFF_LOWER_UP != 0
+	}
 	dhcpLinkSetUp   = netlink.LinkSetUp
 	dhcpPrepareLink = promoteSecondaries
 	dhcpSubscribe   = netlink.LinkSubscribeWithOptions
@@ -202,7 +216,11 @@ func (d *DHCPMode) startClient(iface *net.Interface, hostname string, leased cha
 		d.log.Warn("Cannot bring up link for DHCP", "interface", iface.Name, "error", err)
 		return
 	}
-	nc := &nicClient{client: dhcpStart(d.clientFor(iface, link, hostname, leased))}
+	// A NIC without carrier at the start counts as down, so its first
+	// carrier sends the INIT-REBOOT at once, which in INIT restarts the
+	// DISCOVER without the backoff, like networkd starts with the carrier.
+	nc := &nicClient{client: dhcpStart(d.clientFor(iface, link, hostname, leased)), link: link,
+		down: link.Attrs().RawFlags&unix.IFF_LOWER_UP == 0}
 	d.mu.Lock()
 	if d.stopped {
 		d.mu.Unlock()
@@ -221,9 +239,17 @@ func (d *DHCPMode) startClient(iface *net.Interface, hostname string, leased cha
 	d.mu.Unlock()
 }
 
-// watchNewNICs starts a client on every physical NIC that appears after
-// Setup, like networkd matches a link when udev announces it: a driver can
-// bring up its ports late. It runs until the clients stop.
+// watchNewNICs follows the links while the clients run, like networkd
+// follows udev and the carrier:
+//   - a physical NIC that appears after Setup (a driver that brings up its
+//     ports late) gets its own client;
+//   - a NIC that loses carrier keeps its lease state (address, routes):
+//     a connection from its address, like the image stream, resumes when
+//     the carrier returns (see docs/networking.md for why BOOTy does not
+//     drop it like networkd);
+//   - when the carrier comes back, the client confirms its address with an
+//     INIT-REBOOT DHCPREQUEST at once, like networkd, and the ACK applies
+//     the lease again.
 func (d *DHCPMode) watchNewNICs(hostname string, leased chan<- string) {
 	done := make(chan struct{})
 	d.mu.Lock()
@@ -275,14 +301,17 @@ func (d *DHCPMode) linkUpdate(u netlink.LinkUpdate, notNIC map[linkKey]bool, hos
 		}
 		return
 	}
-	if u.Header.Type != unix.RTM_NEWLINK || notNIC[key] {
+	if u.Header.Type != unix.RTM_NEWLINK {
+		return
+	}
+	// The carrier of a NIC with a client first: no NIC lookup on the way.
+	if d.carrierChange(u) || notNIC[key] {
 		return
 	}
 	d.mu.Lock()
-	_, known := d.clients[key.index]
 	stopped := d.stopped
 	d.mu.Unlock()
-	if known || stopped {
+	if stopped {
 		return
 	}
 	ifaces, err := dhcpInterfaces(context.Background())
@@ -296,6 +325,45 @@ func (d *DHCPMode) linkUpdate(u netlink.LinkUpdate, notNIC map[linkKey]bool, hos
 	}
 	d.log.Info("Starting DHCP on a new NIC", "interface", ifaces[i].Name)
 	d.startClient(&ifaces[i], hostname, leased)
+}
+
+// carrierChange handles the carrier of a NIC that has a client and tells
+// whether the NIC has one.
+func (d *DHCPMode) carrierChange(u netlink.LinkUpdate) bool {
+	d.mu.Lock()
+	nc, known := d.clients[u.Attrs().Index]
+	if !known || d.stopped {
+		d.mu.Unlock()
+		return known
+	}
+	carrier := u.Flags&unix.IFF_LOWER_UP != 0
+	switch {
+	case !carrier && !nc.down:
+		nc.down = true
+		_, nc.lost = d.nics[u.Attrs().Index]
+		d.log.Info("NIC lost carrier, keeping its DHCP lease until the carrier returns", "interface", nc.link.Attrs().Name)
+	case carrier && nc.down:
+		nc.down = false
+		_, leased := d.nics[u.Attrs().Index]
+		lost := nc.lost
+		nc.lost = false
+		d.mu.Unlock()
+		switch {
+		case lost:
+			d.log.Info("NIC has carrier again, confirming its DHCP lease", "interface", nc.link.Attrs().Name)
+			nc.client.Reboot()
+		case !leased:
+			// No lease yet (the NIC came up after its client started):
+			// restart the DISCOVER without the backoff, like networkd
+			// starts its client with the carrier. A lease bound
+			// meanwhile drops the request (dhcp4 bind).
+			d.log.Info("NIC has carrier, starting DHCP at once", "interface", nc.link.Attrs().Name)
+			nc.client.Reboot()
+		}
+		return true
+	}
+	d.mu.Unlock()
+	return true
 }
 
 // stopClients stops every DHCP client, all at once, and waits for them. A
@@ -400,6 +468,13 @@ func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- strin
 			return
 		}
 		d.publishNTP()
+		if nc := d.clients[link.Attrs().Index]; nc != nil {
+			// The carrier now decides: up clears the down state of the
+			// start; down (the ACK was read after the carrier went) makes
+			// its return confirm this lease.
+			up := dhcpCarrier(link.Attrs().Index)
+			nc.down, nc.lost = !up, !up
+		}
 		d.log.Info("DHCP lease applied", "iface", ifName, "addr", addr.IPNet.String())
 		select {
 		case leased <- ifName:
