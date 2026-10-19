@@ -15,6 +15,7 @@
   "ProvisionIP": "",
   "ProvisionGateway": "",
   "DNSResolvers": "",
+  "KeepResolvConf": false,
   "DCGWIPs": "",
   "LeafASN": 0,
   "LocalASN": 65501,

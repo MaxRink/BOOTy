@@ -1692,11 +1692,21 @@ func keepProvisionerResolvConf(cfg *config.MachineConfig, netCfg *network.Config
 	if cfg.ProvisionerFilesInRamdisk() && provision.HasProvisionerResolvConf() {
 		slog.Info("keeping the provisioner resolv.conf in the ramdisk")
 		netCfg.DNSResolvers = ""
+		netCfg.KeepResolvConf = true
 	}
 }
 
+// configureResolvers writes the configured resolvers; tests replace it.
+var configureResolvers = network.ConfigureResolvers
+
 func networkModeWithResolvers(ctx context.Context, netCfg *network.Config, mode network.Mode, cleanup *linkLayerCleanup) (network.Mode, error) {
-	if err := network.ConfigureResolvers(netCfg.DNSResolvers); err != nil {
+	configure := configureResolvers
+	if m, ok := mode.(interface{ ManagesDNS() bool }); ok && m.ManagesDNS() {
+		// DHCP mode writes the configured and the lease servers itself:
+		// only check the configured ones here, do not overwrite.
+		configure = func(r string) error { _, err := network.ResolverLines(r); return err }
+	}
+	if err := configure(netCfg.DNSResolvers); err != nil {
 		if cleanupErr := mode.Teardown(ctx); cleanupErr != nil {
 			slog.Warn("network mode cleanup after resolver setup failure failed", "error", cleanupErr)
 		}
@@ -1933,6 +1943,8 @@ func dhcpFallback(ctx context.Context, netCfg *network.Config) network.Mode {
 	if err := dhcp.Setup(ctx, netCfg); err != nil {
 		slog.Error("DHCP setup failed", "error", err)
 	}
+	// netCfg.DNSResolvers stays: networkModeWithResolvers checks it (DHCP
+	// mode writes resolv.conf itself), so a bad resolver fails the run.
 	return dhcp
 }
 

@@ -1465,6 +1465,9 @@ func TestKeepProvisionerResolvConfWithRamdiskFiles(t *testing.T) {
 	if netCfg.DNSResolvers != "" {
 		t.Fatalf("PROVISIONER_FILES_TARGET=ramdisk would rewrite the provisioner resolv.conf with %q", netCfg.DNSResolvers)
 	}
+	if !netCfg.KeepResolvConf {
+		t.Fatal("PROVISIONER_FILES_TARGET=ramdisk must keep the provisioner resolv.conf from DHCP too")
+	}
 }
 
 func TestLoadModulesWarnsWhenAModuleNeverLoads(t *testing.T) {
@@ -2934,5 +2937,38 @@ func TestLinkLayerTeardownStopsLLDPFirst(t *testing.T) {
 	}
 	if strings.Join(order, ",") != "lldp,mode" {
 		t.Fatalf("teardown order %v, want lldp before the mode", order)
+	}
+}
+
+type dnsManagingMode struct{ teardownRecorderMode }
+
+func (dnsManagingMode) ManagesDNS() bool { return true }
+
+// A mode that writes resolv.conf itself (DHCP) keeps its file: the
+// configured resolvers are only checked, a bad one still fails.
+func TestNetworkModeWithResolversLeavesDHCPResolvConf(t *testing.T) {
+	orig := configureResolvers
+	t.Cleanup(func() { configureResolvers = orig })
+	writes := 0
+	configureResolvers = func(string) error { writes++; return nil }
+	mode := dnsManagingMode{teardownRecorderMode{teardown: func() error { return nil }}}
+	if _, err := networkModeWithResolvers(context.Background(), &network.Config{DNSResolvers: "10.9.9.9"}, mode, &linkLayerCleanup{}); err != nil {
+		t.Fatal(err)
+	}
+	if writes != 0 {
+		t.Fatalf("resolv.conf written %d times over the DHCP mode's file", writes)
+	}
+	if _, err := networkModeWithResolvers(context.Background(), &network.Config{DNSResolvers: "not-an-ip"}, mode, &linkLayerCleanup{}); err == nil {
+		t.Fatal("a bad resolver passed")
+	}
+}
+
+// A bad configured resolver fails the run in the DHCP fallback, as for
+// the other modes: dhcpFallback keeps DNSResolvers for the check.
+func TestDHCPFallbackBadResolverFails(t *testing.T) {
+	netCfg := &network.Config{DNSResolvers: "not-an-ip"}
+	mode, err := networkModeWithResolvers(context.Background(), netCfg, dhcpFallback(context.Background(), netCfg), &linkLayerCleanup{})
+	if err == nil || mode != nil {
+		t.Fatalf("networkModeWithResolvers(dhcpFallback) = %T, %v; want the resolver error", mode, err)
 	}
 }

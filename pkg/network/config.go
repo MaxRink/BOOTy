@@ -49,6 +49,9 @@ type Config struct {
 	ProvisionIP      string // IP/mask to assign to provision bridge (e.g. "10.100.0.20/24")
 	ProvisionGateway string // Gateway VTEP IP for VXLAN BUM flooding
 	DNSResolvers     string // Comma-separated DNS servers
+	// KeepResolvConf leaves the provisioner resolv.conf alone: DHCP does not
+	// write the lease DNS servers.
+	KeepResolvConf bool
 
 	// Optional FRR onefabric mode fields.
 	DCGWIPs          string // Data Center Gateway IPs (comma-sep)
@@ -406,6 +409,57 @@ func ConfigureResolvers(resolvers string) error {
 	if err != nil {
 		return err
 	}
+	return writeResolvConf(lines)
+}
+
+// ConfigureResolvConf writes nameserver lines and, with search domains, a
+// search line, like the stub resolv.conf of systemd-resolved. A search
+// domain that is not a DNS name is left out (a lease can carry one). With
+// no servers it writes a resolv.conf without servers.
+func ConfigureResolvConf(servers, search []string) error {
+	lines, err := ResolverLines(strings.Join(servers, ","))
+	if err != nil {
+		return err
+	}
+	var domains []string
+	for _, d := range search {
+		if validSearchDomain(d) {
+			domains = append(domains, d)
+		}
+	}
+	if len(lines) == 0 {
+		return writeResolvConf([]string{"# no DNS servers"})
+	}
+	if len(domains) > 0 {
+		lines = append(lines, "search "+strings.Join(domains, " "))
+	}
+	return writeResolvConf(lines)
+}
+
+// validSearchDomain accepts a DNS name of letters, digits, hyphens and dots.
+// Like systemd's dns_name_normalize it rejects an empty label ("a..b"), a
+// label that starts or ends with a hyphen, and localhost (is_localhost).
+func validSearchDomain(d string) bool {
+	const nameChars = ".-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	d = strings.TrimSuffix(d, ".")
+	if d == "" || len(d) > 253 || strings.Trim(d, nameChars) != "" {
+		return false
+	}
+	lower := strings.ToLower(d)
+	if lower == "localhost" || strings.HasSuffix(lower, ".localhost") {
+		return false
+	}
+	for _, label := range strings.Split(d, ".") {
+		if label == "" || len(label) > 63 || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return false
+		}
+	}
+	return true
+}
+
+// writeResolvConf replaces resolv.conf (also a symlink) with the lines; no
+// lines leave it alone.
+func writeResolvConf(lines []string) error {
 	if len(lines) == 0 {
 		return nil
 	}

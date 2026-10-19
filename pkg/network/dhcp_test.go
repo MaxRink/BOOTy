@@ -247,9 +247,17 @@ func TestLeaseAddrDefaultsMissingNetmask(t *testing.T) {
 func stubDHCPNetlink(t *testing.T) {
 	t.Helper()
 	origAddr, origAddrDel, origRoute, origRouteDel := dhcpAddrReplace, dhcpAddrDel, dhcpRouteAdd, dhcpRouteDel
+	origMTU, origResolvers := dhcpSetMTU, dhcpWriteResolvers
+	origMax, origV6 := dhcpLinkMaxMTU, dhcpIPv6Enabled
 	t.Cleanup(func() {
 		dhcpAddrReplace, dhcpAddrDel, dhcpRouteAdd, dhcpRouteDel = origAddr, origAddrDel, origRoute, origRouteDel
+		dhcpSetMTU, dhcpWriteResolvers = origMTU, origResolvers
+		dhcpLinkMaxMTU, dhcpIPv6Enabled = origMax, origV6
 	})
+	dhcpLinkMaxMTU = func(int) int { return 0 }
+	dhcpIPv6Enabled = func(string) bool { return false }
+	dhcpSetMTU = func(netlink.Link, int) error { return nil }
+	dhcpWriteResolvers = func([]string, []string) error { t.Fatal("unexpected resolv.conf write"); return nil }
 	dhcpAddrReplace = func(netlink.Link, *netlink.Addr) error { return nil }
 	dhcpAddrDel = func(netlink.Link, *netlink.Addr) error { return nil }
 	dhcpRouteAdd = func(*netlink.Route) error { return nil }
@@ -1071,5 +1079,226 @@ func TestRefusedLeaseRestartsWithBackoff(t *testing.T) {
 	}
 	if old.stops != 1 || started != 2 {
 		t.Fatalf("old client stops %d, fresh clients %d, want 1 and 2", old.stops, started)
+	}
+}
+
+// TestOnBoundWritesLeaseDNS: like systemd-resolved with UseDNS=yes, the DNS
+// servers of every lease are used after the configured ones; the lease
+// domain is a search domain, as in the legacy resolv.conf.
+func TestOnBoundWritesLeaseDNS(t *testing.T) {
+	stubDHCPNetlink(t)
+	var written []string
+	dhcpWriteResolvers = func(servers, search []string) error {
+		written = append(written, strings.Join(servers, ",")+" search "+strings.Join(search, " "))
+		return nil
+	}
+
+	d := NewDHCPMode()
+	d.manageDNS, d.resolvers = true, []string{"10.9.9.9"}
+	l0 := lease24("10.0.2.15", "10.0.2.2")
+	l0.DNS = []net.IP{net.ParseIP("10.0.2.3")}
+	l0.DomainName = "l2.example"
+	l1 := lease24("10.0.3.15", "10.0.3.2")
+	l1.DNS = []net.IP{net.ParseIP("10.0.3.3"), net.ParseIP("10.0.2.3")}
+	d.onBound(dummyLink("eth1", 2), "eth1", make(chan string, 4))(l1)
+	d.onBound(dummyLink("eth0", 1), "eth0", make(chan string, 4))(l0)
+	d.onBound(dummyLink("eth0", 1), "eth0", make(chan string, 4))(l0) // renewal: no rewrite
+
+	want := []string{"10.9.9.9,10.0.3.3,10.0.2.3 search ", "10.9.9.9,10.0.2.3,10.0.3.3 search l2.example"}
+	if !slices.Equal(written, want) {
+		t.Fatalf("resolv.conf writes = %q, want %q", written, want)
+	}
+}
+
+func TestOnBoundKeepsProvisionerResolvConf(t *testing.T) {
+	stubDHCPNetlink(t) // fails the test on any resolv.conf write
+	d := NewDHCPMode()
+	l := lease24("10.0.2.15", "10.0.2.2")
+	l.DNS = []net.IP{net.ParseIP("10.0.2.3")}
+	d.onBound(dummyLink("eth0", 1), "eth0", make(chan string, 1))(l)
+}
+
+// TestOnBoundSetsLeaseMTU: netplan writes UseMTU=true for dhcp4, so the
+// lease MTU (option 26) is set; networkd raises values below 576 to 576 (and caps them at the NIC maximum).
+// Teardown restores the MTU from before.
+func TestOnBoundSetsLeaseMTU(t *testing.T) {
+	stubDHCPNetlink(t)
+	var mtus []int
+	dhcpSetMTU = func(_ netlink.Link, mtu int) error { mtus = append(mtus, mtu); return nil }
+
+	d := NewDHCPMode()
+	link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "eth0", Index: 1, MTU: 1500}}
+	bound := d.onBound(link, "eth0", make(chan string, 4))
+	l := lease24("10.0.2.15", "10.0.2.2")
+	l.MTU = 9000
+	bound(l)
+	bound(l) // renewal: no change
+	small := lease24("10.0.2.15", "10.0.2.2")
+	small.MTU = 500
+	bound(small) // raised to the minimum, 576
+	if want := []int{9000, 576}; !slices.Equal(mtus, want) {
+		t.Fatalf("MTUs set = %v, want %v", mtus, want)
+	}
+	if err := d.Teardown(context.Background()); err != nil {
+		t.Fatalf("Teardown() error = %v", err)
+	}
+	if want := []int{9000, 576, 1500}; !slices.Equal(mtus, want) {
+		t.Fatalf("MTUs set = %v, want %v (Teardown restores 1500)", mtus, want)
+	}
+}
+
+func TestSetupWritesConfiguredResolversUnlessKept(t *testing.T) {
+	stubDHCPNetlink(t)
+	t.Cleanup(snapshotNICFns())
+	linkList = func() ([]netlink.Link, error) { return nil, nil }
+	sleepFunc = func(time.Duration) {}
+	var written []string
+	dhcpWriteResolvers = func(servers, _ []string) error { written = append(written, strings.Join(servers, ",")); return nil }
+
+	_ = (&DHCPMode{}).Setup(context.Background(), &Config{DNSResolvers: "10.9.9.9, 10.9.9.8"})
+	_ = (&DHCPMode{}).Setup(context.Background(), &Config{DNSResolvers: "10.9.9.9", KeepResolvConf: true})
+	if want := []string{"10.9.9.9,10.9.9.8"}; !slices.Equal(written, want) {
+		t.Fatalf("resolv.conf writes = %q, want %q", written, want)
+	}
+}
+
+// The end of a lease also takes its DNS servers out of resolv.conf and
+// restores the MTU of its NIC.
+func TestEndLeaseDropsDNSAndMTU(t *testing.T) {
+	stubDHCPNetlink(t)
+	var written []string
+	dhcpWriteResolvers = func(servers, _ []string) error { written = append(written, strings.Join(servers, ",")); return nil }
+	var mtus []int
+	dhcpSetMTU = func(_ netlink.Link, mtu int) error { mtus = append(mtus, mtu); return nil }
+	d := NewDHCPMode()
+	d.manageDNS, d.resolvers = true, []string{"10.9.9.9"}
+	link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "eth0", Index: 7, MTU: 1500}}
+	l := lease24("10.0.2.15", "10.0.2.2")
+	l.DNS, l.MTU = []net.IP{net.ParseIP("10.0.2.3")}, 9000
+	d.onBound(link, "eth0", make(chan string, 1))(l)
+	d.onExpire(link, "eth0")(nil)
+	if want := []string{"10.9.9.9,10.0.2.3", "10.9.9.9"}; !slices.Equal(written, want) {
+		t.Fatalf("resolv.conf writes = %q, want %q", written, want)
+	}
+	if want := []int{9000, 1500}; !slices.Equal(mtus, want) {
+		t.Fatalf("MTUs = %v, want %v", mtus, want)
+	}
+}
+
+func TestClampMTU(t *testing.T) {
+	for _, tt := range []struct {
+		mtu, linkMax int
+		ipv6         bool
+		want         int
+	}{
+		{500, 0, false, 576}, {500, 0, true, 1280}, {9000, 1500, false, 1500},
+		{9000, 0, false, 9000}, {1400, 9216, true, 1400}, {576, 576, true, 576},
+	} {
+		if got := clampMTU(tt.mtu, tt.linkMax, tt.ipv6); got != tt.want {
+			t.Errorf("clampMTU(%d, %d, %v) = %d, want %d", tt.mtu, tt.linkMax, tt.ipv6, got, tt.want)
+		}
+	}
+}
+
+// A lease without option 26, or with the MTU the NIC has, sets nothing, and
+// Teardown restores nothing.
+func TestLeaseMTUUnchangedRestoresNothing(t *testing.T) {
+	stubDHCPNetlink(t)
+	var mtus []int
+	dhcpSetMTU = func(_ netlink.Link, mtu int) error { mtus = append(mtus, mtu); return nil }
+	d := NewDHCPMode()
+	eth0 := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "eth0", Index: 1, MTU: 1500}}
+	eth1 := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "eth1", Index: 2, MTU: 1500}}
+	same := lease24("10.0.2.15", "10.0.2.2")
+	same.MTU = 1500
+	d.onBound(eth0, "eth0", make(chan string, 1))(same)
+	d.onBound(eth1, "eth1", make(chan string, 1))(lease24("10.0.3.15", "10.0.3.2"))
+	d.onExpire(eth0, "eth0")(nil)
+	if err := d.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(mtus) != 0 {
+		t.Fatalf("MTUs set = %v, want none", mtus)
+	}
+}
+
+// Only IPv4 servers that are not 0.0.0.0 go to resolv.conf.
+func TestLeaseDNSFilter(t *testing.T) {
+	l := lease24("10.0.2.15")
+	l.DNS = []net.IP{net.IPv4zero, net.ParseIP("10.0.2.3"), net.ParseIP("fd00::1")}
+	if got := leaseDNS(l); !slices.Equal(got, []string{"10.0.2.3"}) {
+		t.Fatalf("leaseDNS = %v", got)
+	}
+}
+
+// When the last lease ends, its DNS servers leave resolv.conf.
+func TestEndLeaseRemovesLastDNSServers(t *testing.T) {
+	stubDHCPNetlink(t)
+	var written []string
+	dhcpWriteResolvers = func(servers, _ []string) error { written = append(written, strings.Join(servers, ",")); return nil }
+	d := NewDHCPMode()
+	d.manageDNS = true
+	link := dummyLink("eth0", 1)
+	l := lease24("10.0.2.15", "10.0.2.2")
+	l.DNS = []net.IP{net.ParseIP("10.0.2.3")}
+	d.onBound(link, "eth0", make(chan string, 1))(l)
+	d.onExpire(link, "eth0")(nil)
+	if want := []string{"10.0.2.3", ""}; !slices.Equal(written, want) {
+		t.Fatalf("resolv.conf writes = %q, want %q", written, want)
+	}
+}
+
+// A bad dns_resolver fails Setup, as it failed the run before.
+func TestSetupRejectsBadResolver(t *testing.T) {
+	stubDHCPNetlink(t)
+	err := NewDHCPMode().Setup(context.Background(), &Config{DNSResolvers: "8.8.8.8\nsearch evil.example"})
+	if err == nil || !strings.Contains(err.Error(), "DNS resolvers") {
+		t.Fatalf("Setup() = %v, want the resolver error", err)
+	}
+}
+
+// Option 15 with one trailing NUL is used without it, like networkd.
+func TestLeaseDomainTrailingNul(t *testing.T) {
+	if got := leaseDomain(" l2.example\x00"); got != "l2.example" {
+		t.Fatalf("leaseDomain = %q", got)
+	}
+}
+
+func TestValidSearchDomainLikeSystemd(t *testing.T) {
+	for d, want := range map[string]bool{
+		"l2.example": true, "l2.example.": true, "a-b.example": true,
+		"a..b": false, "-a.example": false, "a-.example": false, "localhost": false, "foo.localhost": false,
+		"corp_lan.example": false, strings.Repeat("a", 64) + ".example": false,
+	} {
+		if got := validSearchDomain(d); got != want {
+			t.Errorf("validSearchDomain(%q) = %v, want %v", d, got, want)
+		}
+	}
+}
+
+// A failed MTU restore at the end of a lease stays for Teardown.
+func TestEndLeaseKeepsFailedMTURestore(t *testing.T) {
+	stubDHCPNetlink(t)
+	var mtus []int
+	fail := true
+	dhcpSetMTU = func(_ netlink.Link, mtu int) error {
+		mtus = append(mtus, mtu)
+		if mtu == 1500 && fail {
+			fail = false
+			return errors.New("device busy")
+		}
+		return nil
+	}
+	d := NewDHCPMode()
+	link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "eth0", Index: 7, MTU: 1500}}
+	l := lease24("10.0.2.15", "10.0.2.2")
+	l.MTU = 9000
+	d.onBound(link, "eth0", make(chan string, 1))(l)
+	d.onExpire(link, "eth0")(nil)
+	if err := d.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if want := []int{9000, 1500, 1500}; !slices.Equal(mtus, want) {
+		t.Fatalf("MTUs = %v, want %v (Teardown retries the restore)", mtus, want)
 	}
 }

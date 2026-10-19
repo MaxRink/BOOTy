@@ -32,3 +32,6 @@ func (d *DHCPMode) WaitForConnectivity(ctx context.Context, target string, timeo
 func (d *DHCPMode) Teardown(context.Context) error {
 	return nil
 }
+
+// ManagesDNS is false: the stub writes nothing.
+func (d *DHCPMode) ManagesDNS() bool { return false }
