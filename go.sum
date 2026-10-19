@@ -61,8 +61,8 @@ github.com/mdlayher/packet v1.2.0/go.mod h1:UtYVnQt+Zj6UD0F89HfzkqGXaYqys1NwkrS8
 github.com/mdlayher/raw v0.0.0-20191004140158-e1402808046b/go.mod h1:7EpbotpCmVZcu+KCX4g9WaRNuu11uyhiW7+Le1dKawg=
 github.com/mdlayher/raw v0.1.0 h1:K4PFMVy+AFsp0Zdlrts7yNhxc/uXoPVHi9RzRvtZF2Y=
 github.com/mdlayher/raw v0.1.0/go.mod h1:yXnxvs6c0XoF/aK52/H5PjsVHmWBCFfZUfoh/Y5s9Sg=
-github.com/mdlayher/socket v0.7.0 h1:qVREPVwtUMg17pwvveQxpurq0PVisMxi3FGgpsorMYQ=
-github.com/mdlayher/socket v0.7.0/go.mod h1:f7iKql2EK/rfsWYDKofKjk2Ig7I+6HQWdMIdn1tO4A4=
+github.com/mdlayher/socket v0.8.0 h1:1lIVvHAs3sT623kPkPDa+I0nLVusskwnpWzp6ZUcNyc=
+github.com/mdlayher/socket v0.8.0/go.mod h1:EhNb63aXqexVoTJDblxvDOSuIGIJinC4H5ZktnaJ6Rk=
 github.com/opencontainers/go-digest v1.0.0 h1:apOUWs51W5PlhuyGyz9FCeeBIOUDA/6nW8Oi/yOhh5U=
 github.com/opencontainers/go-digest v1.0.0/go.mod h1:0JzlMkj0TRzQZfJkVvzbP0HBR3IKzErnv2BNG4W4MAM=
 github.com/opencontainers/image-spec v1.1.1 h1:y0fUlFfIZhPF1W537XOLg0/fcx6zcHCJwooC2xJA040=
