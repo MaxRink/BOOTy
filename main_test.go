@@ -1570,8 +1570,13 @@ func TestLoadModulesSkipsEFIVarFSWithoutEFIFirmware(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		var loaded []string
-		loadModuleFn = func(path string) error {
+		var (
+			mu     sync.Mutex
+			loaded []string
+		)
+		loadModuleFn = func(path string) error { // called in parallel since #758
+			mu.Lock()
+			defer mu.Unlock()
 			loaded = append(loaded, filepath.Base(path))
 			return nil
 		}
