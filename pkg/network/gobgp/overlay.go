@@ -4,6 +4,7 @@ package gobgp
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -720,7 +721,10 @@ func (o *OverlayTier) advertiseType5(ctx context.Context) error {
 		return nil
 	}
 
-	rd := buildRouteDistinguisher(o.cfg.ASN, uint32(o.cfg.ProvisionVNI))
+	rd, err := o.routeDistinguisher(o.cfg.RD)
+	if err != nil {
+		return fmt.Errorf("build route distinguisher: %w", err)
+	}
 
 	// Extract the host IP from the CIDR and advertise it as a /32 host route.
 	ip, _, err := net.ParseCIDR(o.cfg.ProvisionIP)
@@ -758,7 +762,10 @@ func (o *OverlayTier) advertiseType5(ctx context.Context) error {
 // target. The IMET route carries a PMSI tunnel attribute (ingress replication)
 // telling peers to use unicast VXLAN encapsulation for BUM traffic.
 func (o *OverlayTier) advertiseType3(ctx context.Context) error {
-	rd := buildRouteDistinguisher(o.cfg.ASN, uint32(o.cfg.ProvisionVNI))
+	rd, err := o.routeDistinguisher(o.cfg.L2RD)
+	if err != nil {
+		return fmt.Errorf("build route distinguisher: %w", err)
+	}
 
 	nlri := buildEVPNType3NLRI(rd, o.cfg.RouterID)
 
@@ -799,7 +806,10 @@ func (o *OverlayTier) advertiseType2(ctx context.Context) error {
 		return fmt.Errorf("parse provision IP %s: %w", o.cfg.ProvisionIP, err)
 	}
 
-	rd := buildRouteDistinguisher(o.cfg.ASN, uint32(o.cfg.ProvisionVNI))
+	rd, err := o.routeDistinguisher(o.cfg.L2RD)
+	if err != nil {
+		return fmt.Errorf("build route distinguisher: %w", err)
+	}
 
 	nlri := buildEVPNType2NLRI(rd, o.cfg.BridgeMAC, ip.String(), uint32(o.cfg.ProvisionVNI))
 
@@ -2262,18 +2272,11 @@ func extractNextHop(p *apipb.Path) string {
 	return ""
 }
 
-// buildRouteDistinguisher builds an RD, selecting 2-octet or 4-octet ASN type.
-func buildRouteDistinguisher(asn, vni uint32) *apipb.RouteDistinguisher {
-	if asn <= asnMax2Byte {
-		return &apipb.RouteDistinguisher{Rd: &apipb.RouteDistinguisher_TwoOctetAsn{TwoOctetAsn: &apipb.RouteDistinguisherTwoOctetASN{
-			Admin:    asn,
-			Assigned: vni,
-		}}}
-	}
-	return &apipb.RouteDistinguisher{Rd: &apipb.RouteDistinguisher_FourOctetAsn{FourOctetAsn: &apipb.RouteDistinguisherFourOctetASN{
-		Admin:    asn,
-		Assigned: vni & 0xFFFF,
-	}}}
+// routeDistinguisher marshals an RD of the Config ("ASN:NN" or
+// "IPv4:NN"). An empty one is "<router-id>:1", FRR's RD of the only
+// "router bgp" instance.
+func (o *OverlayTier) routeDistinguisher(rd string) (*apipb.RouteDistinguisher, error) {
+	return parseRouteDistinguisher(cmp.Or(rd, o.cfg.RouterID+":1"))
 }
 
 // buildEVPNType5NLRI builds an EVPN IP Prefix (Type-5) NLRI for the given
@@ -2328,7 +2331,7 @@ func buildType5PathAttrsRTs(nlri *apipb.NLRI, nextHop string, asn, vni uint32, r
 		communities = append(communities, rmac)
 	}
 
-	return []*apipb.Attribute{originIGP(), evpnMpReach(nextHop, nlri), extCommunities(communities...)}, nil
+	return []*apipb.Attribute{originIGP(), evpnMpReach(nextHop, nlri), extCommunities(communities...), localMED()}, nil
 }
 
 // originIGP is the ORIGIN attribute IGP.
@@ -2349,6 +2352,16 @@ func evpnMpReach(nextHop string, nlri *apipb.NLRI) *apipb.Attribute {
 // extCommunities is the EXTENDED_COMMUNITIES attribute.
 func extCommunities(c ...*apipb.ExtendedCommunity) *apipb.Attribute {
 	return &apipb.Attribute{Attr: &apipb.Attribute_ExtendedCommunities{ExtendedCommunities: &apipb.ExtendedCommunitiesAttribute{Communities: c}}}
+}
+
+// localMED is the MED 0 that FRR puts on every route it originates: a
+// "network" route gets the IGP metric 0 (bgp_route.c bgp_static_update)
+// and a redistributed route the zebra metric, 0 for a connected route.
+// The Type-5 routes of "advertise ipv4|ipv6 unicast" keep the attributes
+// of those routes. GoBGP keeps the MED of a local path also towards eBGP
+// peers.
+func localMED() *apipb.Attribute {
+	return &apipb.Attribute{Attr: &apipb.Attribute_MultiExitDisc{MultiExitDisc: &apipb.MultiExitDiscAttribute{Med: 0}}}
 }
 
 const ethernetMACLength = 6

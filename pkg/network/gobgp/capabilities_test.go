@@ -85,6 +85,9 @@ func TestNewConfigCapabilitiesAndProfile(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		if cfg.RD != "10.0.0.1:1" || cfg.L2RD != "10.0.0.1:2" {
+			t.Errorf("%s: RDs %s, %s; want 10.0.0.1:1 and 10.0.0.1:2", profile, cfg.RD, cfg.L2RD)
+		}
 		if cfg.Capabilities != caps || cfg.ResolveViaDefault != via {
 			t.Errorf("%s: capabilities %+v resolve-via-default %v, want %+v %v", profile, cfg.Capabilities, cfg.ResolveViaDefault, caps, via)
 		}

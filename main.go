@@ -1553,6 +1553,7 @@ func networkConfigFromMachineConfig(cfg *config.MachineConfig) *network.Config {
 		BGPRouteMapOut:          cfg.Network.BGP.RouteMapOut,
 		EVPNImportRTs:           splitList(cfg.Network.EVPN.ImportRouteTargets),
 		EVPNExportRTs:           splitList(cfg.Network.EVPN.ExportRouteTargets),
+		EVPNRD:                  cfg.Network.EVPN.RD,
 		BGPNeighborVRF:          cfg.Network.BGP.NeighborVRF,
 		BGPConnectRetry:         cfg.Network.BGP.ConnectRetry,
 		BGPAuthPassword:         cfg.Network.BGP.AuthPassword,
@@ -2174,6 +2175,8 @@ func mergeBGPPolicy(dst, src *network.Config) {
 	if len(dst.EVPNImportRTs) == 0 && len(dst.EVPNExportRTs) == 0 {
 		dst.EVPNImportRTs, dst.EVPNExportRTs = src.EVPNImportRTs, src.EVPNExportRTs
 	}
+	dst.EVPNRD = cmp.Or(dst.EVPNRD, src.EVPNRD)
+	dst.EVPNRDIndex, dst.BGPInstances = src.EVPNRDIndex, src.BGPInstances
 }
 
 // mergeOverlayDevices takes every device setting that netplan sets and the

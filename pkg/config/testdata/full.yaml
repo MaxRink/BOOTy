@@ -266,6 +266,10 @@ network:
     # provisionVNI: VXLAN Network Identifier for the provisioning overlay (0 = disabled)
     provisionVNI: 100
 
+    # rd (EVPN_RD): route distinguisher of the EVPN routes, like FRR "rd";
+    # empty derives "<router-id>:<n>" like FRR
+    rd: "192.168.4.11:2"
+
     # provisionIP: IP/CIDR to assign to the provisioning bridge
     provisionIP: "10.100.0.20/24"
 

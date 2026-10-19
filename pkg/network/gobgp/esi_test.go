@@ -44,7 +44,7 @@ func (e *esTest) rd(vtep string) *apipb.RouteDistinguisher {
 	if len(vtep) > 0 {
 		n = uint32(vtep[len(vtep)-1])
 	}
-	return buildRouteDistinguisher(65000, n)
+	return testRD(n)
 }
 
 // ead sends an EAD route of the test ES with the given Ethernet Tag.

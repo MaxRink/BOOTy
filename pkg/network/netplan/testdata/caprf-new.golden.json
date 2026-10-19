@@ -126,6 +126,9 @@
   "EVPNExportRTs": [
     "65000:1000"
   ],
+  "EVPNRD": "",
+  "EVPNRDIndex": 2,
+  "BGPInstances": 2,
   "Type5Networks": null,
   "OverlayDevices": {
     "vxlanMTU": 9000,

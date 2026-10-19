@@ -254,87 +254,58 @@ func TestHandleType5RouteStopsWhenVTEPRouteCannotBeInstalled(t *testing.T) {
 	}
 }
 
-func TestBuildRouteDistinguisher(t *testing.T) {
-	tests := []struct {
-		name    string
-		asn     uint32
-		vni     uint32
-		wantErr bool
-		check   func(t *testing.T, a *apipb.RouteDistinguisherTwoOctetASN, b *apipb.RouteDistinguisherFourOctetASN)
-	}{
-		{
-			name: "2-byte ASN",
-			asn:  65000,
-			vni:  4000,
-			check: func(t *testing.T, two *apipb.RouteDistinguisherTwoOctetASN, _ *apipb.RouteDistinguisherFourOctetASN) {
-				t.Helper()
-				if two == nil {
-					t.Fatal("expected 2-octet RD")
-				}
-				if two.Admin != 65000 {
-					t.Errorf("Admin = %d, want 65000", two.Admin)
-				}
-				if two.Assigned != 4000 {
-					t.Errorf("Assigned = %d, want 4000", two.Assigned)
-				}
-			},
-		},
-		{
-			name: "4-byte ASN",
-			asn:  70000,
-			vni:  5000,
-			check: func(t *testing.T, _ *apipb.RouteDistinguisherTwoOctetASN, four *apipb.RouteDistinguisherFourOctetASN) {
-				t.Helper()
-				if four == nil {
-					t.Fatal("expected 4-octet RD")
-				}
-				if four.Admin != 70000 {
-					t.Errorf("Admin = %d, want 70000", four.Admin)
-				}
-				// VNI is masked to 16 bits for 4-octet format.
-				if four.Assigned != 5000 {
-					t.Errorf("Assigned = %d, want 5000", four.Assigned)
-				}
-			},
-		},
-		{
-			name: "4-byte ASN truncates large VNI",
-			asn:  100000,
-			vni:  70000,
-			check: func(t *testing.T, _ *apipb.RouteDistinguisherTwoOctetASN, four *apipb.RouteDistinguisherFourOctetASN) {
-				t.Helper()
-				if four == nil {
-					t.Fatal("expected 4-octet RD")
-				}
-				if four.Assigned != 70000&0xFFFF {
-					t.Errorf("Assigned = %d, want %d (truncated)", four.Assigned, 70000&0xFFFF)
-				}
-			},
-		},
+// RDs round-trip unchanged in the RD type FRR uses; values that do not fit
+// are rejected instead of truncated (the fleet ASN 4210000017 became
+// 65535 with bgp.ParseRouteDistinguisher).
+func TestParseRouteDistinguisher(t *testing.T) {
+	two := func(admin, nn uint32) *apipb.RouteDistinguisher {
+		return &apipb.RouteDistinguisher{Rd: &apipb.RouteDistinguisher_TwoOctetAsn{TwoOctetAsn: &apipb.RouteDistinguisherTwoOctetASN{Admin: admin, Assigned: nn}}}
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			rd := buildRouteDistinguisher(tt.asn, tt.vni)
-
-			msg, err := oneof(rd)
-			if err != nil {
-				t.Fatalf("unmarshal RD: %v", err)
-			}
-
-			var gotTwo *apipb.RouteDistinguisherTwoOctetASN
-			var gotFour *apipb.RouteDistinguisherFourOctetASN
-			switch v := msg.(type) {
-			case *apipb.RouteDistinguisherTwoOctetASN:
-				gotTwo = v
-			case *apipb.RouteDistinguisherFourOctetASN:
-				gotFour = v
-			default:
-				t.Fatalf("unexpected RD type: %T", msg)
-			}
-			tt.check(t, gotTwo, gotFour)
-		})
+	four := func(admin, nn uint32) *apipb.RouteDistinguisher {
+		return &apipb.RouteDistinguisher{Rd: &apipb.RouteDistinguisher_FourOctetAsn{FourOctetAsn: &apipb.RouteDistinguisherFourOctetASN{Admin: admin, Assigned: nn}}}
 	}
+	for in, want := range map[string]*apipb.RouteDistinguisher{
+		"65000:4000":       two(65000, 4000),
+		"65000:4294967295": two(65000, 4294967295),
+		"4210000017:9":     four(4210000017, 9),
+		"70000:65535":      four(70000, 65535),
+		"65535:70000":      two(65535, 70000),
+		"65536:1":          four(65536, 1),
+		"192.0.2.17:2":     {Rd: &apipb.RouteDistinguisher_IpAddress{IpAddress: &apipb.RouteDistinguisherIPAddress{Admin: "192.0.2.17", Assigned: 2}}},
+	} {
+		got, err := parseRouteDistinguisher(in)
+		if err != nil {
+			t.Fatalf("%s: %v", in, err)
+		}
+		if !proto.Equal(got, want) {
+			t.Errorf("%s = %v, want %v", in, got, want)
+		}
+	}
+	for _, in := range []string{"4210000017:70000", "1.2.3.4:70000", "65000:5000000000", "4294967296:1",
+		"2001:db8::1:5", "nope", "65000:", ":5", "65000:-1"} {
+		if _, err := parseRouteDistinguisher(in); err == nil {
+			t.Errorf("%s: accepted, want an error", in)
+		}
+	}
+}
+
+// mustRD marshals an RD for the tests.
+// testRD is the RD 65000:n for tests that need distinct RDs.
+func testRD(n uint32) *apipb.RouteDistinguisher {
+	rd, err := parseRouteDistinguisher(fmt.Sprintf("65000:%d", n))
+	if err != nil {
+		panic(err)
+	}
+	return rd
+}
+
+func mustRD(t *testing.T, rd string) *apipb.RouteDistinguisher {
+	t.Helper()
+	a, err := parseRouteDistinguisher(rd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a
 }
 
 func TestBuildRouteTarget(t *testing.T) {
@@ -368,7 +339,7 @@ func TestBuildRouteTarget(t *testing.T) {
 }
 
 func TestBuildEVPNType5NLRI(t *testing.T) {
-	rd := buildRouteDistinguisher(65000, 4000)
+	rd := mustRD(t, "65000:4000")
 
 	// Passing a /32 host route (as advertiseType5 now does).
 	nlri, err := buildEVPNType5NLRI(rd, "10.100.0.20/32", "10.0.0.1", 4000)
@@ -400,7 +371,7 @@ func TestBuildEVPNType5NLRI(t *testing.T) {
 }
 
 func TestBuildType5PathAttrs(t *testing.T) {
-	rd := buildRouteDistinguisher(65000, 4000)
+	rd := mustRD(t, "65000:4000")
 
 	nlri, err := buildEVPNType5NLRI(rd, "10.100.0.20/32", "10.0.0.1", 4000)
 	if err != nil {
@@ -411,11 +382,14 @@ func TestBuildType5PathAttrs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Expect 3 attributes: origin, mp-reach, ext-communities.
-	if len(pattrs) != 3 {
-		t.Errorf("got %d path attrs, want 3", len(pattrs))
+	// Expect 4 attributes: origin, mp-reach, ext-communities, MED 0.
+	if len(pattrs) != 4 {
+		t.Errorf("got %d path attrs, want 4", len(pattrs))
 	}
 	path := &apipb.Path{Pattrs: pattrs}
+	if med, ok := pathMED(t, path); !ok || med != 0 {
+		t.Fatalf("MED = %d (%v), want 0 like FRR", med, ok)
+	}
 	if got := mustFindEncapTunnelType(t, path); got != vxlanTunnelType {
 		t.Fatalf("encapsulation tunnel type = %d, want %d", got, vxlanTunnelType)
 	}
@@ -431,7 +405,7 @@ func TestBuildType5PathAttrs(t *testing.T) {
 }
 
 func TestBuildType5PathAttrsUsesExplicitVPNRT(t *testing.T) {
-	rd := buildRouteDistinguisher(65100, 1000)
+	rd := mustRD(t, "65100:1000")
 	nlri, err := buildEVPNType5NLRI(rd, "10.200.0.10/32", "192.168.4.10", 1000)
 	if err != nil {
 		t.Fatalf("build NLRI: %v", err)
@@ -460,7 +434,7 @@ func TestBuildType5PathAttrsUsesExplicitVPNRT(t *testing.T) {
 }
 
 func TestBuildType5PathAttrsOmitsRouterMACWhenUnset(t *testing.T) {
-	rd := buildRouteDistinguisher(65000, 4000)
+	rd := mustRD(t, "65000:4000")
 	nlri, err := buildEVPNType5NLRI(rd, "10.100.0.20/32", "10.0.0.1", 4000)
 	if err != nil {
 		t.Fatalf("build NLRI: %v", err)
@@ -483,7 +457,7 @@ func TestBuildType5PathAttrsOmitsRouterMACWhenUnset(t *testing.T) {
 }
 
 func TestBuildType5PathAttrsRejectsInvalidRouterMAC(t *testing.T) {
-	rd := buildRouteDistinguisher(65000, 4000)
+	rd := mustRD(t, "65000:4000")
 	nlri, err := buildEVPNType5NLRI(rd, "10.100.0.20/32", "10.0.0.1", 4000)
 	if err != nil {
 		t.Fatalf("build NLRI: %v", err)
@@ -496,7 +470,7 @@ func TestBuildType5PathAttrsRejectsInvalidRouterMAC(t *testing.T) {
 }
 
 func TestBuildType5PathAttrsRejectsEUI64RouterMAC(t *testing.T) {
-	rd := buildRouteDistinguisher(65000, 4000)
+	rd := mustRD(t, "65000:4000")
 	nlri, err := buildEVPNType5NLRI(rd, "10.100.0.20/32", "10.0.0.1", 4000)
 	if err != nil {
 		t.Fatalf("build NLRI: %v", err)
@@ -509,7 +483,7 @@ func TestBuildType5PathAttrsRejectsEUI64RouterMAC(t *testing.T) {
 }
 
 func TestBuildType5PathAttrsRejectsInvalidVPNRT(t *testing.T) {
-	rd := buildRouteDistinguisher(65000, 4000)
+	rd := mustRD(t, "65000:4000")
 	nlri, err := buildEVPNType5NLRI(rd, "10.100.0.20/32", "10.0.0.1", 4000)
 	if err != nil {
 		t.Fatalf("build NLRI: %v", err)
@@ -563,6 +537,8 @@ func TestAdvertiseType5PublishesRouterMAC(t *testing.T) {
 			ProvisionIP:  "10.200.0.10/32",
 			BridgeMAC:    "62:db:b8:c1:80:52",
 			VPNRT:        "65000:1000",
+			RD:           "192.168.4.10:2",
+			L2RD:         "192.168.4.10:3",
 		},
 		log: slog.Default(),
 		bgp: bgp,
@@ -580,6 +556,9 @@ func TestAdvertiseType5PublishesRouterMAC(t *testing.T) {
 		t.Fatalf("expected 1 advertised Type-5 path, got %d", len(paths))
 	}
 	route := mustFindType5Route(t, paths[0])
+	if got := rdString(t, route.GetRd()); got != "192.168.4.10:2" {
+		t.Fatalf("type-5 RD = %s, want the VRF RD 192.168.4.10:2", got)
+	}
 	if route.GetIpPrefix() != "10.200.0.10" {
 		t.Fatalf("type-5 prefix = %s, want 10.200.0.10", route.GetIpPrefix())
 	}
@@ -647,7 +626,7 @@ func TestAdvertiseType5RejectsInvalidProvisionIP(t *testing.T) {
 }
 
 func TestBuildEVPNType5NLRIInvalidIP(t *testing.T) {
-	rd := buildRouteDistinguisher(65000, 4000)
+	rd := mustRD(t, "65000:4000")
 
 	_, err := buildEVPNType5NLRI(rd, "not-a-cidr", "10.0.0.1", 4000)
 	if err == nil {
@@ -2610,7 +2589,7 @@ func TestHandleType3RouteNoVTEP(t *testing.T) {
 // --- Type-3 NLRI builder tests -----------------------------------------------
 
 func TestBuildEVPNType3NLRI(t *testing.T) {
-	rd := buildRouteDistinguisher(65000, 4000)
+	rd := mustRD(t, "65000:4000")
 
 	nlri := buildEVPNType3NLRI(rd, "10.0.0.1")
 
@@ -2631,7 +2610,7 @@ func TestBuildEVPNType3NLRI(t *testing.T) {
 }
 
 func TestBuildType3PathAttrs(t *testing.T) {
-	rd := buildRouteDistinguisher(65000, 4000)
+	rd := mustRD(t, "65000:4000")
 
 	nlri := buildEVPNType3NLRI(rd, "10.0.0.1")
 
@@ -2667,7 +2646,7 @@ func TestBuildType3PathAttrs(t *testing.T) {
 }
 
 func TestBuildType3PathAttrs4ByteASN(t *testing.T) {
-	rd := buildRouteDistinguisher(70000, 5000)
+	rd := mustRD(t, "70000:5000")
 
 	nlri := buildEVPNType3NLRI(rd, "10.0.0.1")
 
@@ -2683,7 +2662,7 @@ func TestBuildType3PathAttrs4ByteASN(t *testing.T) {
 // --- Type-2 NLRI builder tests -----------------------------------------------
 
 func TestBuildEVPNType2NLRI(t *testing.T) {
-	rd := buildRouteDistinguisher(65000, 4000)
+	rd := mustRD(t, "65000:4000")
 
 	nlri := buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "10.100.0.20", 4000)
 
@@ -2710,7 +2689,7 @@ func TestBuildEVPNType2NLRI(t *testing.T) {
 }
 
 func TestBuildEVPNType2NLRINoIP(t *testing.T) {
-	rd := buildRouteDistinguisher(65000, 4000)
+	rd := mustRD(t, "65000:4000")
 
 	nlri := buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "", 4000)
 
@@ -2728,7 +2707,7 @@ func TestBuildEVPNType2NLRINoIP(t *testing.T) {
 }
 
 func TestBuildType2PathAttrs(t *testing.T) {
-	rd := buildRouteDistinguisher(65000, 4000)
+	rd := mustRD(t, "65000:4000")
 
 	nlri := buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "10.100.0.20", 4000)
 
@@ -2756,7 +2735,7 @@ func TestBuildType2PathAttrs(t *testing.T) {
 }
 
 func TestBuildType2PathAttrs4ByteASN(t *testing.T) {
-	rd := buildRouteDistinguisher(70000, 5000)
+	rd := mustRD(t, "70000:5000")
 
 	nlri := buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "10.100.0.20", 5000)
 
@@ -3967,6 +3946,8 @@ func l2AdvertiseTestConfig(enableL2 bool) *Config {
 		ProvisionIP:  "10.200.0.10/24",
 		BridgeMAC:    "62:db:b8:c1:80:52",
 		VPNRT:        "65000:1000",
+		RD:           "192.168.4.10:2",
+		L2RD:         "192.168.4.10:3",
 		EnableL2:     enableL2,
 	}
 }
@@ -3989,6 +3970,9 @@ func TestAdvertiseType3PublishesIMETWithIngressReplication(t *testing.T) {
 		t.Fatalf("unmarshal NLRI: %v", err)
 	}
 	route := msg.(*apipb.EVPNInclusiveMulticastEthernetTagRoute)
+	if got := rdString(t, route.GetRd()); got != "192.168.4.10:3" {
+		t.Fatalf("type-3 RD = %s, want the L2VNI RD 192.168.4.10:3", got)
+	}
 	if route.GetIpAddress() != "192.168.4.10" || route.GetEthernetTag() != 0 {
 		t.Fatalf("IMET route = ip %s tag %d, want ip 192.168.4.10 tag 0", route.GetIpAddress(), route.GetEthernetTag())
 	}
@@ -4033,6 +4017,9 @@ func TestAdvertiseType2PublishesBridgeMACAndIP(t *testing.T) {
 		t.Fatalf("unmarshal NLRI: %v", err)
 	}
 	route := msg.(*apipb.EVPNMACIPAdvertisementRoute)
+	if got := rdString(t, route.GetRd()); got != "192.168.4.10:3" {
+		t.Fatalf("type-2 RD = %s, want the L2VNI RD 192.168.4.10:3", got)
+	}
 	if route.GetMacAddress() != "62:db:b8:c1:80:52" {
 		t.Fatalf("type-2 MAC = %s, want bridge MAC 62:db:b8:c1:80:52", route.GetMacAddress())
 	}
@@ -4202,7 +4189,7 @@ func TestHandleType2RouteBestPathPerMAC(t *testing.T) {
 		}, mock
 	}
 	route := func(rd uint32, ip string) *apipb.EVPNMACIPAdvertisementRoute {
-		a := buildRouteDistinguisher(65000, rd)
+		a := mustRD(t, fmt.Sprintf("65000:%d", rd))
 		return &apipb.EVPNMACIPAdvertisementRoute{Rd: a, MacAddress: mac, IpAddress: ip}
 	}
 	lastSet := func(t *testing.T, mock *mockOverlayNetlinkOps) string {
@@ -4301,7 +4288,7 @@ func type2TestOverlay() (*OverlayTier, *mockOverlayNetlinkOps) {
 
 func type2TestPath(t *testing.T, rd uint32, nh string, mm *apipb.MacMobilityExtended) *apipb.Path {
 	t.Helper()
-	r := buildRouteDistinguisher(65000, rd)
+	r := mustRD(t, fmt.Sprintf("65000:%d", rd))
 	n, err := wrapNLRI(&apipb.EVPNMACIPAdvertisementRoute{Rd: r, MacAddress: "aa:bb:cc:dd:ee:ff"})
 	if err != nil {
 		t.Fatal(err)
@@ -4422,7 +4409,7 @@ func TestHandleType2RouteInstallsNeighbor(t *testing.T) {
 		netlinkOps: mock,
 	}
 	route := func(rd uint32, mac, ip string) *apipb.EVPNMACIPAdvertisementRoute {
-		return &apipb.EVPNMACIPAdvertisementRoute{Rd: buildRouteDistinguisher(65000, rd), MacAddress: mac, IpAddress: ip}
+		return &apipb.EVPNMACIPAdvertisementRoute{Rd: mustRD(t, fmt.Sprintf("65000:%d", rd)), MacAddress: mac, IpAddress: ip}
 	}
 	neighbors := func(list []*netlink.Neigh) []*netlink.Neigh {
 		var out []*netlink.Neigh
@@ -4589,7 +4576,7 @@ func TestType5GatewayIPResolutionKeepsTheActivePath(t *testing.T) {
 	o, m := type2TestOverlay()
 	o.cfg.ResolveOverlayIndex = true
 	route := func(rd uint32, gw string) *apipb.EVPNIPPrefixRoute {
-		return &apipb.EVPNIPPrefixRoute{Rd: buildRouteDistinguisher(65000, rd), IpPrefix: "10.100.0.0", IpPrefixLen: 24, GwAddress: gw}
+		return &apipb.EVPNIPPrefixRoute{Rd: mustRD(t, fmt.Sprintf("65000:%d", rd)), IpPrefix: "10.100.0.0", IpPrefixLen: 24, GwAddress: gw}
 	}
 	o.handleType5Route(route(2, "0.0.0.0"), "10.0.0.2", nil, false) // "b", installed
 	o.handleType5Route(route(1, "0.0.0.0"), "10.0.0.1", nil, false) // "a", sorts first
@@ -4665,7 +4652,7 @@ func wrapRD(m proto.Message) (*apipb.RouteDistinguisher, error) {
 // the next hop, the route target and the withdraw flag survive the
 // conversion from the native types.
 func TestAPIPathKeepsWithdrawAndAttributes(t *testing.T) {
-	nlri, err := buildEVPNType5NLRI(buildRouteDistinguisher(65000, 4000), "10.100.0.20/32", "0.0.0.0", 4000)
+	nlri, err := buildEVPNType5NLRI(mustRD(t, "65000:4000"), "10.100.0.20/32", "0.0.0.0", 4000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4763,7 +4750,7 @@ func TestType2NeighborTiebreakOnMAC(t *testing.T) {
 func TestType2NeighborKeptByTheOtherRD(t *testing.T) {
 	o, m := type2TestOverlay()
 	route := func(rd uint32) *apipb.EVPNMACIPAdvertisementRoute {
-		return &apipb.EVPNMACIPAdvertisementRoute{Rd: buildRouteDistinguisher(65000, rd), MacAddress: "aa:bb:cc:00:00:01", IpAddress: "10.0.0.50"}
+		return &apipb.EVPNMACIPAdvertisementRoute{Rd: testRD(rd), MacAddress: "aa:bb:cc:00:00:01", IpAddress: "10.0.0.50"}
 	}
 	o.handleType2Route(route(1), "10.0.0.1", 0, false)
 	o.handleType2Route(route(2), "10.0.0.1", 0, false)
@@ -4819,7 +4806,7 @@ func TestType2ESIAliasingAndMassWithdraw(t *testing.T) {
 		netlinkOps: mock,
 	}
 	esi := &apipb.EthernetSegmentIdentifier{Type: 0, Value: []byte{0, 0x11, 0x22, 0x33, 0x44, 0x55, 0, 0, 1}}
-	rd := func(n uint32) *apipb.RouteDistinguisher { return buildRouteDistinguisher(65000, n) }
+	rd := func(n uint32) *apipb.RouteDistinguisher { return testRD(n) }
 	ead := func(vtep string, perES, withdraw bool) {
 		tag := uint32(0)
 		if perES {
@@ -4893,7 +4880,7 @@ func TestType2ESIAliasingAndMassWithdraw(t *testing.T) {
 // community. Without it a receiver assumes MPLS or a configured
 // encapsulation for BOOTy's Type-2 and Type-3 routes.
 func TestEVPNRoutesCarryVXLANEncapsulation(t *testing.T) {
-	rd := buildRouteDistinguisher(65000, 4000)
+	rd := testRD(4000)
 	t2 := buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "10.100.0.20", 4000)
 	t3 := buildEVPNType3NLRI(rd, "10.0.0.1")
 	t5, err := buildEVPNType5NLRI(rd, "10.100.0.20/32", type5DirectGateway, 4000)

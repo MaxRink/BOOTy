@@ -128,7 +128,7 @@ func TestAdvertiseType5NetworksImportCheck(t *testing.T) {
 	}
 	overlay := &OverlayTier{
 		cfg: &Config{
-			ASN: 4210000017, RouterID: "192.0.2.17", ProvisionVNI: 3000,
+			ASN: 4210000017, RouterID: "192.0.2.17", ProvisionVNI: 3000, RD: "192.0.2.17:2", L2RD: "192.0.2.17:3",
 			BridgeMAC: "02:54:c0:00:02:11", VPNRT: "65169:3000",
 			LoopbackAddrs:   []string{"2001:db8:40a:5481::17/128"},
 			BlackholeRoutes: []string{"2001:db8:40a:5481::/64"},
@@ -144,6 +144,9 @@ func TestAdvertiseType5NetworksImportCheck(t *testing.T) {
 	for _, paths := range listPaths(t, bgp, &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN}) {
 		for _, p := range paths {
 			r := mustFindType5Route(t, p)
+			if got := rdString(t, r.GetRd()); got != "192.0.2.17:2" {
+				t.Errorf("RD = %s, want the VRF RD 192.0.2.17:2", got)
+			}
 			if r.GetGwAddress() != "::" || r.GetLabel() != 3000 || extractNextHop(p) != "192.0.2.17" ||
 				!matchesLocalRT(p, 65169, 3000) || mustFindRouterMAC(t, p) != "02:54:c0:00:02:11" {
 				t.Errorf("path %v: want gateway ::, label 3000, next hop 192.0.2.17, RT 65169:3000, RMAC", r)

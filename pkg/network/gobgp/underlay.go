@@ -1027,6 +1027,7 @@ func (u *UnderlayTier) announceUnderlayRoute(ctx context.Context) error {
 			{Attr: &apipb.Attribute_Origin{Origin: &apipb.OriginAttribute{Origin: 0}}}, // IGP
 			{Attr: &apipb.Attribute_NextHop{NextHop: &apipb.NextHopAttribute{NextHop: "0.0.0.0"}}},
 			{Attr: &apipb.Attribute_AsPath{AsPath: &apipb.AsPathAttribute{}}},
+			localMED(),
 		},
 	})
 	if err != nil {

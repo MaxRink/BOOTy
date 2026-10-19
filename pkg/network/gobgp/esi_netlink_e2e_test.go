@@ -117,7 +117,7 @@ func TestESINetlinkAliasing(t *testing.T) {
 	vteps := []string{"192.0.2.21", "192.0.2.22"}
 	rds := make([]*apipb.RouteDistinguisher, len(vteps))
 	for i, vtep := range vteps {
-		rd := buildRouteDistinguisher(65000, uint32(i+1))
+		rd := testRD(uint32(i+1))
 		rds[i] = rd
 		for _, tag := range []uint32{maxET, 0} {
 			o.handleType1Route(&apipb.EVPNEthernetAutoDiscoveryRoute{Rd: rd, Esi: esi, EthernetTag: tag}, vtep, false, false)

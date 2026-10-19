@@ -144,6 +144,8 @@ type AddressFamily struct {
 	AdvertiseIPv6Unicast bool
 	RouteTargetImport    []string
 	RouteTargetExport    []string
+	// RD is the "rd" of the VRF's EVPN routes (l2vpn evpn only).
+	RD string
 	// L2VNIs are "vni N" blocks with an explicit RD or route targets.
 	L2VNIs []L2VNI
 	Line   int

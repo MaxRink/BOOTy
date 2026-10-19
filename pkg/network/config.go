@@ -188,6 +188,14 @@ type Config struct {
 	// vpn_rt or the derived route target.
 	EVPNImportRTs []string
 	EVPNExportRTs []string
+	// EVPNRD is the RD of the EVPN routes (EVPN_RD, else the frr.conf
+	// "rd" of the L3VNI VRF); empty derives it like FRR from the router ID
+	// and EVPNRDIndex, the vrf_rd_id of the L3VNI VRF instance.
+	// BGPInstances is the number of FRR "router bgp" instances; an L2VNI
+	// gets the next id. Both are 0 without frr.conf.
+	EVPNRD       string
+	EVPNRDIndex  int
+	BGPInstances int
 	// Type5Networks are the FRR "network" prefixes of the provision L3VNI
 	// VRF that "advertise ipv4|ipv6 unicast" originates as EVPN Type-5.
 	Type5Networks []string

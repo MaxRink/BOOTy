@@ -624,3 +624,58 @@ func TestParseFastExternalFailover(t *testing.T) {
 		t.Fatalf("router %v sessions %+v (%v), want off", cfg.Routers[0].FastExternalFailover, s, err)
 	}
 }
+
+// "rd" in the l2vpn evpn address family of a VRF sets the RD of its EVPN
+// routes; it must be ASN:NN or IPv4:NN.
+func TestParseVRFRD(t *testing.T) {
+	conf := "router bgp 65000 vrf Vrf_x\n address-family l2vpn evpn\n  rd 192.0.2.17:9\n exit-address-family\n"
+	m, err := Parse([]byte(conf))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Routers[0].AddressFamilies[0].RD; got != "192.0.2.17:9" {
+		t.Fatalf("RD = %q", got)
+	}
+	if _, err := Parse([]byte(strings.Replace(conf, "192.0.2.17:9", "nope", 1))); err == nil {
+		t.Fatal("rd nope accepted")
+	}
+	if _, err := Parse([]byte("router bgp 65000\n address-family ipv4 unicast\n  rd 65000:1\n")); err == nil {
+		t.Fatal("rd outside l2vpn evpn accepted")
+	}
+}
+
+// An rd keeps the NN range of its RD type, like FRR: 16 bits for IPv4 and
+// a 4-byte ASN, 32 bits for a 2-byte ASN. The fleet ASN 4210000017 stays
+// unchanged.
+func TestParseRDRange(t *testing.T) {
+	vrf := func(rd string) string {
+		return "router bgp 4210000017 vrf provision\n address-family l2vpn evpn\n  rd " + rd + "\n exit-address-family\n"
+	}
+	l2vni := func(rd string) string {
+		return "router bgp 4210000017\n address-family l2vpn evpn\n  vni 100\n   rd " + rd + "\n  exit-vni\n exit-address-family\n"
+	}
+	for _, rd := range []string{"4210000017:9", "65000:4294967295", "192.0.2.17:65535"} {
+		cfg, err := Parse([]byte(vrf(rd)))
+		if err != nil {
+			t.Fatalf("vrf rd %s: %v", rd, err)
+		}
+		if got := cfg.Routers[0].AddressFamilies[0].RD; got != rd {
+			t.Errorf("vrf rd = %q, want %q", got, rd)
+		}
+		cfg, err = Parse([]byte(l2vni(rd)))
+		if err != nil {
+			t.Fatalf("vni rd %s: %v", rd, err)
+		}
+		if got := cfg.Routers[0].AddressFamilies[0].L2VNIs[0].RD; got != rd {
+			t.Errorf("vni rd = %q, want %q", got, rd)
+		}
+	}
+	for _, rd := range []string{"4210000017:70000", "1.2.3.4:70000", "65000:5000000000", "4294967296:1"} {
+		if _, err := Parse([]byte(vrf(rd))); err == nil {
+			t.Errorf("vrf rd %s accepted, want an error", rd)
+		}
+		if _, err := Parse([]byte(l2vni(rd))); err == nil {
+			t.Errorf("vni rd %s accepted, want an error", rd)
+		}
+	}
+}

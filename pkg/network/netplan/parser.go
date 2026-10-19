@@ -601,10 +601,14 @@ func applyEVPNMode(frr *FRRParams, cfg *network.Config) {
 		cfg.Type5Networks = type5Networks(frr.Model, cfg.ProvisionVNI)
 		if frr.Model != nil {
 			cfg.EVPNImportRTs, cfg.EVPNExportRTs = l3vniRouteTargets(frr.Model, cfg.ProvisionVNI)
+			cfg.EVPNRD, cfg.EVPNRDIndex, cfg.BGPInstances = l3vniRD(frr.Model, cfg.ProvisionVNI)
 		}
 		return
 	}
 	cfg.EVPNL2Enabled = frr.AdvertiseAllVNI
+	if frr.Model != nil {
+		_, cfg.EVPNRDIndex, cfg.BGPInstances = l3vniRD(frr.Model, cfg.ProvisionVNI)
+	}
 }
 
 // joinUnique deduplicates a string slice and joins with commas.

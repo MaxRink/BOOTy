@@ -551,6 +551,7 @@ func TestLoadFullYAMLReference(t *testing.T) {
 		{"Network.BGP.BFDReceiveMS", cfg.Network.BGP.BFDReceiveMS, uint32(0)},
 		{"Network.EVPN.UnderlaySubnet", cfg.Network.EVPN.UnderlaySubnet, "192.168.4.0/24"},
 		{"Network.EVPN.ProvisionVNI", cfg.Network.EVPN.ProvisionVNI, uint32(100)},
+		{"Network.EVPN.RD", cfg.Network.EVPN.RD, "192.168.4.11:2"},
 		{"Network.EVPN.ProvisionIP", cfg.Network.EVPN.ProvisionIP, "10.100.0.20/24"},
 		{"Network.EVPN.Type5Only set", cfg.Network.EVPN.Type5Only != nil, true},
 		{"Network.EVPN.Type5Networks", cfg.Network.EVPN.Type5Networks, "2001:db8:40a:5481::17/128,2001:db8:40a:5481::/64"},

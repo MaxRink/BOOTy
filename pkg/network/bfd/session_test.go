@@ -101,8 +101,8 @@ func TestSessionDetectionTime(t *testing.T) {
 func TestSessionPollFinal(t *testing.T) {
 	now := time.Now()
 	s := NewSession(fabric, 11)
-	if p := s.Packet(); p.DesiredMinTxUS != 1000000 || p.Poll || p.RequiredMinRxUS != 1000000 {
-		t.Fatalf("down packet = %+v, want 1 s slow start for both timers and no Poll", p)
+	if p := s.Packet(); p.DesiredMinTxUS != 1000000 || p.Poll || p.RequiredMinRxUS != 1000000 || p.RequiredMinEchoRxUS != 50000 {
+		t.Fatalf("down packet = %+v, want 1 s slow start for both timers, no Poll and FRR's echo receive 50 ms", p)
 	}
 	s.Receive(remote(StateInit, 11), now)
 	p := s.Packet()

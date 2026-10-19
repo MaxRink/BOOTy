@@ -232,6 +232,9 @@
   "EVPNExportRTs": [
     "65169:3000"
   ],
+  "EVPNRD": "",
+  "EVPNRDIndex": 2,
+  "BGPInstances": 2,
   "Type5Networks": [
     "2001:db8:40a:5481::17/128",
     "2001:db8:40a:5481::/64"

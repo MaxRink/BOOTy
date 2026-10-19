@@ -14,6 +14,7 @@
 package gobgp
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
@@ -123,6 +124,9 @@ type Config struct {
 	// empty lists use VPNRT or ASN:VNI.
 	ImportRTs []string
 	ExportRTs []string
+	// RD is the route distinguisher of the L3VNI routes (Type-5) and L2RD
+	// that of the L2VNI routes (Type-2 and Type-3), "ASN:NN" or "IPv4:NN".
+	RD, L2RD string
 	// OverlayDevices, NoAcceptRA and the forwarding settings come from
 	// netplan, frr.conf or the native options.
 	OverlayDevices   network.OverlayDevices
@@ -150,6 +154,26 @@ type Config struct {
 	Policy *PolicyConfig
 	// GracefulRestart configures BGP graceful restart behavior.
 	GracefulRestart *GracefulRestartConfig
+}
+
+// evpnRDs returns the RDs of the EVPN routes: EVPN_RD or the frr.conf
+// "rd", else FRR's automatic "<router-id>:<n>" (bgp_evpn.c
+// bgp_evpn_derive_auto_rd_for_vrf and bgp_evpn_derive_auto_rd). The L3VNI
+// VRF instance has id EVPNRDIndex and an L2VNI the next free id after the
+// instances. Without frr.conf the native peers stand for the bm4x
+// template: "router bgp vrf <neighbor VRF>" first, then the L3VNI VRF.
+func evpnRDs(netCfg *network.Config, routerID string) (l3, l2 string) {
+	if netCfg.EVPNRD != "" {
+		return netCfg.EVPNRD, netCfg.EVPNRD
+	}
+	index, instances := netCfg.EVPNRDIndex, netCfg.BGPInstances
+	if instances == 0 {
+		index, instances = 1, 1
+		if u := cmp.Or(netCfg.BGPNeighborVRF, netCfg.VRFName); u != "" && u != overlayVRFName(netCfg) {
+			index, instances = 2, 2
+		}
+	}
+	return fmt.Sprintf("%s:%d", routerID, index), fmt.Sprintf("%s:%d", routerID, instances+1)
 }
 
 // overlayVRFName is OVERLAY_VRF_NAME when set (empty is the default VRF),
@@ -238,7 +262,7 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		BFDReceiveMS:         netCfg.BFDReceiveMS,
 		BFDDetectMult:        netCfg.BFDDetectMult,
 	}
-
+	cfg.RD, cfg.L2RD = evpnRDs(netCfg, underlayIP)
 	cfg.ApplyDefaults()
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -317,10 +341,8 @@ func (c *Config) Validate() error {
 	if err := c.validateTimers(); err != nil {
 		return err
 	}
-	for _, spec := range slices.Concat(c.ImportRTs, c.ExportRTs) {
-		if _, _, err := ParseRouteTarget(spec); err != nil {
-			return fmt.Errorf("EVPN route target: %w", err)
-		}
+	if err := c.validateEVPNCommunities(); err != nil {
+		return err
 	}
 	if (c.BFDTransmitMS == 0) != (c.BFDReceiveMS == 0) {
 		return fmt.Errorf("BFD_TRANSMIT_MS and BFD_RECEIVE_MS must be set together")
@@ -404,6 +426,21 @@ func (c *Config) validatePolicy() error {
 	}
 	if err := ValidateCommunities(&c.Policy.ExportCommunities); err != nil {
 		return fmt.Errorf("export communities: %w", err)
+	}
+	return nil
+}
+
+// validateEVPNCommunities checks the route distinguishers and targets.
+func (c *Config) validateEVPNCommunities() error {
+	for _, rd := range []string{c.RD, c.L2RD} {
+		if _, err := parseRouteDistinguisher(rd); rd != "" && err != nil {
+			return fmt.Errorf("EVPN route distinguisher (EVPN_RD): %w", err)
+		}
+	}
+	for _, spec := range slices.Concat(c.ImportRTs, c.ExportRTs) {
+		if _, _, err := ParseRouteTarget(spec); err != nil {
+			return fmt.Errorf("EVPN route target: %w", err)
+		}
 	}
 	return nil
 }

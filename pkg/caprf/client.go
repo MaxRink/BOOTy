@@ -1421,6 +1421,7 @@ func applyNetworkStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"BGP_ROUTE_MAP_IN":    &cfg.Network.BGP.RouteMapIn,
 		"BGP_ROUTE_MAP_OUT":   &cfg.Network.BGP.RouteMapOut,
 		"EVPN_RT_IMPORT":      &cfg.Network.EVPN.ImportRouteTargets,
+		"EVPN_RD":             &cfg.Network.EVPN.RD,
 		"EVPN_RT_EXPORT":      &cfg.Network.EVPN.ExportRouteTargets,
 	}
 

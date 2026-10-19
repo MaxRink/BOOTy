@@ -19,7 +19,9 @@ import (
 //   - booty-dual: no FRR config (vars only), so Type-5 only.
 //   - booty-l2: no FRR config, but EVPN_L2_ENABLED=true in vars, so Type-2
 //     and Type-3 routes are originated next to Type-5.
-// The route distinguisher BOOTy uses is <ASN>:<VNI>.
+// BOOTy uses FRR's automatic route distinguisher <router-id>:<n>: n is the
+// id of the "router bgp" instance (1 with one instance), and an L2VNI gets
+// the next id, so its Type-2 and Type-3 routes have <router-id>:2.
 
 const routeModeObserveWindow = 15 * time.Second
 
@@ -49,8 +51,7 @@ func TestGoBGPRouteModeL2FromFRRConfig(t *testing.T) {
 	waitForBGPInterface(t, "eth3")
 	waitForBootyLog(t, gobgpLabUnnumbered, "detected netplan configuration files")
 
-	rd := rdLine("65020:100")
-	for _, routeType := range []string{"prefix", "macip", "multicast"} {
+	for routeType, rd := range map[string]string{"prefix": rdLine("10.0.0.20:1"), "macip": rdLine("10.0.0.20:2"), "multicast": rdLine("10.0.0.20:2")} {
 		waitForGobgpCondition(t, bgpConvergeTimeout, "booty-unnumbered "+routeType+" route not on spine", func(context.Context) (bool, string) {
 			out, err := spineEVPNRoutes(t, routeType)
 			return err == nil && strings.Contains(out, rd), out
@@ -66,8 +67,7 @@ func TestGoBGPRouteModeL2FromVars(t *testing.T) {
 
 	waitForBGPInterface(t, "eth7")
 
-	rd := rdLine("65040:100")
-	for _, routeType := range []string{"prefix", "macip", "multicast"} {
+	for routeType, rd := range map[string]string{"prefix": rdLine("10.0.0.23:1"), "macip": rdLine("10.0.0.23:2"), "multicast": rdLine("10.0.0.23:2")} {
 		waitForGobgpCondition(t, bgpConvergeTimeout, "booty-l2 "+routeType+" route not on spine", func(context.Context) (bool, string) {
 			out, err := spineEVPNRoutes(t, routeType)
 			return err == nil && strings.Contains(out, rd), out
@@ -82,8 +82,8 @@ func TestGoBGPRouteModeType5Only(t *testing.T) {
 	tests := []struct {
 		name, container, rd string
 	}{
-		{name: "L3VNI in FRR config", container: gobgpLabNumbered, rd: "65030:100"},
-		{name: "no FRR config", container: gobgpLabDual, rd: "65010:100"},
+		{name: "L3VNI in FRR config", container: gobgpLabNumbered, rd: "10.0.0.22:1"},
+		{name: "no FRR config", container: gobgpLabDual, rd: "10.0.0.21:1"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -101,7 +101,8 @@ func TestGoBGPRouteModeType5Only(t *testing.T) {
 					if err != nil {
 						t.Fatalf("query %s routes on spine01: %v\n%s", routeType, err, out)
 					}
-					if strings.Contains(out, rd) {
+					// Any RD of the server: an L2VNI would use the next id.
+					if strings.Contains(out, rdLine(strings.Split(tt.rd, ":")[0]+":")) {
 						t.Fatalf("%s originated %s routes in Type-5 only mode:\n%s", tt.container, routeType, out)
 					}
 				}

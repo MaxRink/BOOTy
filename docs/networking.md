@@ -387,6 +387,7 @@ rule of every key:
 | `BGP_ROUTE_MAPS`, `BGP_COMMUNITY_LISTS` | `frr.conf` `route-map`, `bgp community-list` | `network.bgp.routeMaps`, `network.bgp.communityLists` | list replaces |
 | `BGP_ROUTE_MAP_IN`, `BGP_ROUTE_MAP_OUT` | session route-maps | `network.bgp.routeMapIn`, `network.bgp.routeMapOut` | native wins, for every session and family |
 | `EVPN_RT_IMPORT`, `EVPN_RT_EXPORT` | `frr.conf` `route-target import\|export` | `network.evpn.importRouteTargets`, `network.evpn.exportRouteTargets` | list replaces |
+| `EVPN_RD` | `frr.conf` `rd` in the L3VNI VRF's `address-family l2vpn evpn` | `network.evpn.rd` | native wins; unset derives `<router-id>:<n>` like FRR |
 | `vpn_rt` | `frr.conf` route targets, else FRR's auto route target of an `frr.conf` L3VNI | `network.evpn.vpnRT` | netplan wins: the `frr.conf` route targets win over `vpn_rt`, as in FRR; `vpn_rt` applies only without them |
 | `BGP_EBGP_REQUIRES_POLICY` | `[no] bgp ebgp-requires-policy` | `network.bgp.ebgpRequiresPolicy` | native wins, for every session; unset is on for sessions, off for `BGP_PEER_MODE` peers |
 | `NETWORK_DEVICES` | the provisioner netplan files | `network.devices` | replaces the netplan files as a whole |
@@ -498,7 +499,7 @@ and `hostname`. FRR mode passes the file to FRR.
 | `vrf NAME` | `vni N [prefix-routes-only]`, `exit-vrf` or `exit` |
 | `router bgp` | `bgp router-id A.B.C.D`, `[no] bgp ebgp-requires-policy`, `[no] bgp suppress-duplicates`, `[no] bgp default ipv4-unicast`, `bgp bestpath as-path multipath-relax`, `[no] bgp fast-external-failover`, `neighbor NAME peer-group`, `neighbor IFNAME interface [peer-group G \| remote-as R]`, `neighbor ADDR peer-group G`, `neighbor X remote-as ASN\|internal\|external`, `neighbor X local-as N [no-prepend [replace-as]]`, `neighbor X bfd [profile P]`, `neighbor X timers K H`, `neighbor X timers connect N`, `address-family ipv4 [unicast]\|ipv6 [unicast]\|l2vpn evpn`, `exit` (also `end` and the top-level statements, which leave the node) |
 | `address-family ipv4\|ipv6` | `network P`, `redistribute connected`, `neighbor X activate`, `neighbor X soft-reconfiguration inbound`, `neighbor X allowas-in [N]`, `neighbor X route-map NAME in\|out`, `exit-address-family` or `exit` |
-| `address-family l2vpn evpn` | the neighbor statements above, `advertise-all-vni`, `advertise-default-gw`, `advertise ipv4\|ipv6 unicast`, `route-target import\|export\|both RT`, `vni N` (opens an L2VNI block with `rd RD`, `route-target ... RT`, `exit-vni` or `exit`), `exit-address-family` or `exit` |
+| `address-family l2vpn evpn` | the neighbor statements above, `advertise-all-vni`, `advertise-default-gw`, `advertise ipv4\|ipv6 unicast`, `route-target import\|export\|both RT`, `rd RD`, `vni N` (opens an L2VNI block with `rd RD`, `route-target ... RT`, `exit-vni` or `exit`), `exit-address-family` or `exit` |
 | `route-map` | `match community LIST`, `set local-preference N`, `set community AA:NN... [additive]`, `exit` |
 | `bfd` | `profile NAME` (opens a profile with `transmit-interval`, `receive-interval` 10-60000, `detect-multiplier` 2-255), `exit` |
 | `line vty` | `exit` |
@@ -578,7 +579,7 @@ the change.
 | Image flavors | Default and `iso` flavors only (`make iso`, `make docker`, `make dockerx86`). `slim`, `micro`, `gobgp` and `gobgp-iso` ship no FRR binaries | All flavors. The BOOTy binary is the same in every flavor |
 | Peer modes | Unnumbered only, on all detected physical NICs. `BGP_PEER_MODE`, `BGP_INTERFACES` and `BGP_NEIGHBORS` are ignored | With `frr.conf` neighbors or `BGP_SESSIONS`: one session per neighbor (see [BGP sessions](#bgp-sessions)). Otherwise `unnumbered`, `dual`, `numbered` (see [GoBGP peer modes](#gobgp-peer-modes)) |
 | Remote AS | Peer group with `remote-as external` (eBGP only) | Per session: number, `internal` or `external`. Without sessions: unnumbered learns it from the peer OPEN, numbered uses `BGP_REMOTE_ASN` (`0` means iBGP) |
-| BFD | Yes. `BFD_TRANSMIT_MS` and `BFD_RECEIVE_MS` together create the `datacenter` BFD profile on the fabric peers and the DCGWs | Yes, BOOTy's own BFD (`pkg/network/bfd`): asynchronous mode, RFC 5881 single-hop (IPv4 and IPv6 link-local) and RFC 5883 multihop, Poll/Final, no echo or authentication. BOOTy does not ask for Demand mode itself, but it honours a peer's Demand (D) bit: no periodic packets while both sides are Up and no Poll Sequence runs (RFC 5880 6.8.7). `neighbor X bfd` in `frr.conf` with the profile timers (FRR defaults 300/300/3), or `BFD_TRANSMIT_MS` and `BFD_RECEIVE_MS` for the native peers. BFD down resets the BGP session, which connects again after 1 s like FRR 10.3 bgpd (Cease subcode 4 instead of 10) |
+| BFD | Yes. `BFD_TRANSMIT_MS` and `BFD_RECEIVE_MS` together create the `datacenter` BFD profile on the fabric peers and the DCGWs | Yes, BOOTy's own BFD (`pkg/network/bfd`): asynchronous mode, RFC 5881 single-hop (IPv4 and IPv6 link-local) and RFC 5883 multihop, Poll/Final, no echo or authentication. BOOTy does not ask for Demand mode itself, but it honours a peer's Demand (D) bit: no periodic packets while both sides are Up and no Poll Sequence runs (RFC 5880 6.8.7). Like FRR bfdd it advertises Required Min Echo RX 50 ms. Echo mode on the leaf is not supported: the 50 ms invites a peer with `echo-mode` to send echo packets, which come back only through IP forwarding, and with `IP_FORWARDING=false` (the bm4x template) the ramdisk drops them, so that peer's echo session fails. For IPv4 the legacy ramdisk (FRR bfdd) has the same exposure; for IPv6 FRR 10.3 bfdd loops the echo packets back in software (`bp_bfd_echo_in`), BOOTy does not. The fabric does not enable echo mode. `neighbor X bfd` in `frr.conf` with the profile timers (FRR defaults 300/300/3), or `BFD_TRANSMIT_MS` and `BFD_RECEIVE_MS` for the native peers. BFD down resets the BGP session, which connects again after 1 s like FRR 10.3 bgpd (Cease subcode 4 instead of 10) |
 | Authentication | `BGP_AUTH_PASSWORD` as TCP-MD5 on the fabric peer group and the DCGWs. Whitespace and control characters are rejected | `BGP_AUTH_PASSWORD` as TCP-MD5 on all peers |
 | Timers | `BGP_KEEPALIVE` and `BGP_HOLD` apply only when both are set. Otherwise FRR uses its `datacenter` defaults | Per session from `frr.conf` or `BGP_SESSIONS`, else the `frr defaults` profile. Without sessions: keepalive 3 s, hold 9 s, connect retry 5 s; hold must be 0 or at least 3 and keepalive must not exceed hold / 3 |
 | Peer readiness | Not checked. The connectivity check only polls the target URL | `BGP_MIN_PEERS` established peers (default 1) before the target poll |
@@ -964,8 +965,30 @@ gateway. GoBGP still requires `provision_vni` in every overlay type.
 
 ### Routes BOOTy originates
 
-All routes use the route distinguisher `asn_server:provision_vni` and the
-router ID as next hop. The route target follows the precedence in the
+The route distinguisher is `EVPN_RD`, else the `rd` of the L3VNI VRF in
+`frr.conf`, else FRR's automatic RD `<router-id>:<n>` (bgp_evpn.c
+`bgp_evpn_derive_auto_rd_for_vrf`), so it differs per host. `n` is the
+`vrf_rd_id` of the VRF instance: bgpd gives each `router bgp` instance the
+lowest free id from 1 when it is created, in `frr.conf` order, and an L2VNI
+the next one. With the bm4x template (`router bgp vrf Vrf_underlay`, then
+`router bgp vrf default` with L3VNI 3000) the Type-5 routes get
+`<router-id>:2`, as on the FRR 10.3.1 shadow node in most lab runs. Without
+`frr.conf` the native peers stand for the template: `2` when the neighbor
+VRF differs from the L3VNI VRF, else `1`. The Type-2 and Type-3 routes of
+an L2VNI get the id after the instances. The id depends on the order in
+which bgpd creates instances and VNIs: the shadow node also showed `:3`
+in one lab run, and the kindmetal legacy ramdisk (FRR 10.2.1) `:3`, for
+the same template. BOOTy uses the order of the configuration, so its RD
+is stable. The RD from `EVPN_RD` or the VRF `rd` also applies to the
+Type-2 and Type-3 routes of the L2VNI; FRR uses the VRF `rd` for the
+Type-5 routes only. Peers treat the RD as opaque, so
+only its uniqueness per host matters. Before, every host used
+`asn_server:provision_vni`.
+
+Every route carries the router ID as next hop. Like FRR, which gives a
+`network` route the IGP metric 0 and a redistributed route the zebra
+metric, the underlay `/32` and the Type-5 routes carry MED 0; Type-2 and
+Type-3 routes carry no MED, as in FRR. The route target follows the precedence in the
 `EVPN_RT_IMPORT` row of [Configuration](configuration.md): the native
 `EVPN_RT_IMPORT`/`EVPN_RT_EXPORT` lists, then the `frr.conf` route targets
 or FRR's auto route target of an `frr.conf` L3VNI, then `vpn_rt`, then

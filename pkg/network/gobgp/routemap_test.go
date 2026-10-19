@@ -320,7 +320,7 @@ func TestExplicitRouteTargets(t *testing.T) {
 			t.Errorf("%s: imports %v (%v), want %v", name, got, err, tc.want)
 		}
 	}
-	nlri, err := buildEVPNType5NLRI(mustRD(t), "2001:db8::/64", "::", 3000)
+	nlri, err := buildEVPNType5NLRI(mustRD(t, "4210000017:3000"), "2001:db8::/64", "::", 3000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,11 +334,6 @@ func TestExplicitRouteTargets(t *testing.T) {
 			t.Errorf("export misses RT %d:%d", rt[0], rt[1])
 		}
 	}
-}
-
-func mustRD(t *testing.T) *apipb.RouteDistinguisher {
-	t.Helper()
-	return buildRouteDistinguisher(4210000017, 3000)
 }
 
 // "bgp ebgp-requires-policy": an eBGP peer without a route-map in a family
