@@ -595,6 +595,9 @@ func stubDHCPSetup(t *testing.T, onBound func(name string, cb dhclient.Callback)
 	t.Cleanup(func() {
 		dhcpInterfaces, dhcpLinkByName, dhcpLinkSetUp, dhcpPrepareLink, dhcpNewClient, dhcpSetupTimeout = origIfaces, origByName, origUp, origPrep, origNew, origTimeout
 	})
+	origSub := dhcpSubscribe
+	t.Cleanup(func() { dhcpSubscribe = origSub })
+	dhcpSubscribe = func(chan<- netlink.LinkUpdate, <-chan struct{}, netlink.LinkSubscribeOptions) error { return nil }
 	dhcpInterfaces = func(context.Context) ([]net.Interface, error) {
 		return []net.Interface{{Name: "eth0", Index: 1}, {Name: "eth1", Index: 2}}, nil
 	}
@@ -605,8 +608,8 @@ func stubDHCPSetup(t *testing.T, onBound func(name string, cb dhclient.Callback)
 	var prepared []string
 	dhcpPrepareLink = func(name string) error { prepared = append(prepared, name); return nil }
 	t.Cleanup(func() {
-		if len(prepared) != 2 {
-			t.Errorf("promote_secondaries set on %v, want both NICs", prepared)
+		if len(prepared) < 2 {
+			t.Errorf("promote_secondaries set on %v, want every NIC", prepared)
 		}
 	})
 	clients := map[string]*fakeDHCPClient{}
@@ -1475,5 +1478,152 @@ func TestClientIDWithoutMachineID(t *testing.T) {
 	if !bytes.Equal(a, b) || !bytes.Equal(a, dhcpClientID("eth0", fallbackMachineID())) ||
 		bytes.Equal(a, dhcpClientID("eth0", "x")) || fallbackMachineID() == "" {
 		t.Fatalf("client IDs %x %x", a, b)
+	}
+}
+
+// A NIC that appears after Setup gets a client, like networkd matches a
+// link that udev announces later; after Teardown no new client starts.
+func TestSetupStartsClientsOnNewNICs(t *testing.T) {
+	clients := stubDHCPSetup(t, func(name string, cb dhclient.Callback) {
+		if name == "eth0" {
+			cb(lease24("10.0.2.15", "10.0.2.2"))
+		}
+	})
+	var mu sync.Mutex
+	lookups := 0
+	nics := make([]net.Interface, 0, 3)
+	nics = append(nics, net.Interface{Name: "eth0", Index: 1}, net.Interface{Name: "eth1", Index: 2})
+	dhcpInterfaces = func(context.Context) ([]net.Interface, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		lookups++
+		return slices.Clone(nics), nil
+	}
+	updates := make(chan chan<- netlink.LinkUpdate, 1)
+	dhcpSubscribe = func(ch chan<- netlink.LinkUpdate, done <-chan struct{}, _ netlink.LinkSubscribeOptions) error {
+		updates <- ch
+		go func() { <-done; close(ch) }()
+		return nil
+	}
+	d := NewDHCPMode()
+	if err := d.Setup(context.Background(), &Config{}); err != nil {
+		t.Fatal(err)
+	}
+	ch := <-updates
+	mu.Lock()
+	nics = append(nics, net.Interface{Name: "eth3", Index: 4})
+	mu.Unlock()
+	newLink := func(idx int, name string) netlink.LinkUpdate {
+		u := netlink.LinkUpdate{Link: dummyLink(name, idx)}
+		u.Header.Type = unix.RTM_NEWLINK
+		return u
+	}
+	ch <- newLink(1, "eth0")  // known: no second client
+	ch <- newLink(9, "veth9") // no NIC: looked up once
+	ch <- newLink(9, "veth9")
+	ch <- newLink(4, "eth3")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		d.mu.Lock()
+		_, ok := d.clients[4]
+		d.mu.Unlock()
+		if ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no client started for the new NIC eth3")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := d.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(clients) != 3 {
+		t.Fatalf("clients = %d, want eth0, eth1 and eth3", len(clients))
+	}
+	stoppedAll(t, clients, 1)
+	mu.Lock()
+	defer mu.Unlock()
+	if lookups != 1+1+1 { // Setup, veth9 once, eth3
+		t.Fatalf("NIC lookups = %d, want 3 (veth9 only once)", lookups)
+	}
+}
+
+// A client that the link watch starts while a restart runs (the MTU
+// restore sends RTM_NEWLINK) and the restarted one: only one stays, the
+// other is stopped, so none leaks past Teardown.
+func TestRestartAndLinkWatchKeepOneClient(t *testing.T) {
+	stubDHCPNetlink(t)
+	d := NewDHCPMode()
+	watch := &fakeRestartClient{}
+	var fresh *fakeRestartClient
+	start := func() dhcpClient {
+		// The watch puts its client in the slot while the restart starts.
+		d.mu.Lock()
+		d.clients = map[int]*nicClient{7: {client: watch}}
+		d.mu.Unlock()
+		fresh = &fakeRestartClient{}
+		return fresh
+	}
+	d.restartClient(7, "eth0", &nicClient{client: &fakeRestartClient{}, start: start})
+	if fresh.stops != 1 || d.clients[7].client != watch {
+		t.Fatalf("fresh stops %d, slot %+v: want the fresh client stopped and the watch client kept", fresh.stops, d.clients[7])
+	}
+}
+
+// startClient leaves a client that is already in the slot and stops its own.
+func TestStartClientKeepsTakenSlot(t *testing.T) {
+	clients := stubDHCPSetup(t, nil)
+	d := NewDHCPMode()
+	kept := &fakeRestartClient{}
+	d.clients = map[int]*nicClient{1: {client: kept}}
+	d.startClient(&net.Interface{Name: "eth0", Index: 1}, "", make(chan string, 1))
+	d.startClient(&net.Interface{Name: "eth1", Index: 2}, "", make(chan string, 1))
+	if d.clients[1].client != kept || clients["eth0"].stopped != 1 {
+		t.Fatalf("slot %+v, own client stops %d: want the slot kept and the own client stopped", d.clients[1], clients["eth0"].stopped)
+	}
+}
+
+// A link that is no NIC is looked up once; after RTM_DELLINK, or under a
+// new name, it is looked up again.
+func TestLinkUpdateNotNICCache(t *testing.T) {
+	stubDHCPSetup(t, nil)
+	lookups := 0
+	dhcpInterfaces = func(context.Context) ([]net.Interface, error) {
+		lookups++
+		return []net.Interface{{Name: "eth0", Index: 1}, {Name: "eth1", Index: 2}}, nil
+	}
+	d := NewDHCPMode()
+	d.startClient(&net.Interface{Name: "eth0", Index: 1}, "", make(chan string, 1))
+	d.startClient(&net.Interface{Name: "eth1", Index: 2}, "", make(chan string, 1))
+	update := func(typ uint16, idx int, name string) netlink.LinkUpdate {
+		u := netlink.LinkUpdate{Link: dummyLink(name, idx)}
+		u.Header.Type = typ
+		return u
+	}
+	notNIC := map[linkKey]bool{}
+	for _, u := range []netlink.LinkUpdate{
+		update(unix.RTM_NEWLINK, 9, "veth9"), update(unix.RTM_NEWLINK, 9, "veth9"), // one lookup
+		update(unix.RTM_NEWLINK, 9, "veth9x"),                                        // renamed: again
+		update(unix.RTM_DELLINK, 9, "veth9x"), update(unix.RTM_NEWLINK, 9, "veth9x"), // gone and back: again
+	} {
+		d.linkUpdate(u, notNIC, "", make(chan string, 1))
+	}
+	if lookups != 3 {
+		t.Fatalf("NIC lookups = %d, want 3", lookups)
+	}
+}
+
+// startClient after the stop keeps no client.
+func TestStartClientAfterStop(t *testing.T) {
+	clients := stubDHCPSetup(t, nil)
+	d := NewDHCPMode()
+	d.mu.Lock()
+	d.stopped = true
+	d.mu.Unlock()
+	d.startClient(&net.Interface{Name: "eth0", Index: 1}, "", make(chan string, 1))
+	d.startClient(&net.Interface{Name: "eth1", Index: 2}, "", make(chan string, 1))
+	if len(d.clients) != 0 || clients["eth0"].stopped != 1 {
+		t.Fatalf("clients %v, own client stops %d: want none kept and it stopped", d.clients, clients["eth0"].stopped)
 	}
 }

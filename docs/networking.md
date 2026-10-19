@@ -1108,6 +1108,10 @@ without portfast forwards only after 30 to 50 s, and the connectivity wait
 gets the lease. A connectivity retry tears the mode down (Teardown stops
 every client at once) and starts it again.
 
+A physical NIC that appears after Setup (a driver that brings up its
+ports late) gets its own client too, like networkd matches a link when udev
+announces it.
+
 A client on a NIC without a DHCP server sends a DISCOVER about every 6 s
 (go-dhclient: 5 s response timeout, 1 s pause) for the whole run;
 networkd backs off up to 64 s.
