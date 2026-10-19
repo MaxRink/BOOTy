@@ -19,9 +19,14 @@ func DHCPNTPServers() []string {
 	return append([]string(nil), dhcpNTP.servers...)
 }
 
-// setDHCPNTPServers records the option 42 payload of a lease: IPv4
-// addresses, four bytes each. A malformed payload clears the list.
+// setDHCPNTPServers records the option 42 payload of a lease.
 func setDHCPNTPServers(data []byte) {
+	setDHCPNTPList(parseNTPServers(data))
+}
+
+// parseNTPServers reads an option 42 payload: IPv4 addresses, four bytes
+// each. A malformed payload gives none.
+func parseNTPServers(data []byte) []string {
 	var servers []string
 	if len(data) > 0 && len(data)%net.IPv4len == 0 {
 		for i := 0; i < len(data); i += net.IPv4len {
@@ -32,6 +37,11 @@ func setDHCPNTPServers(data []byte) {
 			servers = append(servers, ip.String())
 		}
 	}
+	return servers
+}
+
+// setDHCPNTPList sets the published NTP servers of the DHCP leases.
+func setDHCPNTPList(servers []string) {
 	dhcpNTP.mu.Lock()
 	dhcpNTP.servers = servers
 	dhcpNTP.mu.Unlock()

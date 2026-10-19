@@ -4,14 +4,17 @@ package network
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"os"
 	"runtime"
+	"slices"
 	"testing"
 
 	"github.com/digineo/go-dhclient"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
+	"golang.org/x/sys/unix"
 )
 
 // TestDHCPNetlinkLeaseAppliesTwice applies the same lease twice to a real
@@ -32,9 +35,8 @@ func TestDHCPNetlinkLeaseAppliesTwice(t *testing.T) {
 	d := NewDHCPMode()
 	lease := &dhclient.Lease{FixedAddress: net.ParseIP("198.51.100.7")}
 	for attempt := 1; attempt <= 2; attempt++ {
-		leased := make(chan struct{}, 1)
-		var winner dhcpWinner
-		d.onBound(link, link.Name, leased, &winner)(lease)
+		leased := make(chan string, 1)
+		d.onBound(link, link.Name, leased)(lease)
 		select {
 		case <-leased:
 		default:
@@ -80,9 +82,8 @@ func TestDHCPNetlinkLeaseReplacesOtherPrefix(t *testing.T) {
 
 	d := NewDHCPMode()
 	lease := &dhclient.Lease{FixedAddress: net.ParseIP("198.51.100.7"), Netmask: net.CIDRMask(24, 32)}
-	leased := make(chan struct{}, 1)
-	var winner dhcpWinner
-	d.onBound(link, link.Name, leased, &winner)(lease)
+	leased := make(chan string, 1)
+	d.onBound(link, link.Name, leased)(lease)
 	select {
 	case <-leased:
 	default:
@@ -95,6 +96,109 @@ func TestDHCPNetlinkLeaseReplacesOtherPrefix(t *testing.T) {
 	}
 	if len(addrs) != 1 || addrs[0].IPNet.String() != "198.51.100.7/24" {
 		t.Fatalf("addresses = %v, want only 198.51.100.7/24", addrs)
+	}
+}
+
+// TestDHCPNetlinkLeasesOnTwoNICs applies a lease on each of two links, like
+// networkd does with "dhcp4: true" on every NIC: both keep their address
+// and both default routes stay (proto dhcp, metric 100). A renewal of the
+// same lease keeps the route. Teardown removes everything.
+func TestDHCPNetlinkLeasesOnTwoNICs(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Fatal("test requires root (run with sudo)")
+	}
+	enterTestNetns(t)
+	d := NewDHCPMode()
+	for i, net4 := range []string{"198.51.100", "203.0.113"} {
+		link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: fmt.Sprintf("dhcp-e2e%d", 2+i)}}
+		if err := netlink.LinkAdd(link); err != nil {
+			t.Fatalf("add dummy: %v", err)
+		}
+		if err := netlink.LinkSetUp(link); err != nil {
+			t.Fatalf("link up: %v", err)
+		}
+		t.Cleanup(func() { _ = netlink.LinkDel(link) })
+		lease := &dhclient.Lease{FixedAddress: net.ParseIP(net4 + ".7"), Netmask: net.CIDRMask(24, 32), Router: []net.IP{net.ParseIP(net4 + ".1")}}
+		for range 2 {
+			leased := make(chan string, 1)
+			d.onBound(link, link.Name, leased)(lease)
+			if len(leased) != 1 {
+				t.Fatalf("%s: lease was not reported as bound", link.Name)
+			}
+		}
+	}
+
+	routes, err := netlink.RouteListFiltered(netlink.FAMILY_V4, &netlink.Route{Table: unix.RT_TABLE_MAIN}, netlink.RT_FILTER_TABLE)
+	if err != nil {
+		t.Fatalf("list routes: %v", err)
+	}
+	var defaults []string
+	for _, r := range routes {
+		if r.Dst == nil || r.Dst.String() == "0.0.0.0/0" {
+			defaults = append(defaults, fmt.Sprintf("%s src %s metric %d proto %d", r.Gw, r.Src, r.Priority, r.Protocol))
+		}
+	}
+	slices.Sort(defaults)
+	want := []string{"198.51.100.1 src 198.51.100.7 metric 100 proto 16", "203.0.113.1 src 203.0.113.7 metric 100 proto 16"}
+	if !slices.Equal(defaults, want) {
+		t.Fatalf("default routes = %v, want %v", defaults, want)
+	}
+
+	if err := d.Teardown(context.Background()); err != nil {
+		t.Fatalf("Teardown() error = %v", err)
+	}
+	if routes, err = netlink.RouteListFiltered(netlink.FAMILY_V4, &netlink.Route{Table: unix.RT_TABLE_MAIN}, netlink.RT_FILTER_TABLE); err != nil {
+		t.Fatalf("list routes: %v", err)
+	}
+	for _, r := range routes {
+		if r.Dst == nil || r.Dst.String() == "0.0.0.0/0" {
+			t.Fatalf("default route %v left after Teardown", r)
+		}
+	}
+}
+
+// TestDHCPNetlinkNewAddressSameSubnet: a renewal with a new address in the
+// same subnet adds it as a secondary address. With promote_secondaries=1
+// (systemd's default, set by Setup) removing the old primary keeps it and
+// its default route; without it the kernel removes the new address too.
+func TestDHCPNetlinkNewAddressSameSubnet(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Fatal("test requires root (run with sudo)")
+	}
+	enterTestNetns(t)
+	link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "dhcp-e2e9"}}
+	if err := netlink.LinkAdd(link); err != nil {
+		t.Fatalf("add dummy: %v", err)
+	}
+	t.Cleanup(func() { _ = netlink.LinkDel(link) })
+	if err := netlink.LinkSetUp(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := promoteSecondaries(link.Name); err != nil {
+		t.Fatalf("promote_secondaries: %v", err)
+	}
+	d := NewDHCPMode()
+	for _, ip := range []string{"198.51.100.7", "198.51.100.8"} {
+		d.onBound(link, link.Name, make(chan string, 1))(&dhclient.Lease{
+			FixedAddress: net.ParseIP(ip), Netmask: net.CIDRMask(24, 32), Router: []net.IP{net.ParseIP("198.51.100.1")},
+		})
+	}
+	addrs, err := netlink.AddrList(link, netlink.FAMILY_V4)
+	if err != nil || len(addrs) != 1 || addrs[0].IPNet.String() != "198.51.100.8/24" {
+		t.Fatalf("addresses = %v (err %v), want only 198.51.100.8/24", addrs, err)
+	}
+	routes, err := netlink.RouteListFiltered(netlink.FAMILY_V4, &netlink.Route{Table: unix.RT_TABLE_MAIN}, netlink.RT_FILTER_TABLE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var defaults int
+	for _, r := range routes {
+		if (r.Dst == nil || r.Dst.String() == "0.0.0.0/0") && r.Src.Equal(net.ParseIP("198.51.100.8")) {
+			defaults++
+		}
+	}
+	if defaults != 1 {
+		t.Fatalf("routes = %v, want the default route with source 198.51.100.8", routes)
 	}
 }
 

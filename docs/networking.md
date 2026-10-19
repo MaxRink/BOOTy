@@ -1096,17 +1096,40 @@ BOOTy retries the scan for up to 10 s while names start with `clab`
 
 ## DHCP
 
-DHCP mode probes all physical NICs in parallel. Each probe has a 15 s
-timeout. The first lease wins and BOOTy stops the other probes.
+DHCP mode works like systemd-networkd with the legacy ramdisk's netplan
+(`dhcp4: true` on every `en*` and `eth*` NIC): a DHCP client runs on every
+physical NIC for the whole run, and every lease configures its own NIC.
+Setup sets `promote_secondaries=1` on each NIC (systemd's sysctl default in
+the legacy ramdisk), so a renewal with a new address in the same subnet
+keeps it when the old address goes. Setup returns after the first lease.
+Without a lease on any NIC within 15 s the network setup reports a
+failure, but the clients keep sending, like networkd: a switch port
+without portfast forwards only after 30 to 50 s, and the connectivity wait
+gets the lease. A connectivity retry tears the mode down (Teardown stops
+every client at once) and starts it again.
+
+A client on a NIC without a DHCP server sends a DISCOVER about every 6 s
+(go-dhclient: 5 s response timeout, 1 s pause) for the whole run;
+networkd backs off up to 64 s.
+
+The NTP servers (option 42) of all leases, by NIC and each once, go to the
+time sync, like networkd hands the servers of every link to timesyncd; a
+NIC without option 42 does not drop the servers of another NIC, and
+Teardown drops them all. The legacy ramdisk has no timesyncd, so it sends
+no NTP request.
 
 The client requests the default parameter list: subnet mask, router, time
 server, DNS server, domain name, interface MTU and NTP servers. It sends the
 ramdisk hostname (option 12) when one is set.
 
-On the first lease, BOOTy:
+On every lease (also renewals and leases on the other NICs), BOOTy:
 
-- adds the leased address with the leased mask to the NIC;
-- adds a default route through the first router from the lease.
+- adds the leased address with the leased mask to the NIC and removes the
+  address of the previous lease of that NIC;
+- adds a default route through the first router of the lease, with the
+  lease address as source, metric 100 and `proto dhcp`, like networkd with
+  netplan. The default routes of all NICs stay next to each other. A lease
+  without a router removes the default route of its NIC.
 
 BOOTy does not apply DNS servers or the MTU from the lease. Set
 `dns_resolver` for DNS.
