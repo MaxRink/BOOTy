@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -199,27 +200,40 @@ func TestDHCPSetup_ContextCancelPropagates(t *testing.T) {
 	}
 }
 
-func TestNewDHCPClientRequestsDefaultParams(t *testing.T) {
-	for _, hostname := range []string{"(none)", ""} {
-		client := newDHCPClient(&net.Interface{Name: "eth0"}, hostname, nil, nil)
-
-		var params []byte
-		var gotHostname []byte
+// TestNewDHCPClientSendsNetworkdOptions pins the options of networkd
+// (systemd 255) as captured in kindmetal: 61 (type 255, IAID, DUID-EN),
+// 55 with networkd's list, 57 (MTU less 28) and 12 when a hostname is set.
+func TestNewDHCPClientSendsNetworkdOptions(t *testing.T) {
+	id := dhcpClientID("eth0", "0123456789abcdef0123456789abcdef")
+	if len(id) != 19 || id[0] != 255 || id[5] != 0 || id[6] != 2 || !bytes.Equal(id[7:11], []byte{0, 0, 0xab, 0x11}) {
+		t.Fatalf("client ID = %x, want type 255, IAID, DUID-EN 43793", id)
+	}
+	for _, hostname := range []string{"e2e-test-rfm-0", ""} {
+		client := newDHCPClient(&net.Interface{Name: "eth0", MTU: 1500}, hostname, id, nil, nil)
+		var types []layers.DHCPOpt
 		for _, opt := range client.DHCPOptions {
+			types = append(types, opt.Type)
 			switch opt.Type {
 			case layers.DHCPOptParamsRequest:
-				params = opt.Data
+				if want := []byte{1, 3, 6, 12, 15, 26, 33, 42, 114, 119, 120, 121}; !bytes.Equal(opt.Data, want) {
+					t.Errorf("parameter request list = %v, want %v", opt.Data, want)
+				}
+			case layers.DHCPOptMaxMessageSize:
+				if !bytes.Equal(opt.Data, []byte{0x05, 0xc0}) {
+					t.Errorf("max message size = %x, want 1472", opt.Data)
+				}
 			case layers.DHCPOptHostname:
-				gotHostname = opt.Data
+				if string(opt.Data) != hostname {
+					t.Errorf("hostname option = %q, want %q", opt.Data, hostname)
+				}
 			}
 		}
-		for _, want := range []layers.DHCPOpt{layers.DHCPOptSubnetMask, layers.DHCPOptRouter, layers.DHCPOptDNS} {
-			if !bytes.Contains(params, []byte{byte(want)}) {
-				t.Errorf("hostname %q: parameter request list %v misses %s", hostname, params, want)
-			}
+		want := []layers.DHCPOpt{layers.DHCPOptClientID, layers.DHCPOptParamsRequest, layers.DHCPOptMaxMessageSize}
+		if hostname != "" {
+			want = append(want, layers.DHCPOptHostname)
 		}
-		if string(gotHostname) != hostname {
-			t.Errorf("hostname option = %q, want %q", gotHostname, hostname)
+		if !slices.Equal(types, want) {
+			t.Errorf("hostname %q: options = %v, want %v", hostname, types, want)
 		}
 	}
 }
@@ -330,16 +344,20 @@ func TestOnBoundReplacesStateAndTeardownRemovesIt(t *testing.T) {
 	if len(addrs) != 1 || addrs[0].IPNet.String() != "10.0.2.15/24" {
 		t.Fatalf("addresses = %v, want 10.0.2.15/24", addrs)
 	}
-	r := routes[0]
-	if len(routes) != 1 || r.LinkIndex != 7 || !r.Gw.Equal(net.ParseIP("10.0.2.2")) || !r.Src.Equal(net.ParseIP("10.0.2.15")) ||
+	// networkd: a host route to the gateway, then the default route.
+	if len(routes) != 2 || routes[0].Dst.String() != "10.0.2.2/32" || routes[0].Scope != netlink.SCOPE_LINK {
+		t.Fatalf("routes = %+v, want the host route to 10.0.2.2 first", routes)
+	}
+	r := routes[1]
+	if r.Dst != nil || r.LinkIndex != 7 || !r.Gw.Equal(net.ParseIP("10.0.2.2")) || !r.Src.Equal(net.ParseIP("10.0.2.15")) ||
 		r.Priority != dhcpRouteMetric || r.Protocol != unix.RTPROT_DHCP {
-		t.Fatalf("default route = %+v, want via 10.0.2.2 src 10.0.2.15 on link 7, metric 100, proto dhcp", routes)
+		t.Fatalf("default route = %+v, want via 10.0.2.2 src 10.0.2.15 on link 7, metric 100, proto dhcp", r)
 	}
 
 	if err := d.Teardown(context.Background()); err != nil {
 		t.Fatalf("Teardown() error = %v", err)
 	}
-	if len(delAddrs) != 1 || len(delRoutes) != 1 {
+	if len(delAddrs) != 1 || len(delRoutes) != 2 {
 		t.Fatalf("Teardown removed addrs=%v routes=%v, want the lease address and route", delAddrs, delRoutes)
 	}
 }
@@ -366,7 +384,12 @@ func TestOnBoundAppliesEveryNIC(t *testing.T) {
 		}
 		return nil
 	}
-	dhcpRouteAdd = func(r *netlink.Route) error { routes = append(routes, r.Gw.String()); return nil }
+	dhcpRouteAdd = func(r *netlink.Route) error {
+		if r.Gw != nil {
+			routes = append(routes, r.Gw.String())
+		}
+		return nil
+	}
 
 	d := NewDHCPMode()
 	leased := make(chan string, 3)
@@ -447,8 +470,8 @@ func TestOnBoundAppliesRenewal(t *testing.T) {
 	if want := []string{"eth0 10.0.2.15/24"}; !slices.Equal(deleted, want) {
 		t.Fatalf("addresses deleted = %v, want %v", deleted, want)
 	}
-	if routeDels != 1 {
-		t.Fatalf("route deletes = %d, want the route with the old source", routeDels)
+	if routeDels != 2 {
+		t.Fatalf("route deletes = %d, want the gateway and default routes with the old source", routeDels)
 	}
 	if len(d.nics) != 2 || d.nics[1].addr.IPNet.String() != "10.0.2.16/24" || d.nics[2].addr.IPNet.String() != "10.0.3.15/24" {
 		t.Fatalf("applied state = %v, want eth0 10.0.2.16/24 and eth1 10.0.3.15/24", d.nics)
@@ -479,7 +502,7 @@ func TestOnBoundRenewalRouteFailureKeepsPreviousLease(t *testing.T) {
 	if want := []string{"10.0.2.16/24"}; !slices.Equal(deleted, want) {
 		t.Fatalf("deleted = %v, want only the new address rolled back", deleted)
 	}
-	if d.nics[1].addr.IPNet.String() != "10.0.2.15/24" || d.nics[1].route == nil {
+	if d.nics[1].addr.IPNet.String() != "10.0.2.15/24" || len(d.nics[1].routes) == 0 {
 		t.Fatalf("applied state = %v, want the previous lease 10.0.2.15/24 with its route", d.nics)
 	}
 }
@@ -506,7 +529,7 @@ func TestOnBoundRenewalDropsRouteAndRestoresMask(t *testing.T) {
 	bound(lease24("10.0.2.15", "10.0.2.2"))
 	// Renewal without a router option removes the old default route.
 	bound(lease24("10.0.2.15"))
-	if routeDels != 1 || d.nics[1].route != nil {
+	if routeDels != 2 || len(d.nics[1].routes) != 0 {
 		t.Fatalf("route deletes = %d, applied state = %v, want the old default route removed", routeDels, d.nics)
 	}
 
@@ -726,11 +749,12 @@ func TestOnBoundGatewayChangeAndStaleTeardown(t *testing.T) {
 	bound := d.onBound(dummyLink("eth0", 1), "eth0", make(chan string, 2))
 	bound(lease24("10.0.2.15", "10.0.2.2"))
 	bound(lease24("10.0.2.15", "10.0.2.3"))
-	if !slices.Equal(deleted, []string{"10.0.2.2"}) {
-		t.Fatalf("route deletes = %v, want the old route via 10.0.2.2", deleted)
+	// The host route to the old gateway and the old default route.
+	if !slices.Equal(deleted, []string{"<nil>", "10.0.2.2"}) {
+		t.Fatalf("route deletes = %v, want the old gateway and default routes", deleted)
 	}
-	if len(d.stale) != 1 || d.stale[0].addr != nil || !d.stale[0].route.Gw.Equal(net.ParseIP("10.0.2.2")) {
-		t.Fatalf("stale = %+v, want the old route tracked", d.stale)
+	if len(d.stale) != 2 || d.stale[0].addr != nil || d.stale[1].addr != nil || !d.stale[1].routes[0].Gw.Equal(net.ParseIP("10.0.2.2")) {
+		t.Fatalf("stale = %+v, want the old routes tracked", d.stale)
 	}
 	failDel = false
 	deleted = nil
@@ -738,8 +762,8 @@ func TestOnBoundGatewayChangeAndStaleTeardown(t *testing.T) {
 		t.Fatal(err)
 	}
 	slices.Sort(deleted)
-	if !slices.Equal(deleted, []string{"10.0.2.2", "10.0.2.3"}) || len(addrDels) != 1 {
-		t.Fatalf("Teardown deleted routes %v and %d addresses, want both routes and the lease address", deleted, len(addrDels))
+	if !slices.Equal(deleted, []string{"10.0.2.2", "10.0.2.3", "<nil>", "<nil>"}) || len(addrDels) != 1 {
+		t.Fatalf("Teardown deleted routes %v and %d addresses, want all four routes and the lease address", deleted, len(addrDels))
 	}
 }
 
@@ -780,8 +804,8 @@ func TestOnExpireRemovesLeaseState(t *testing.T) {
 	d.onBound(eth1, "eth1", make(chan string, 2))(lease24("10.0.3.15", "10.0.3.2"))
 
 	d.onExpire(eth0, "eth0")(nil)
-	if len(delAddrs) != 1 || delAddrs[0].IPNet.String() != "10.0.2.15/24" || len(delRoutes) != 1 || delRoutes[0].LinkIndex != 7 {
-		t.Fatalf("ended lease removed addrs=%v routes=%v, want 10.0.2.15/24 and its default route", delAddrs, delRoutes)
+	if len(delAddrs) != 1 || delAddrs[0].IPNet.String() != "10.0.2.15/24" || len(delRoutes) != 2 || delRoutes[0].LinkIndex != 7 || delRoutes[1].LinkIndex != 7 {
+		t.Fatalf("ended lease removed addrs=%v routes=%v, want 10.0.2.15/24, its gateway route and its default route", delAddrs, delRoutes)
 	}
 	if _, ok := d.nics[7]; ok {
 		t.Fatal("eth0 still has lease state")
@@ -802,7 +826,7 @@ func TestOnExpireRemovesLeaseState(t *testing.T) {
 
 func TestNewDHCPClientSetsExpireCallback(t *testing.T) {
 	called := false
-	client := newDHCPClient(&net.Interface{Name: "eth0"}, "", nil, func(*dhclient.Lease) { called = true })
+	client := newDHCPClient(&net.Interface{Name: "eth0"}, "", nil, nil, func(*dhclient.Lease) { called = true })
 	if client.OnExpire == nil {
 		t.Fatal("client has no OnExpire callback")
 	}
@@ -896,8 +920,9 @@ func TestEndLeaseKeepsFailedDeletesForTeardown(t *testing.T) {
 	dhcpRouteDel = func(*netlink.Route) error { return boom }
 	dhcpAddrDel = func(netlink.Link, *netlink.Addr) error { return boom }
 	d.onExpire(eth0, "eth0")(nil)
-	if len(d.stale) != 2 || d.stale[0].route == nil || d.stale[1].addr == nil {
-		t.Fatalf("stale state %+v, want the route and the address", d.stale)
+	// The gateway host route, the default route and the address.
+	if len(d.stale) != 3 || len(d.stale[0].routes) != 1 || len(d.stale[1].routes) != 1 || d.stale[2].addr == nil {
+		t.Fatalf("stale state %+v, want both routes and the address", d.stale)
 	}
 	var routes, addrs int
 	dhcpRouteDel = func(*netlink.Route) error { routes++; return nil }
@@ -905,7 +930,7 @@ func TestEndLeaseKeepsFailedDeletesForTeardown(t *testing.T) {
 	if err := d.Teardown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if routes != 1 || addrs != 1 {
+	if routes != 2 || addrs != 1 {
 		t.Fatalf("Teardown removed %d routes and %d addresses, want the stale ones", routes, addrs)
 	}
 }
@@ -1300,5 +1325,155 @@ func TestEndLeaseKeepsFailedMTURestore(t *testing.T) {
 	}
 	if want := []int{9000, 1500, 1500}; !slices.Equal(mtus, want) {
 		t.Fatalf("MTUs = %v, want %v (Teardown retries the restore)", mtus, want)
+	}
+}
+
+// Option 121 replaces the router of option 3 (RFC 3442, networkd); an
+// on-link destination gets a link-scope route.
+func TestOnBoundAppliesClasslessRoutes(t *testing.T) {
+	stubDHCPNetlink(t)
+	var added []string
+	dhcpRouteAdd = func(r *netlink.Route) error {
+		added = append(added, fmt.Sprintf("%s via %v scope %d", routeDst(r), r.Gw, r.Scope))
+		return nil
+	}
+	l := lease24("10.0.2.15", "10.0.2.99")
+	// 0.0.0.0/0 via 10.0.2.1, 10.20.0.0/16 via 10.0.2.2, 10.0.9.0/24 on link.
+	l.OtherOptions = []dhclient.Option{{Type: dhcpOptClasslessRoutes, Data: []byte{
+		0, 10, 0, 2, 1,
+		16, 10, 20, 10, 0, 2, 2,
+		24, 10, 0, 9, 0, 0, 0, 0,
+	}}}
+	NewDHCPMode().onBound(dummyLink("eth0", 1), "eth0", make(chan string, 1))(l)
+	want := []string{
+		"10.0.2.1/32 via <nil> scope 253", "10.0.2.2/32 via <nil> scope 253",
+		"default via 10.0.2.1 scope 0", "10.20.0.0/16 via 10.0.2.2 scope 0", "10.0.9.0/24 via <nil> scope 253",
+	}
+	if !slices.Equal(added, want) {
+		t.Fatalf("routes = %q, want %q", added, want)
+	}
+	if _, ok := classlessRoutes([]byte{33, 1, 2, 3, 4, 5, 6, 7, 8}); ok {
+		t.Fatal("a width over 32 must make the option invalid")
+	}
+	if _, ok := classlessRoutes([]byte{24, 10, 0}); ok {
+		t.Fatal("a truncated option must be invalid")
+	}
+}
+
+func TestLeaseSearchDomains(t *testing.T) {
+	// "a.example" then "b.example" with a pointer to "example" (RFC 3397).
+	data := []byte{1, 'a', 7, 'e', 'x', 'a', 'm', 'p', 'l', 'e', 0, 1, 'b', 0xc0, 2}
+	l := &dhclient.Lease{DomainName: "l2.example", OtherOptions: []dhclient.Option{{Type: dhcpOptDomainSearch, Data: data}}}
+	if got, want := leaseSearchDomains(l), []string{"l2.example", "a.example", "b.example"}; !slices.Equal(got, want) {
+		t.Fatalf("search domains = %q, want %q", got, want)
+	}
+	if got := domainSearch([]byte{0xc0, 0}); got != nil {
+		t.Fatalf("a pointer loop gave %q", got)
+	}
+}
+
+// leaseRoutes cases: null routers (networkd-dhcp4.c), option 33 without
+// 121, masked option 121 destinations, host routes for localhost and the
+// lease address.
+func TestLeaseRoutesTable(t *testing.T) {
+	link := dummyLink("eth0", 1)
+	addr := &netlink.Addr{IPNet: &net.IPNet{IP: net.ParseIP("10.0.2.15").To4(), Mask: net.CIDRMask(24, 32)}}
+	show := func(rs []*netlink.Route) []string {
+		out := make([]string, 0, len(rs))
+		for _, r := range rs {
+			out = append(out, fmt.Sprintf("%s via %v scope %d src %v", routeDst(r), r.Gw, r.Scope, r.Src))
+		}
+		return out
+	}
+	opt := func(typ layers.DHCPOpt, data ...byte) []dhclient.Option {
+		return []dhclient.Option{{Type: typ, Data: data}}
+	}
+	for _, tt := range []struct {
+		name    string
+		routers []string
+		opts    []dhclient.Option
+		want    []string
+	}{
+		{"first router not null", []string{"0.0.0.0", "10.0.2.2"}, nil,
+			[]string{"10.0.2.2/32 via <nil> scope 253 src 10.0.2.15", "default via 10.0.2.2 scope 0 src 10.0.2.15"}},
+		{"all routers null", []string{"0.0.0.0"}, nil, nil},
+		{"option 33 and router", []string{"10.0.2.2"}, opt(dhcpOptStaticRoutes, 10, 30, 1, 0, 10, 0, 2, 5, 0, 0, 0, 0, 10, 0, 2, 6, 224, 0, 0, 1, 10, 0, 2, 7),
+			[]string{"10.0.2.5/32 via <nil> scope 253 src 10.0.2.15", "10.0.2.2/32 via <nil> scope 253 src 10.0.2.15",
+				"10.0.0.0/8 via 10.0.2.5 scope 0 src 10.0.2.15", "default via 10.0.2.2 scope 0 src 10.0.2.15"}},
+		{"option 121 masked, host routes", []string{"10.0.2.99"}, append(opt(dhcpOptStaticRoutes, 10, 30, 1, 0, 10, 0, 2, 5),
+			opt(dhcpOptClasslessRoutes, 12, 10, 47, 10, 0, 2, 2, 32, 127, 0, 0, 1, 0, 0, 0, 0, 32, 10, 0, 2, 15, 10, 0, 2, 2)...),
+			[]string{"10.0.2.2/32 via <nil> scope 253 src 10.0.2.15", "10.32.0.0/12 via 10.0.2.2 scope 0 src 10.0.2.15",
+				"127.0.0.1/32 via <nil> scope 254 src <nil>", "10.0.2.15/32 via <nil> scope 254 src 10.0.2.15"}},
+	} {
+		l := lease24("10.0.2.15", tt.routers...)
+		l.OtherOptions = tt.opts
+		if got := show(leaseRoutes(link, addr, l)); !slices.Equal(got, tt.want) {
+			t.Errorf("%s: routes =\n%q\nwant\n%q", tt.name, got, tt.want)
+		}
+	}
+}
+
+func FuzzClasslessRoutes(f *testing.F) {
+	f.Add([]byte{0, 10, 0, 2, 1, 16, 10, 20, 10, 0, 2, 2})
+	f.Add([]byte{33, 1, 2, 3, 4, 5, 6, 7, 8})
+	f.Add([]byte{24, 10, 0})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		routes, _ := classlessRoutes(data)
+		for _, r := range routes {
+			ones, bits := r.dst.Mask.Size()
+			if bits != 32 || ones > 32 || !r.dst.IP.Equal(r.dst.IP.Mask(r.dst.Mask)) || len(r.gw) != 4 {
+				t.Fatalf("bad route %v via %v", r.dst, r.gw)
+			}
+		}
+		_ = staticRoutes(data)
+	})
+}
+
+func FuzzDomainSearch(f *testing.F) {
+	f.Add([]byte{1, 'a', 7, 'e', 'x', 'a', 'm', 'p', 'l', 'e', 0, 1, 'b', 0xc0, 2})
+	f.Add([]byte{0xc0, 0})
+	f.Add([]byte{3, 'c', 'o', 'm', 0, 1, 'x', 0xc0, 0, 1, 'y', 0xc0, 5})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		for _, d := range domainSearch(data) {
+			if len(d) > 253 {
+				t.Fatalf("name of %d bytes", len(d))
+			}
+		}
+	})
+}
+
+// Malformed options 33 and 119 are ignored as a whole, like networkd.
+func TestMalformedRouteAndSearchOptions(t *testing.T) {
+	if got := staticRoutes([]byte{10, 30, 1, 0, 10, 0, 2, 5, 1}); got != nil {
+		t.Errorf("option 33 of 9 bytes = %v, want ignored", got)
+	}
+	ok := []byte{1, 'a', 7, 'e', 'x', 'a', 'm', 'p', 'l', 'e', 0}
+	for name, data := range map[string][]byte{
+		"forward pointer": append(append([]byte(nil), ok...), 1, 'b', 0xc0, 20),
+		"label type 01":   append(append([]byte(nil), ok...), 0x41, 'b', 0),
+		"label type 10":   append(append([]byte(nil), ok...), 0x81, 'b', 0),
+		"truncated":       append(append([]byte(nil), ok...), 5, 'b'),
+		// A forward pointer onto a valid name in the data, and reserved
+		// label types with enough bytes after them for a label.
+		"forward pointer onto a name": {1, 'a', 0xc0, 4, 1, 'b', 0},
+		"label type 01, long":         append(append([]byte{0x41}, bytes.Repeat([]byte{'x'}, 0x41)...), 0),
+		"label type 10, long":         append(append([]byte{0x81}, bytes.Repeat([]byte{'x'}, 0x81)...), 0),
+	} {
+		if got := domainSearch(data); got != nil {
+			t.Errorf("%s: domainSearch = %q, want the option ignored", name, got)
+		}
+	}
+	if got := domainSearch(ok); !slices.Equal(got, []string{"a.example"}) {
+		t.Errorf("domainSearch = %q", got)
+	}
+}
+
+// Without a machine ID the client identifier uses a random ID of the run:
+// stable within the run.
+func TestClientIDWithoutMachineID(t *testing.T) {
+	a, b := dhcpClientID("eth0", ""), dhcpClientID("eth0", "")
+	if !bytes.Equal(a, b) || !bytes.Equal(a, dhcpClientID("eth0", fallbackMachineID())) ||
+		bytes.Equal(a, dhcpClientID("eth0", "x")) || fallbackMachineID() == "" {
+		t.Fatalf("client IDs %x %x", a, b)
 	}
 }

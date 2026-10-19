@@ -80,6 +80,11 @@ func SystemInfo() Info {
 	return info
 }
 
+// MachineID returns the machine ID of this boot (see machineID), or ""
+// when it cannot be created. DHCP derives its client identifier from it,
+// like networkd.
+func MachineID() string { return machineID() }
+
 // machineIDPath holds the machine ID of this boot. It is not
 // /etc/machine-id: the ramdisk has none, a value there could come with the
 // image (the same on every host) or from the provisioned OS, and BOOTy must

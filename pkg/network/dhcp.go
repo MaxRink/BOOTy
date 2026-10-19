@@ -18,6 +18,7 @@ import (
 
 	"github.com/digineo/go-dhclient"
 	"github.com/google/gopacket/layers"
+	"github.com/telekom/BOOTy/pkg/network/lldp"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netlink/nl"
 	"golang.org/x/sys/unix"
@@ -79,17 +80,18 @@ type leaseTimer struct {
 // dhcpAfterFunc is time.AfterFunc; tests replace it.
 var dhcpAfterFunc = time.AfterFunc
 
-// dhcpApplied is what a lease configured: address, default route, DNS
-// and NTP servers.
+// dhcpApplied is what a lease configured: address, routes, DNS and NTP
+// servers.
 type dhcpApplied struct {
-	link  netlink.Link
-	addr  *netlink.Addr
-	route *netlink.Route
-	dns   []string
-	ntp   []string
-	// domain is the lease domain (option 15), a search domain like
-	// networkd with netplan (the legacy resolv.conf has it as "search").
-	domain string
+	link   netlink.Link
+	addr   *netlink.Addr
+	routes []*netlink.Route
+	dns    []string
+	ntp    []string
+	// domains are the lease domain (option 15) and search list (option
+	// 119), search domains like networkd with netplan (the legacy
+	// resolv.conf has them as "search").
+	domains []string
 }
 
 // dhcpClient is the part of a go-dhclient client that DHCPMode uses.
@@ -105,7 +107,7 @@ var (
 	dhcpLinkSetUp   = netlink.LinkSetUp
 	dhcpPrepareLink = promoteSecondaries
 	dhcpNewClient   = func(iface *net.Interface, hostname string, onBound, onExpire dhclient.Callback) dhcpClient {
-		return newDHCPClient(iface, hostname, onBound, onExpire)
+		return newDHCPClient(iface, hostname, dhcpClientID(iface.Name, lldp.MachineID()), onBound, onExpire)
 	}
 )
 
@@ -320,15 +322,18 @@ func (d *DHCPMode) clientFor(iface *net.Interface, link netlink.Link, hostname s
 	return dhcpNewClient(iface, hostname, d.onBound(link, iface.Name, leased), d.onExpire(link, iface.Name))
 }
 
-// newDHCPClient builds a client that requests the default parameters
-// (subnet mask, router, DNS, MTU and more) and sends the hostname.
-// dhclient only adds the parameter request list when no option is set, so
-// adding the hostname alone would drop it.
-func newDHCPClient(iface *net.Interface, hostname string, onBound, onExpire dhclient.Callback) *dhclient.Client {
+// newDHCPClient builds a client that sends the options of networkd, in
+// its order after the message type: client identifier (61), parameter
+// request list (55), maximum message size (57, MTU less 28) and host name
+// (12) when one is set. go-dhclient adds the requested address (50) and
+// the server identifier (54) to a REQUEST after them.
+func newDHCPClient(iface *net.Interface, hostname string, clientID []byte, onBound, onExpire dhclient.Callback) *dhclient.Client {
 	client := &dhclient.Client{Iface: iface, OnBound: onBound, OnExpire: onExpire}
-	for _, param := range dhclient.DefaultParamsRequestList {
+	client.AddOption(layers.DHCPOptClientID, clientID)
+	for _, param := range networkdParams {
 		client.AddParamRequest(param)
 	}
+	client.AddOption(layers.DHCPOptMaxMessageSize, dhcpMaxMessageSize(iface.MTU))
 	if hostname != "" {
 		client.AddOption(layers.DHCPOptHostname, []byte(hostname))
 	}
@@ -474,10 +479,10 @@ func (d *DHCPMode) endLease(link netlink.Link, ifName string) {
 		}
 	}
 	removed := true
-	if a.route != nil {
-		if err := dhcpRouteDel(a.route); err != nil && !errors.Is(err, syscall.ESRCH) {
-			d.log.Warn("failed to remove the default route of an ended DHCP lease", "iface", ifName, "error", err)
-			d.stale = append(d.stale, dhcpApplied{link: link, route: a.route})
+	for _, r := range a.routes {
+		if err := dhcpRouteDel(r); err != nil && !errors.Is(err, syscall.ESRCH) {
+			d.log.Warn("failed to remove a route of an ended DHCP lease", "iface", ifName, "route", routeDst(r), "error", err)
+			d.stale = append(d.stale, dhcpApplied{link: link, routes: []*netlink.Route{r}})
 			removed = false
 		}
 	}
@@ -505,7 +510,7 @@ func (d *DHCPMode) apply(link netlink.Link, addr *netlink.Addr, lease *dhclient.
 	if err := dhcpAddrReplace(link, addr); err != nil {
 		return fmt.Errorf("assign DHCP address: %w", err)
 	}
-	route, err := d.applyRoute(link, addr, lease, prev.route)
+	routes, err := d.applyRoutes(link, addr, lease, prev.routes)
 	if err != nil {
 		d.dropUnappliedAddr(link, addr, &prev, had)
 		return err
@@ -516,7 +521,7 @@ func (d *DHCPMode) apply(link netlink.Link, addr *netlink.Addr, lease *dhclient.
 			d.stale = append(d.stale, dhcpApplied{link: link, addr: prev.addr})
 		}
 	}
-	d.nics[idx] = dhcpApplied{link: link, addr: addr, route: route, dns: leaseDNS(lease), ntp: leaseNTPServers(lease), domain: leaseDomain(lease.DomainName)}
+	d.nics[idx] = dhcpApplied{link: link, addr: addr, routes: routes, dns: leaseDNS(lease), ntp: leaseNTPServers(lease), domains: leaseSearchDomains(lease)}
 	d.applyMTU(link, lease.MTU)
 	d.writeResolvers()
 	return nil
@@ -576,8 +581,10 @@ func (d *DHCPMode) writeResolvers() {
 				servers = append(servers, s)
 			}
 		}
-		if n.domain != "" && !slices.Contains(search, n.domain) {
-			search = append(search, n.domain)
+		for _, dom := range n.domains {
+			if !slices.Contains(search, dom) {
+				search = append(search, dom)
+			}
 		}
 	}
 	content := strings.Join(servers, ",") + " search " + strings.Join(search, " ")
@@ -594,33 +601,45 @@ func (d *DHCPMode) writeResolvers() {
 	d.written = content
 }
 
-// applyRoute adds the default route of a lease (proto dhcp, the lease
-// address as source, metric 100, like networkd) next to the default routes
-// of other NICs, then removes the previous route of this NIC. A lease
-// without a router option removes it (RFC 2131 4.4.5).
-func (d *DHCPMode) applyRoute(link netlink.Link, addr *netlink.Addr, lease *dhclient.Lease, prev *netlink.Route) (*netlink.Route, error) {
-	var route *netlink.Route
-	if len(lease.Router) > 0 {
-		route = &netlink.Route{
-			LinkIndex: link.Attrs().Index,
-			Gw:        lease.Router[0],
-			Src:       addr.IP,
-			Priority:  dhcpRouteMetric,
-			Protocol:  unix.RTPROT_DHCP,
+// applyRoutes adds the routes of a lease (leaseRoutes) next to the routes
+// of other NICs, then removes the routes of the previous lease of this NIC
+// that the lease does not have. Routes are appended, so a second NIC's
+// default route does not replace the first; a route that is there already
+// (a renewal) is EEXIST. When a route fails, the routes added here are
+// removed again and the previous ones stay.
+func (d *DHCPMode) applyRoutes(link netlink.Link, addr *netlink.Addr, lease *dhclient.Lease, prev []*netlink.Route) ([]*netlink.Route, error) {
+	want := leaseRoutes(link, addr, lease)
+	var added []*netlink.Route
+	for _, r := range want {
+		if err := dhcpRouteAdd(r); err != nil && !errors.Is(err, syscall.EEXIST) {
+			for _, a := range added {
+				if delErr := dhcpRouteDel(a); delErr != nil && !errors.Is(delErr, syscall.ESRCH) {
+					d.stale = append(d.stale, dhcpApplied{link: link, routes: []*netlink.Route{a}})
+				}
+			}
+			return nil, fmt.Errorf("add DHCP route %s via %s: %w", routeDst(r), r.Gw, err)
 		}
-		// Append: a second NIC's default route must not replace the first.
-		// The same route again (a renewal) is EEXIST.
-		if err := dhcpRouteAdd(route); err != nil && !errors.Is(err, syscall.EEXIST) {
-			return nil, fmt.Errorf("set default route via %s: %w", lease.Router[0], err)
-		}
-	}
-	if prev != nil && (route == nil || !prev.Gw.Equal(route.Gw) || !prev.Src.Equal(route.Src)) {
-		if err := dhcpRouteDel(prev); err != nil && !errors.Is(err, syscall.ESRCH) {
-			d.log.Warn("failed to remove the old DHCP default route", "iface", link.Attrs().Name, "error", err)
-			d.stale = append(d.stale, dhcpApplied{link: link, route: prev})
+		if !slices.ContainsFunc(prev, func(p *netlink.Route) bool { return sameRoute(p, r) }) {
+			added = append(added, r)
 		}
 	}
-	return route, nil
+	for _, p := range prev {
+		if slices.ContainsFunc(want, func(r *netlink.Route) bool { return sameRoute(p, r) }) {
+			continue
+		}
+		if err := dhcpRouteDel(p); err != nil && !errors.Is(err, syscall.ESRCH) {
+			d.log.Warn("failed to remove an old DHCP route", "iface", link.Attrs().Name, "route", routeDst(p), "error", err)
+			d.stale = append(d.stale, dhcpApplied{link: link, routes: []*netlink.Route{p}})
+		}
+	}
+	return want, nil
+}
+
+func routeDst(r *netlink.Route) string {
+	if r.Dst == nil {
+		return "default"
+	}
+	return r.Dst.String()
 }
 
 // dropUnappliedAddr removes an address that was set before the route of its
@@ -725,9 +744,9 @@ func (d *DHCPMode) Teardown(_ context.Context) error {
 	d.mu.Unlock()
 	errs := restoreMTUs(mtus)
 	for _, a := range applied {
-		if a.route != nil {
-			if err := dhcpRouteDel(a.route); err != nil && !errors.Is(err, syscall.ESRCH) {
-				errs = append(errs, fmt.Errorf("delete DHCP default route: %w", err))
+		for _, r := range a.routes {
+			if err := dhcpRouteDel(r); err != nil && !errors.Is(err, syscall.ESRCH) {
+				errs = append(errs, fmt.Errorf("delete DHCP route %s: %w", routeDst(r), err))
 			}
 		}
 		if a.addr == nil {

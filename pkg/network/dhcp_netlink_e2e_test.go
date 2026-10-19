@@ -202,6 +202,43 @@ func TestDHCPNetlinkNewAddressSameSubnet(t *testing.T) {
 	}
 }
 
+// TestDHCPNetlinkGatewayOutsideSubnet: a /32 lease whose router is outside
+// the leased subnet works like in networkd: the on-link host route to the
+// gateway comes first, so the default route through it can be added.
+func TestDHCPNetlinkGatewayOutsideSubnet(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Fatal("test requires root (run with sudo)")
+	}
+	enterTestNetns(t)
+	link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "dhcp-e2e8"}}
+	if err := netlink.LinkAdd(link); err != nil {
+		t.Fatalf("add dummy: %v", err)
+	}
+	t.Cleanup(func() { _ = netlink.LinkDel(link) })
+	if err := netlink.LinkSetUp(link); err != nil {
+		t.Fatal(err)
+	}
+	leased := make(chan string, 1)
+	NewDHCPMode().onBound(link, link.Name, leased)(live(&dhclient.Lease{
+		FixedAddress: net.ParseIP("198.51.100.7"), Netmask: net.CIDRMask(32, 32), Router: []net.IP{net.ParseIP("192.0.2.1")},
+	}))
+	if len(leased) != 1 {
+		t.Fatal("the /32 lease was not applied")
+	}
+	routes, err := netlink.RouteListFiltered(netlink.FAMILY_V4, &netlink.Route{Table: unix.RT_TABLE_MAIN}, netlink.RT_FILTER_TABLE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gw, def bool
+	for _, r := range routes {
+		gw = gw || (r.Dst != nil && r.Dst.String() == "192.0.2.1/32" && r.Scope == netlink.SCOPE_LINK)
+		def = def || ((r.Dst == nil || r.Dst.String() == "0.0.0.0/0") && r.Gw.Equal(net.ParseIP("192.0.2.1")))
+	}
+	if !gw || !def {
+		t.Fatalf("routes = %v, want the on-link route to 192.0.2.1 and the default route through it", routes)
+	}
+}
+
 // enterTestNetns runs the rest of the test in a new network namespace, so
 // the host interfaces and routes are never touched.
 func enterTestNetns(t *testing.T) {
