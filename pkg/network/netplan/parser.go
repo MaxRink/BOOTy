@@ -476,7 +476,13 @@ func applyEthernetFlags(np *Config, id string, eth *EthernetConfig, cfg *network
 		cfg.NoAcceptRA = append(cfg.NoAcceptRA, ethernetName(np, id))
 	}
 	if eth.EmitLLDP != nil && *eth.EmitLLDP {
-		cfg.EmitLLDP = append(cfg.EmitLLDP, ethernetName(np, id))
+		if eth.Match != nil && eth.SetName == "" {
+			// The ID of a match block is no interface name; networkd sends on
+			// every NIC the block selects.
+			cfg.EmitLLDPMatches = append(cfg.EmitLLDPMatches, network.LinkMatch{Name: eth.Match.Name, MAC: eth.Match.MAC})
+		} else {
+			cfg.EmitLLDP = append(cfg.EmitLLDP, ethernetName(np, id))
+		}
 	}
 }
 

@@ -1298,3 +1298,35 @@ func TestBridgeSTPLikeNetplan(t *testing.T) {
 		}
 	}
 }
+
+// The legacy L2 netplan sets emit-lldp on match blocks (en*, eth*): the
+// block ID is no NIC, so the match is kept and resolved against the NICs.
+// With set-name the NIC gets that name.
+func TestToNetworkConfig_EmitLLDPOnMatchBlocks(t *testing.T) {
+	np, err := ParseBytesWith("10-provision.yaml", []byte(`network:
+  version: 2
+  ethernets:
+    all-en:
+      match:
+        name: "en*"
+      dhcp4: true
+      emit-lldp: true
+    nic1:
+      match:
+        macaddress: "02:00:00:00:00:01"
+      set-name: ens1f1
+      emit-lldp: true
+    eth9:
+      emit-lldp: true
+`), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	netCfg := ToNetworkConfig(np, nil)
+	if want := []string{"eth9", "ens1f1"}; !slices.Equal(netCfg.EmitLLDP, want) {
+		t.Errorf("EmitLLDP = %v, want %v", netCfg.EmitLLDP, want)
+	}
+	if want := []network.LinkMatch{{Name: "en*"}}; !slices.Equal(netCfg.EmitLLDPMatches, want) {
+		t.Errorf("EmitLLDPMatches = %v, want %v", netCfg.EmitLLDPMatches, want)
+	}
+}

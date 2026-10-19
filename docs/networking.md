@@ -691,7 +691,13 @@ provisioned OS), port ID the interface name, TTL 120 s, system name the
 hostname, and the capabilities station, bridge and router (station
 enabled). When the sending stops, BOOTy sends a shutdown LLDPDU (TTL 0,
 IEEE 802.1AB), so the switch drops BOOTy at once instead of after 120 s;
-networkd does not send one. With `LLDP_RECEIVE` (on by default) BOOTy also listens on every
+networkd does not send one. An `emit-lldp: true` on a netplan match block
+without `set-name` (the legacy L2 netplan has `all-en` with `name: "en*"`)
+sends on every NIC the block selects. BOOTy sends in every network mode,
+like networkd, which sends whatever the addressing (DHCP, static, FRR).
+Outside GoBGP mode a NIC that appears later and a block selects sends too
+(with the firmware LLDP agent turned off first, like at the start); the
+GoBGP underlay sends only on the NICs resolved at the setup. With `LLDP_RECEIVE` (on by default) BOOTy also listens on every
 physical NIC, logs each new or changed neighbor and adds the current
 neighbors to the hardware inventory report; the legacy ramdisk only
 sends. The receive joins the LLDP multicast groups (01:80:c2:00:00:0e,

@@ -41,6 +41,8 @@ import (
 	"github.com/telekom/BOOTy/pkg/runmode"
 	"github.com/telekom/BOOTy/pkg/sriov"
 	"github.com/telekom/BOOTy/pkg/ux"
+	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 )
 
 // Version and Build are set via -ldflags at build time.
@@ -890,6 +892,7 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 	// changes, which would drop BGP sessions set up before.
 	if cfg.DisableNICFirmwareLLDP() {
 		disableNICFirmwareLLDP(ctx, &cfg.Provision.SRIOV)
+		lldpPrepareNICs = func(nics []string) { disableNICFirmwareLLDPOn(nics, &cfg.Provision.SRIOV) }
 	}
 
 	// Set up networking with retry — if connectivity fails, teardown and
@@ -1202,6 +1205,15 @@ func disableNICFirmwareLLDP(ctx context.Context, sriovCfg *sriov.Config) {
 	nics, err := detectNICs(ctx)
 	if err != nil {
 		slog.Warn("firmware LLDP agent not disabled: no physical NICs", "error", err)
+		return
+	}
+	disableNICFirmwareLLDPOn(nics, sriovCfg)
+}
+
+// disableNICFirmwareLLDPOn is disableNICFirmwareLLDP for the given NICs,
+// also for a NIC that appears later.
+func disableNICFirmwareLLDPOn(nics []string, sriovCfg *sriov.Config) {
+	if len(nics) == 0 {
 		return
 	}
 	owned, err := sriovCfg.FWLLDPAgentOwners(discoverPFs)
@@ -1693,16 +1705,116 @@ func networkModeWithResolvers(ctx context.Context, netCfg *network.Config, mode 
 		}
 		return nil, fmt.Errorf("configure initramfs DNS: %w", err)
 	}
+	// networkd sends LLDP with "emit-lldp: true" whatever the addressing.
+	// The GoBGP underlay sends itself; the other modes send from here, after
+	// their setup brought the NICs up.
+	// With LLDP_EMIT_ALL the all-NIC sender runs instead (no duplicates).
+	if (len(netCfg.EmitLLDP) > 0 || len(netCfg.EmitLLDPMatches) > 0) && !netCfg.IsGoBGPMode() && !netCfg.LLDPEmitAll && cleanup != nil {
+		cleanup.stopLLDP = startLLDPEmit(netCfg)
+	}
 	return wrapLinkLayerMode(mode, cleanup), nil
 }
 
 // resolveLinkMatch is network.ResolveLinkMatch; tests replace it.
-var resolveLinkMatch = network.ResolveLinkMatch
+var (
+	resolveLinkMatch   = network.ResolveLinkMatch
+	resolveLinkMatches = network.ResolveLinkMatches
+	startLLDPEmit      = emitLLDPOnNetplanNICs
+	lldpLinkSubscribe  = netlink.LinkSubscribeWithOptions
+	// lldpPrepareNICs runs for a NIC that appears later before LLDP is sent
+	// on it; the network setup sets it from the config.
+	lldpPrepareNICs = func([]string) {}
+	lldpEmit        = lldp.Emit
+)
+
+// followLLDPMatches calls start with the NICs the matches select when a
+// NIC that is not known yet appears, until ctx ends.
+func followLLDPMatches(ctx context.Context, matches []network.LinkMatch, known func(string) bool, start func([]string), log *slog.Logger) {
+	go func() {
+		// The subscription ends on a netlink error: subscribe again.
+		for ctx.Err() == nil {
+			updates := make(chan netlink.LinkUpdate, 16)
+			opts := netlink.LinkSubscribeOptions{ErrorCallback: func(err error) {
+				log.Warn("link watch for LLDP failed, subscribing again", "error", err)
+			}}
+			if err := lldpLinkSubscribe(updates, ctx.Done(), opts); err != nil {
+				log.Warn("NICs that appear later send no LLDP", "error", err)
+				return
+			}
+			for u := range updates {
+				if u.Header.Type != unix.RTM_NEWLINK || u.Link == nil || known(u.Attrs().Name) {
+					continue
+				}
+				names, err := resolveLinkMatches(ctx, matches)
+				if err != nil {
+					continue
+				}
+				fresh := slices.DeleteFunc(names, known)
+				lldpPrepareNICs(fresh) // the firmware LLDP agent off, like at the start
+				start(fresh)
+			}
+			select {
+			case <-ctx.Done():
+			case <-time.After(time.Second):
+			}
+		}
+	}()
+}
+
+// emitLLDPOnNetplanNICs sends LLDP on the NICs with netplan "emit-lldp:
+// true", with the configured profile like startLLDPEmitAll, and on every
+// NIC that appears later and a match block selects, like networkd matches
+// a link when udev announces it. It returns the stop function.
+func emitLLDPOnNetplanNICs(netCfg *network.Config) func() {
+	ctx, cancel := context.WithCancel(context.Background())
+	info := lldp.SystemInfo()
+	info.Profile, info.PortIDFormat, info.Announce = netCfg.LLDPProfile, netCfg.LLDPPortIDFormat, netCfg.LLDPAnnounce
+	log := slog.With("component", "lldp")
+	var mu sync.Mutex
+	var waits []func()
+	sending := map[string]bool{}
+	start := func(names []string) {
+		mu.Lock()
+		defer mu.Unlock()
+		var add []string
+		for _, n := range names {
+			if !sending[n] && ctx.Err() == nil {
+				sending[n] = true
+				add = append(add, n)
+			}
+		}
+		if len(add) > 0 {
+			waits = append(waits, lldpEmit(ctx, add, &info, log))
+		}
+	}
+	start(netCfg.EmitLLDP)
+	if len(netCfg.EmitLLDPMatches) > 0 {
+		known := func(name string) bool { mu.Lock(); defer mu.Unlock(); return sending[name] }
+		followLLDPMatches(ctx, netCfg.EmitLLDPMatches, known, start, log)
+	}
+	return func() {
+		cancel()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, w := range waits {
+			w()
+		}
+	}
+}
 
 func prepareLinkLayers(ctx context.Context, netCfg *network.Config) (*linkLayerCleanup, error) {
 	cleanup := &linkLayerCleanup{}
 	if err := network.ApplyLinkRenames(ctx, netCfg.LinkRenames); err != nil {
 		return nil, fmt.Errorf("netplan set-name: %w", err)
+	}
+	if names, err := resolveLinkMatches(ctx, netCfg.EmitLLDPMatches); err != nil {
+		slog.Warn("netplan match blocks with emit-lldp not resolved", "error", err)
+	} else {
+		for _, n := range names {
+			if !slices.Contains(netCfg.EmitLLDP, n) {
+				netCfg.EmitLLDP = append(netCfg.EmitLLDP, n)
+			}
+		}
 	}
 	if netCfg.StaticIface == "" && netCfg.StaticMatch != nil {
 		name, err := resolveLinkMatch(ctx, *netCfg.StaticMatch)
@@ -1758,18 +1870,20 @@ func setupVLANLayers(ctx context.Context, netCfg *network.Config, cleanup *linkL
 }
 
 type linkLayerCleanup struct {
-	bond  network.Mode
-	vlans []network.VLANConfig
+	bond     network.Mode
+	vlans    []network.VLANConfig
+	stopLLDP func()
 }
 
 func (c *linkLayerCleanup) empty() bool {
-	return c == nil || (c.bond == nil && len(c.vlans) == 0)
+	return c == nil || (c.bond == nil && len(c.vlans) == 0 && c.stopLLDP == nil)
 }
 
 func (c *linkLayerCleanup) Teardown(ctx context.Context) error {
 	if c.empty() {
 		return nil
 	}
+	c.stopLLDPNow()
 	var errs []error
 	for i := len(c.vlans) - 1; i >= 0; i-- {
 		v := c.vlans[i]
@@ -1797,8 +1911,19 @@ func wrapLinkLayerMode(mode network.Mode, cleanup *linkLayerCleanup) network.Mod
 	return &linkLayerNetworkMode{Mode: mode, cleanup: cleanup}
 }
 
+// Teardown stops the LLDP sender first, so its shutdown frames go out
+// before the network mode stops (FRR, within the network stop timeout).
 func (m *linkLayerNetworkMode) Teardown(ctx context.Context) error {
+	m.cleanup.stopLLDPNow()
 	return errors.Join(m.Mode.Teardown(ctx), m.cleanup.Teardown(ctx))
+}
+
+// stopLLDPNow stops the LLDP sender of the cleanup, once.
+func (c *linkLayerCleanup) stopLLDPNow() {
+	if c != nil && c.stopLLDP != nil {
+		c.stopLLDP()
+		c.stopLLDP = nil
+	}
 }
 
 // dhcpFallback creates a DHCP mode and attempts setup.
@@ -1973,6 +2098,9 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	mergeBGPPolicy(dst, src)
 	mergeOverlayDevices(&dst.OverlayDevices, &src.OverlayDevices)
 	nativeList("network.noAcceptRA", &dst.NoAcceptRA, src.NoAcceptRA)
+	if len(dst.EmitLLDP) == 0 {
+		dst.EmitLLDPMatches = src.EmitLLDPMatches
+	}
 	nativeList("network.emitLLDP", &dst.EmitLLDP, src.EmitLLDP)
 	// "no ip forwarding" in frr.conf is a default; an explicit option wins.
 	if dst.IPForwarding == nil {

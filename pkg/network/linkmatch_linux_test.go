@@ -127,3 +127,27 @@ func TestRenameLinkRestoresNameWhenSetUpFails(t *testing.T) {
 		t.Fatalf("calls = %s, want %s", strings.Join(calls, ","), want)
 	}
 }
+
+// ResolveLinkMatches returns every NIC of every match, each once.
+func TestResolveLinkMatchesInjectedLinks(t *testing.T) {
+	restore := snapshotNICFns()
+	defer restore()
+	linkList = func() ([]netlink.Link, error) {
+		return []netlink.Link{
+			&netlink.Device{LinkAttrs: netlink.LinkAttrs{Name: "eth0", HardwareAddr: net.HardwareAddr{2, 0, 0, 0, 0, 1}}},
+			&netlink.Device{LinkAttrs: netlink.LinkAttrs{Name: "enp1s4", HardwareAddr: net.HardwareAddr{2, 0, 0, 0, 0, 2}}},
+			&netlink.Device{LinkAttrs: netlink.LinkAttrs{Name: "enp2s4", HardwareAddr: net.HardwareAddr{2, 0, 0, 0, 0, 3}}},
+		}, nil
+	}
+	got, err := ResolveLinkMatches(context.Background(), []LinkMatch{{Name: "en*"}, {Name: "eth*"}, {MAC: "02:00:00:00:00:02"}})
+	if err != nil || strings.Join(got, ",") != "enp1s4,enp2s4,eth0" {
+		t.Fatalf("ResolveLinkMatches = %v, %v, want enp1s4,enp2s4,eth0", got, err)
+	}
+	if got, err := ResolveLinkMatches(context.Background(), nil); err != nil || got != nil {
+		t.Fatalf("ResolveLinkMatches(nil) = %v, %v", got, err)
+	}
+	// A match without name and MAC (a driver match) selects nothing.
+	if got, err := ResolveLinkMatches(context.Background(), []LinkMatch{{}}); err != nil || got != nil {
+		t.Fatalf("ResolveLinkMatches(empty match) = %v, %v, want nothing", got, err)
+	}
+}

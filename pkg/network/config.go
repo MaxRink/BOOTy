@@ -203,6 +203,9 @@ type Config struct {
 	LLDPPortIDFormat string
 	LLDPAnnounce     string
 	LLDPEmitAll      bool
+	// EmitLLDPMatches are netplan match blocks (without set-name) with
+	// "emit-lldp: true"; every NIC they select sends LLDP.
+	EmitLLDPMatches []LinkMatch
 	// IPForwarding and IPv6Forwarding set the forwarding sysctls; nil keeps
 	// the GoBGP default: IPv4 on, IPv6 off (the kernel default the legacy
 	// ramdisk keeps). frr.conf "[no] ip[v6] forwarding" sets them.

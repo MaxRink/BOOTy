@@ -124,6 +124,29 @@ func renameLink(from, to string) error {
 	return nil
 }
 
+// ResolveLinkMatches returns every physical NIC that one of the matches
+// selects, each once. A match without a name or MAC (a netplan match on a
+// driver, which BOOTy does not read) selects nothing.
+func ResolveLinkMatches(ctx context.Context, matches []LinkMatch) ([]string, error) {
+	matches = slices.DeleteFunc(slices.Clone(matches), func(m LinkMatch) bool { return m.Name == "" && m.MAC == "" })
+	if len(matches) == 0 {
+		return nil, nil
+	}
+	links, err := physicalLinks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, m := range matches {
+		for _, n := range m.Matches(links) {
+			if !slices.Contains(names, n) {
+				names = append(names, n)
+			}
+		}
+	}
+	return names, nil
+}
+
 // ResolveLinkMatch returns the single physical NIC that m selects.
 func ResolveLinkMatch(ctx context.Context, m LinkMatch) (string, error) {
 	links, err := physicalLinks(ctx)

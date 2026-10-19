@@ -226,6 +226,7 @@
   "LLDPPortIDFormat": "",
   "LLDPAnnounce": "",
   "LLDPEmitAll": false,
+  "EmitLLDPMatches": null,
   "IPForwarding": false,
   "IPv6Forwarding": null,
   "VLANs": null
