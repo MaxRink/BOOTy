@@ -55,7 +55,7 @@ func runKexecTarget(t *testing.T, firmware string) string {
 	t.Helper()
 	kernel := findKernel(t)
 	rawImage := createChrootCapableTestDiskImage(t, 512)
-	installKexecVerifyBoot(t, rawImage, kernel, "console=ttyS0 panic=1 "+kexecCmdlineMarker)
+	installKexecVerifyBoot(t, rawImage, kernel, runnerKernelCmdline+" "+kexecCmdlineMarker)
 	if firmware == "uefi" {
 		installESPLoader(t, rawImage) // create-efi-boot-entry needs a loader
 	}

@@ -14,6 +14,19 @@ import (
 
 const bootyStartMarker = "starting BOOTy"
 
+// noKHO turns off kexec handover. Linux 7.0 (runner image 20261018) enables
+// it by default, and when its scratch area fits it reserves about two thirds
+// of a 512 MiB guest. Under OVMF only about 40 MiB stay free and the
+// initramfs unpack fails with "write error". Whether it fits depends on where
+// the kernel and initrd land, so such boots fail at random. Kernels without
+// KHO ignore the parameter.
+const noKHO = "kho=off"
+
+// runnerKernelCmdline is the base command line for every guest that boots the
+// runner kernel (BOOTY_KERNEL or findKernel). Guests that boot the BOOTy
+// flavor kernel or the kernel of a provisioned OS do not need it.
+const runnerKernelCmdline = "console=ttyS0 panic=1 " + noKHO
+
 // qemuAvailable checks if qemu-system-x86_64 is installed.
 func qemuAvailable(t *testing.T) {
 	t.Helper()
@@ -117,7 +130,7 @@ func runQEMUSmoke(t *testing.T, args []string, timeout time.Duration, scenario s
 
 	if ctx.Err() == context.DeadlineExceeded {
 		if requireBootyMarker && !strings.Contains(outStr, bootyStartMarker) {
-			t.Fatalf("QEMU %s timed out before BOOTy marker. tail:\n%s", scenario, tail(out, 1200))
+			failWithoutBootyMarker(t, scenario, "timed out before", out)
 		}
 		if requireBootyMarker {
 			t.Logf("QEMU %s timed out after BOOTy marker (acceptable for smoke)", scenario)
@@ -132,8 +145,18 @@ func runQEMUSmoke(t *testing.T, args []string, timeout time.Duration, scenario s
 	}
 
 	if requireBootyMarker && !strings.Contains(outStr, bootyStartMarker) {
-		t.Fatalf("QEMU %s completed without BOOTy marker. tail:\n%s", scenario, tail(out, 1200))
+		failWithoutBootyMarker(t, scenario, "completed without", out)
 	}
 
 	return out
+}
+
+// failWithoutBootyMarker fails the test with the full console: a tail can
+// hide the early boot error that kept BOOTy from starting.
+func failWithoutBootyMarker(t *testing.T, scenario, how string, out []byte) {
+	t.Helper()
+	if strings.Contains(string(out), "Initramfs unpacking failed") {
+		t.Fatalf("QEMU %s %s BOOTy marker: the guest kernel could not unpack the initramfs (often too little guest RAM). Console:\n%s", scenario, how, out)
+	}
+	t.Fatalf("QEMU %s %s BOOTy marker. Console:\n%s", scenario, how, out)
 }

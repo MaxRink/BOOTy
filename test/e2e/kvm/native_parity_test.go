@@ -38,7 +38,7 @@ func runQEMUExpectWait(t *testing.T, kernel, initramfs, disk string, timeoutDur 
 		"-drive", fmt.Sprintf("file=%s,format=qcow2,if=virtio", disk),
 		"-net", "nic,model=virtio,macaddr=52:54:00:12:34:56",
 		"-net", "user",
-		"-append", "console=ttyS0 panic=1 net.ifnames=0",
+		"-append", runnerKernelCmdline + " net.ifnames=0",
 	}
 	args = append(args, splitExtraArgs(os.Getenv("QEMU_EXTRA_ARGS"))...)
 

@@ -41,7 +41,7 @@ func TestUEFISecureBootSmoke(t *testing.T) {
 	args = append(args,
 		"-kernel", kernel,
 		"-initrd", initramfs,
-		"-append", "console=ttyS0 panic=1",
+		"-append", runnerKernelCmdline,
 	)
 	args = append(args, splitExtraArgs(envOrDefault("QEMU_EXTRA_ARGS", ""))...)
 

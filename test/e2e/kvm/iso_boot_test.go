@@ -227,7 +227,7 @@ TIMEOUT 1
 DEFAULT booty
 LABEL booty
   KERNEL /boot/vmlinuz
-  APPEND initrd=/boot/initrd.img,/boot/deploy.cpio console=tty0 console=ttyS0,115200n8 earlycon=uart8250,io,0x3f8,115200n8 panic=1
+  APPEND initrd=/boot/initrd.img,/boot/deploy.cpio console=tty0 console=ttyS0,115200n8 earlycon=uart8250,io,0x3f8,115200n8 panic=1 ` + noKHO + `
 `
 	} else {
 		cfg = `PROMPT 0
@@ -235,7 +235,7 @@ TIMEOUT 1
 DEFAULT booty
 LABEL booty
   KERNEL /boot/vmlinuz
-  APPEND initrd=/boot/initrd.img,/boot/deploy.cpio console=tty0 console=ttyS0,115200n8 earlycon=uart8250,io,0x3f8,115200n8 panic=1
+  APPEND initrd=/boot/initrd.img,/boot/deploy.cpio console=tty0 console=ttyS0,115200n8 earlycon=uart8250,io,0x3f8,115200n8 panic=1 ` + noKHO + `
 `
 	}
 	if err := os.WriteFile(filepath.Join(isoRoot, "isolinux", "isolinux.cfg"), []byte(cfg), 0644); err != nil {

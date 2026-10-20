@@ -29,7 +29,7 @@ func TestLUKSSmokeQEMU(t *testing.T) {
 		"-no-reboot",
 		"-kernel", kernel,
 		"-initrd", initramfs,
-		"-append", "console=ttyS0 panic=1",
+		"-append", runnerKernelCmdline,
 		"-drive", "file="+diskImg+",format=qcow2,if=virtio",
 	)
 	args = append(args, extra...)

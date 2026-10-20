@@ -323,6 +323,18 @@ jobs:
             ovmf_code: /usr/share/OVMF/OVMF_CODE_4M.fd
             setup: |
               cp /usr/share/OVMF/OVMF_VARS_4M.fd OVMF_VARS.fd
+          # The runner kernel with kexec handover at its default (on since
+          # Linux 7.0) in a 1024 MiB guest, under OVMF and SeaBIOS. The other
+          # runner-kernel guests boot with kho=off.
+          - scenario: bootloader-smoke-kho
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestKHODefaultBootSmoke$"
+            go_timeout: 10m
+            ovmf_vars: OVMF_VARS.fd
+            ovmf_code: /usr/share/OVMF/OVMF_CODE_4M.fd
+            setup: |
+              cp /usr/share/OVMF/OVMF_VARS_4M.fd OVMF_VARS.fd
           - scenario: iso-headless-q35
             qemu_extra: ""
             test_tag: e2e

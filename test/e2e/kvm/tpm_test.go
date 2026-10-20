@@ -61,7 +61,7 @@ func TestTPMSmokeQEMU(t *testing.T) {
 		"-device", "tpm-tis,tpmdev=tpm0",
 		"-kernel", kernel,
 		"-initrd", initramfs,
-		"-append", "console=ttyS0 panic=1",
+		"-append", runnerKernelCmdline,
 	)
 	args = append(args, splitExtraArgs(envOrDefault("QEMU_EXTRA_ARGS", ""))...)
 

@@ -30,7 +30,7 @@ func TestKexecHandoffPersistsTargetWritesQEMU(t *testing.T) {
 
 	kernel := findKernel(t)
 	rawImage := createChrootCapableTestDiskImage(t, 512)
-	installKexecVerifyBoot(t, rawImage, kernel, "console=ttyS0 panic=1")
+	installKexecVerifyBoot(t, rawImage, kernel, runnerKernelCmdline)
 	baseURL := startImageServer(t, compressGzip(t, rawImage))
 
 	targetDisk := filepath.Join(t.TempDir(), "kexec-persist.qcow2")

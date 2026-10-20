@@ -96,7 +96,7 @@ func TestProdTplTemplatesQEMU(t *testing.T) {
 		"-device", "virtio-net-pci,netdev=u0,addr=0x5,mac=52:54:00:00:05:00",
 		"-netdev", "tap,id=u1,ifname=tpl1,script=no,downscript=no",
 		"-device", "virtio-net-pci,netdev=u1,addr=0x6,mac=52:54:00:00:06:00",
-		"-append", "console=ttyS0 panic=1 net.ifnames=0",
+		"-append", runnerKernelCmdline + " net.ifnames=0",
 	}
 	args = append(args, splitExtraArgs(os.Getenv("QEMU_EXTRA_ARGS"))...)
 	out, err := os.Create(console)

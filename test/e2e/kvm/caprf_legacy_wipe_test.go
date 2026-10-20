@@ -58,7 +58,7 @@ func testProvisionWipesAllDisks(t *testing.T, varsFor func(*fakeCAPRF) map[strin
 		"-drive", fmt.Sprintf("file=%s,format=qcow2,if=virtio", targetDisk),
 		"-drive", fmt.Sprintf("file=%s,format=qcow2,if=virtio", otherDisk),
 		"-net", "nic,model=virtio,macaddr=52:54:00:12:34:56", "-net", "user",
-		"-append", "console=ttyS0 panic=1 net.ifnames=0",
+		"-append", runnerKernelCmdline+" net.ifnames=0",
 	).CombinedOutput()
 	if ctx.Err() != nil {
 		t.Fatalf("QEMU timed out. tail:\n%s", tail(output, 4000))

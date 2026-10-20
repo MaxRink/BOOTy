@@ -46,7 +46,7 @@ func TestMultiDiskRAIDInQEMU(t *testing.T) {
 		args = append(args, "-device", fmt.Sprintf("virtio-blk-pci,drive=disk%d", i))
 	}
 
-	args = append(args, "-append", "console=ttyS0 panic=1")
+	args = append(args, "-append", runnerKernelCmdline)
 
 	out := runQEMUSmoke(t, args, 2*time.Minute, "multi-disk-raid", true)
 	outStr := string(out)
@@ -108,7 +108,7 @@ func TestBIOSVendorDetectionQEMU(t *testing.T) {
 				"-kernel", kernel,
 				"-initrd", initramfs,
 				"-smbios", tt.smbios,
-				"-append", "console=ttyS0 panic=1",
+				"-append", runnerKernelCmdline,
 			}
 
 			out := runQEMUSmoke(t, args, 2*time.Minute, "bios-"+strings.ToLower(tt.name), true)
@@ -263,7 +263,7 @@ func TestProvisionWithMultipleDisks(t *testing.T) {
 		"-drive", fmt.Sprintf("file=%s,format=qcow2,if=virtio", secondaryDisk),
 		"-net", "nic,model=e1000,macaddr=52:54:00:12:34:56",
 		"-net", "user",
-		"-append", "console=ttyS0 panic=1",
+		"-append", runnerKernelCmdline,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

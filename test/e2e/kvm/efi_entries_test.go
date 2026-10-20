@@ -159,7 +159,7 @@ func runQEMUUEFI(t *testing.T, code, vars, initramfs, disk, extraCmdline string,
 		"-drive", fmt.Sprintf("file=%s,format=qcow2,if=virtio", disk),
 		"-net", "nic,model=virtio,macaddr=52:54:00:12:34:56",
 		"-net", "user",
-		"-append", strings.TrimSpace("console=ttyS0 panic=1 net.ifnames=0 " + extraCmdline),
+		"-append", strings.TrimSpace(runnerKernelCmdline + " net.ifnames=0 " + extraCmdline),
 	}
 	args = append(args, splitExtraArgs(os.Getenv("QEMU_EXTRA_ARGS"))...)
 	ctx, cancel := context.WithTimeout(context.Background(), timeoutDur)

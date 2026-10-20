@@ -600,10 +600,13 @@ jobs:
       - name: Boot with QEMU and validate
         timeout-minutes: 5
         run: |
+          # kho=off: the runner kernel (7.0+) turns kexec handover on, and its
+          # scratch area can take most of the 512 MiB. See noKHO in
+          # test/e2e/kvm/kvm_test.go.
           timeout 120 qemu-system-x86_64 \
             -kernel vmlinuz \
             -initrd test-initramfs.cpio.gz \
-            -append "console=ttyS0 panic=1" \
+            -append "console=ttyS0 panic=1 kho=off" \
             -m 512 \
             -display none \
             -monitor none \

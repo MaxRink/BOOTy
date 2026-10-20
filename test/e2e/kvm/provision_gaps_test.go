@@ -396,7 +396,7 @@ func TestUEFIBootloaderInstallAndNativeBoot(t *testing.T) {
 		"-drive", fmt.Sprintf("file=%s,format=qcow2,if=virtio", targetDisk),
 		"-net", "nic,model=e1000,macaddr=52:54:00:12:34:56",
 		"-net", "user",
-		"-append", "console=ttyS0 panic=1",
+		"-append", runnerKernelCmdline,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -453,7 +453,7 @@ func TestSecureBootEnforcementReachesInit(t *testing.T) {
 		"-drive", "if=pflash,format=raw,readonly=on,file=" + ovmfCode,
 		"-kernel", kernel,
 		"-initrd", initramfs,
-		"-append", "console=ttyS0 panic=1",
+		"-append", runnerKernelCmdline,
 	}
 
 	if ovmfVars := os.Getenv("OVMF_VARS"); ovmfVars != "" {
@@ -524,7 +524,7 @@ func TestLUKSEncryptionDetection(t *testing.T) {
 		"-kernel", kernel,
 		"-initrd", initramfs,
 		"-drive", fmt.Sprintf("file=%s,format=qcow2,if=virtio", luksQcow2),
-		"-append", "console=ttyS0 panic=1",
+		"-append", runnerKernelCmdline,
 	}
 
 	out := runQEMUSmoke(t, args, 2*time.Minute, "luks-detection", true)
@@ -589,7 +589,7 @@ func TestTPMDetectionAndPCRRead(t *testing.T) {
 		"-device", "tpm-tis,tpmdev=tpm0",
 		"-kernel", kernel,
 		"-initrd", initramfs,
-		"-append", "console=ttyS0 panic=1",
+		"-append", runnerKernelCmdline,
 	}
 
 	out := runQEMUSmoke(t, args, 2*time.Minute, "tpm-detection", true)
@@ -649,7 +649,7 @@ func TestEFIBootEntryManagementOVMF(t *testing.T) {
 		"-drive", fmt.Sprintf("file=%s,format=qcow2,if=virtio", targetDisk),
 		"-net", "nic,model=e1000,macaddr=52:54:00:12:34:56",
 		"-net", "user",
-		"-append", "console=ttyS0 panic=1",
+		"-append", runnerKernelCmdline,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -767,7 +767,7 @@ func TestFirmwareCollectionInQEMU(t *testing.T) {
 		"-m", "512", "-nographic", "-no-reboot",
 		"-kernel", kernel,
 		"-initrd", initramfs,
-		"-append", "console=ttyS0 panic=1",
+		"-append", runnerKernelCmdline,
 		"-smbios", "type=0,vendor=TestVendor,version=1.2.3",
 	}, 2*time.Minute, "firmware-collection", true)
 

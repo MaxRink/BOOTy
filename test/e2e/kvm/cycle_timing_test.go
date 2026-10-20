@@ -180,7 +180,7 @@ TIMEOUT 1
 DEFAULT booty
 LABEL booty
   KERNEL /boot/vmlinuz
-  APPEND initrd=/boot/initrd.img console=ttyS0,115200n8 panic=1 net.ifnames=0
+  APPEND initrd=/boot/initrd.img console=ttyS0,115200n8 panic=1 net.ifnames=0 `+noKHO+`
 `)
 	iso := filepath.Join(t.TempDir(), "cycle.iso")
 	runXorrisofs(t, root, iso)

@@ -115,7 +115,7 @@ func runSecureEraseQEMU(t *testing.T, image string, files, extra map[string]stri
 		"-m", "1024", "-nographic", "-no-reboot",
 		"-kernel", findKernel(t), "-initrd", buildProvisionInitramfsWithFiles(t, vars, files),
 		"-net", "nic,model=virtio,macaddr=52:54:00:12:34:56", "-net", "user",
-		"-append", "console=ttyS0 panic=1 net.ifnames=0",
+		"-append", runnerKernelCmdline + " net.ifnames=0",
 	}
 	args = append(args, diskArgs...)
 	args = append(args, splitExtraArgs(os.Getenv("QEMU_EXTRA_ARGS"))...)

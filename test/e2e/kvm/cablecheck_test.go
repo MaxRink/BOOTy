@@ -29,7 +29,7 @@ func cablecheckBoot(t *testing.T, vars map[string]string) []string {
 	t.Helper()
 	return []string{
 		"-kernel", findKernel(t), "-initrd", buildProvisionInitramfs(t, vars),
-		"-append", "console=ttyS0 panic=1 net.ifnames=0",
+		"-append", runnerKernelCmdline + " net.ifnames=0",
 	}
 }
 

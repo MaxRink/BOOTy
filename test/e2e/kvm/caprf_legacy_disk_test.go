@@ -62,7 +62,7 @@ func testLsblkDiskSelection(t *testing.T, varsFor func(*fakeCAPRF) map[string]st
 		"-drive", fmt.Sprintf("file=%s,format=qcow2,if=none,id=scsidisk", scsiDisk),
 		"-device", "scsi-hd,drive=scsidisk,bus=scsi0.0",
 		"-net", "nic,model=virtio,macaddr=52:54:00:12:34:56", "-net", "user",
-		"-append", "console=ttyS0 panic=1 net.ifnames=0",
+		"-append", runnerKernelCmdline + " net.ifnames=0",
 	}
 	output, _ := exec.CommandContext(ctx, "qemu-system-x86_64", args...).CombinedOutput()
 	if ctx.Err() != nil {

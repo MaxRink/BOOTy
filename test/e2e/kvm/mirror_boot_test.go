@@ -156,7 +156,7 @@ func runMirrorFailover(t *testing.T, kernel, initramfs string, qemuArgs func(dis
 	provisionArgs := append(qemuArgs(disk1, disk2),
 		"-kernel", kernel,
 		"-initrd", initramfs,
-		"-append", "console=ttyS0 panic=1 net.ifnames=0",
+		"-append", runnerKernelCmdline+" net.ifnames=0",
 		"-net", "nic,model=virtio",
 		"-net", "user",
 	)

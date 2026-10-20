@@ -43,7 +43,7 @@ func TestPredictableNICNamesQEMU(t *testing.T) {
 				"-drive", fmt.Sprintf("file=%s,format=qcow2,if=virtio", disk),
 				"-netdev", "user,id=n0",
 				"-device", "virtio-net-pci,netdev=n0,addr=0x5,mac=52:54:00:12:34:56",
-				"-append", "console=ttyS0 panic=1 net.ifnames=0",
+				"-append", runnerKernelCmdline + " net.ifnames=0",
 			}
 			args = append(args, splitExtraArgs(os.Getenv("QEMU_EXTRA_ARGS"))...)
 			out, _ := exec.CommandContext(ctx, "qemu-system-x86_64", args...).CombinedOutput()
