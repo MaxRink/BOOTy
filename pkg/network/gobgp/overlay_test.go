@@ -5434,3 +5434,102 @@ func TestType2WithdrawKeepsFIBRoute(t *testing.T) {
 		}
 	}
 }
+
+// TestProcessRouteUpdateHonoursEncapsulation checks RFC 8365 section 6: a
+// route whose BGP Encapsulation communities do not include VXLAN gets no
+// VXLAN state and removes what an earlier update of its key installed; a
+// route without the community counts as VXLAN, like FRR.
+func TestProcessRouteUpdateHonoursEncapsulation(t *testing.T) {
+	const mplsTunnelType = 10
+	nextHop := func(nh string) *apipb.Attribute {
+		mp, err := wrapAttr(&apipb.MpReachNLRIAttribute{
+			Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
+			NextHops: []string{nh},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return mp
+	}
+	communities := func(extra ...*apipb.ExtendedCommunity) *apipb.Attribute {
+		c := append([]*apipb.ExtendedCommunity{mustRT2(t, 65000, 4000)}, extra...)
+		a, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{Communities: c})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	encap := func(tt uint32) *apipb.ExtendedCommunity {
+		a, err := wrapExt(&apipb.EncapExtended{TunnelType: tt})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	pathVia := func(nh string, route proto.Message, ec *apipb.Attribute) *apipb.Path {
+		n, err := wrapNLRI(route)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &apipb.Path{Nlri: n, Pattrs: []*apipb.Attribute{nextHop(nh), ec}}
+	}
+	path := func(route proto.Message, ec *apipb.Attribute) *apipb.Path { return pathVia("192.168.4.1", route, ec) }
+	newOverlay := func(mock *mockOverlayNetlinkOps) *OverlayTier {
+		return &OverlayTier{
+			cfg:        &Config{RouterID: "192.168.4.10", ASN: 65000, ProvisionVNI: 4000, BridgeName: "br.provision", EnableL2: true},
+			log:        slog.Default(),
+			netlinkOps: mock,
+		}
+	}
+	type5 := func() *apipb.EVPNIPPrefixRoute {
+		return &apipb.EVPNIPPrefixRoute{IpPrefix: "10.100.0.0", IpPrefixLen: 24, Label: 4000, GwAddress: "0.0.0.0"}
+	}
+
+	t.Run("type-5", func(t *testing.T) {
+		mock := &mockOverlayNetlinkOps{}
+		o := newOverlay(mock)
+		o.processRouteUpdate(path(type5(), communities(encap(mplsTunnelType))))
+		if len(mock.routeReplaces) != 0 {
+			t.Fatalf("MPLS-only route installed: %v", mock.routeReplaces)
+		}
+		o.processRouteUpdate(path(type5(), communities(encap(vxlanTunnelType), encap(mplsTunnelType))))
+		if len(mock.routeReplaces) != 1 {
+			t.Fatalf("route with VXLAN among its encapsulations: %d installs, want 1", len(mock.routeReplaces))
+		}
+		o.processRouteUpdate(path(type5(), communities(encap(mplsTunnelType))))
+		if len(mock.routeDels) != 1 {
+			t.Fatalf("an MPLS-only update of the installed key: %d route deletes, want 1", len(mock.routeDels))
+		}
+		// E3: an MPLS-only update of the same key from another next hop
+		// removes the installed route through its own gateway.
+		mock3 := &mockOverlayNetlinkOps{}
+		o3 := newOverlay(mock3)
+		o3.processRouteUpdate(path(type5(), communities(encap(vxlanTunnelType))))
+		o3.processRouteUpdate(pathVia("192.168.4.2", type5(), communities(encap(mplsTunnelType))))
+		if len(mock3.routeDels) != 1 || !mock3.routeDels[0].Gw.Equal(net.ParseIP("192.168.4.1")) {
+			t.Fatalf("MPLS-only update from another next hop: route deletes %v, want the route via 192.168.4.1", mock3.routeDels)
+		}
+		mock2 := &mockOverlayNetlinkOps{}
+		newOverlay(mock2).processRouteUpdate(path(type5(), communities()))
+		if len(mock2.routeReplaces) != 1 {
+			t.Fatal("a route without encapsulation community is not installed (FRR treats it as VXLAN)")
+		}
+	})
+	t.Run("type-2 and type-3", func(t *testing.T) {
+		mock := &mockOverlayNetlinkOps{}
+		o := newOverlay(mock)
+		t2 := &apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:dd:ee:ff"}
+		o.processRouteUpdate(path(t2, communities(encap(vxlanTunnelType))))
+		if len(mock.sets) != 1 {
+			t.Fatalf("VXLAN type-2: %d FDB sets, want 1", len(mock.sets))
+		}
+		o.processRouteUpdate(path(t2, communities(encap(mplsTunnelType))))
+		if len(mock.dels) != 1 || !mock.dels[0].IP.Equal(net.ParseIP("192.168.4.1")) {
+			t.Fatalf("MPLS-only update: deletes %v, want the installed FDB entry", mock.dels)
+		}
+		o.processRouteUpdate(path(&apipb.EVPNInclusiveMulticastEthernetTagRoute{IpAddress: "192.168.4.2"}, communities(encap(mplsTunnelType))))
+		if len(mock.appends) != 0 {
+			t.Fatalf("MPLS-only type-3 added BUM entries %v", mock.appends)
+		}
+	})
+}

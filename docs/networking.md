@@ -1032,7 +1032,9 @@ With `asn_server` > 65535, `provision_vni` must be 65535 or lower, because a
 ### Routes BOOTy processes
 
 BOOTy accepts a route update only when its route target matches the local
-route target. A withdraw without a route target is accepted. BOOTy ignores
+route target. An update whose BGP Encapsulation communities do not include
+VXLAN (RFC 8365 section 6) is handled as a withdraw of its route; an update
+without the community counts as VXLAN, like FRR. A withdraw without a route target is accepted. BOOTy ignores
 routes whose next hop is its own router ID.
 
 | Route | Action |

@@ -889,11 +889,21 @@ func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 
 	vtep := extractNextHop(p)
 
+	// RFC 8365 section 6: a route whose BGP Encapsulation communities do
+	// not include VXLAN cannot be reached over BOOTy's VXLAN device; it is
+	// handled as a withdraw of its route key. A route without the community
+	// counts as VXLAN, like FRR (which does not check the community).
+	notVXLAN := o.notVXLAN(p, nlri, vtep, withdraw)
+	withdraw = withdraw || notVXLAN
+
 	switch {
 	case nlri.GetEvpnIpPrefix() != nil:
-		o.processType5Update(p, nlri.GetEvpnIpPrefix(), vtep, withdraw)
+		o.processType5Update(p, nlri.GetEvpnIpPrefix(), vtep, withdraw, notVXLAN)
 	case nlri.GetEvpnMacadv() != nil:
 		if o.cfg.EnableL2 {
+			if notVXLAN {
+				vtep = "" // remove the entry of the tracked route, not of this update
+			}
 			o.handleType2Update(nlri.GetEvpnMacadv(), vtep, macMobilityOf(p), arpNdRouter(p), withdraw)
 		}
 	case nlri.GetEvpnEthernetAd() != nil:
@@ -919,14 +929,27 @@ func (o *OverlayTier) handleType3Path(p *apipb.Path, route *apipb.EVPNInclusiveM
 	o.handleType3Route(route, vtep, withdraw)
 }
 
-// processType5Update applies the receive rules of a Type-5 path and hands
-// it on. An unusable update is a withdraw of its route key.
-func (o *OverlayTier) processType5Update(p *apipb.Path, route *apipb.EVPNIPPrefixRoute, vtep string, withdraw bool) {
+// notVXLAN reports an update (not a withdraw) whose BGP Encapsulation
+// communities do not include VXLAN, and logs it.
+func (o *OverlayTier) notVXLAN(p *apipb.Path, nlri *apipb.NLRI, vtep string, withdraw bool) bool {
+	if withdraw {
+		return false
+	}
+	types := encapTunnelTypes(p)
+	if len(types) == 0 || slices.Contains(types, vxlanTunnelType) {
+		return false
+	}
+	o.log.Warn("EVPN route without VXLAN encapsulation treated as withdraw", "type", fmt.Sprintf("%T", nlri.GetNlri()), "vtep", vtep, "tunnel_types", types)
+	return true
+}
+
+// processType5Update checks a Type-5 update and hands it to the handler;
+// converted is an update already handled as a withdraw.
+func (o *OverlayTier) processType5Update(p *apipb.Path, route *apipb.EVPNIPPrefixRoute, vtep string, withdraw, converted bool) {
 	routerMAC, err := extractRouterMAC(p)
-	converted := false
 	if reason := type5Unusable(route, err, o.type5LocalVNI()); reason != "" && !withdraw {
-		// The update replaces the path of the same route key, so the
-		// old path goes too, as for a withdraw (RFC 7606 section 2).
+		// The update replaces the path of the same route key, so the old
+		// path goes too, as for a withdraw (RFC 7606 section 2).
 		o.log.Warn("type-5 route treated as withdraw", "prefix", route.GetIpPrefix(), "len", route.GetIpPrefixLen(),
 			"vtep", vtep, "reason", reason)
 		withdraw, converted = true, true
@@ -935,6 +958,20 @@ func (o *OverlayTier) processType5Update(p *apipb.Path, route *apipb.EVPNIPPrefi
 		routerMAC = nil
 	}
 	o.handleType5Update(route, vtep, routerMAC, err == nil, withdraw, converted)
+}
+
+// encapTunnelTypes returns the tunnel types of the BGP Encapsulation
+// extended communities of a path (RFC 9012; 8 is VXLAN).
+func encapTunnelTypes(path *apipb.Path) []uint32 {
+	var types []uint32
+	for _, attr := range path.GetPattrs() {
+		for _, c := range attr.GetExtendedCommunities().GetCommunities() {
+			if e := c.GetEncap(); e != nil {
+				types = append(types, e.GetTunnelType())
+			}
+		}
+	}
+	return types
 }
 
 // type5Unusable returns why a received Type-5 route must not be used, or
