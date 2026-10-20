@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"maps"
 	"net"
+	"net/netip"
 	"slices"
 	"strings"
 	"sync"
@@ -126,6 +127,9 @@ type OverlayTier struct {
 	netlinkOps      overlayNetlinkOps
 	hooks           *overlaySetupHooks
 	ensureVTEPRoute func(net.IP) error
+	// fibOwns reports whether the underlay FIB writer installed a route
+	// for a prefix in a table (UnderlayTier.FIBOwns); nil = never.
+	fibOwns func(table int, p netip.Prefix) bool
 
 	// Track resources created by us for clean teardown.
 	createdVRFs     map[string]bool
@@ -435,6 +439,14 @@ func (o *OverlayTier) createVRF(name string, tableID uint32) error {
 
 	o.log.Info("vrf ready", "name", name, "table", tableID)
 	return nil
+}
+
+// fibTable is the overlay route table as the FIB writer keys it.
+func (o *OverlayTier) fibTable() int {
+	if t := o.overlayRouteTable(); t != 0 {
+		return t
+	}
+	return unix.RT_TABLE_MAIN
 }
 
 func (o *OverlayTier) overlayRouteTable() int {
@@ -1023,7 +1035,13 @@ func (o *OverlayTier) handleType5Update(
 		return
 	}
 	prefix, key := dst.String(), type5PathKey(route)
+	shadowed := o.fibShadows(prefix)
 	if withdraw {
+		if shadowed {
+			// The kernel route is the FIB writer's; only forget the path.
+			o.forgetShadowedType5Path(prefix, key)
+			return
+		}
 		// Always processed, so no route of ours stays behind.
 		o.withdrawType5Path(prefix, key, route, vtep, routerMAC, converted)
 		return
@@ -1032,15 +1050,76 @@ func (o *OverlayTier) handleType5Update(
 		o.log.Debug("type-5 route for a static blackhole prefix, static route wins", "prefix", prefix)
 		return
 	}
-	// Remember the path before any kernel change, so a later withdraw of
-	// another path can still fall back to it even if this install fails.
-	o.addType5Path(prefix, &type5Path{
+	path := &type5Path{
 		key:       key,
 		route:     route,
 		vtep:      vtep,
 		routerMAC: append(net.HardwareAddr(nil), routerMAC...),
 		valid:     routerMACValid,
-	})
+	}
+	if shadowed {
+		// Without an overlay VRF both writers use the main table with the
+		// same protocol and metric, so one would replace the other's route.
+		// The FIB writer owns the prefix; the path waits in the shadow until
+		// the writer removes its route (fibRemoved).
+		o.rememberType5Path(prefix, key, path)
+		delete(o.type5Active, prefix)
+		o.log.Warn("type-5 route for a prefix the underlay installed in the same table, underlay route stays",
+			"prefix", prefix, "table", o.fibTable(), "vtep", vtep)
+		return
+	}
+	// Remember the path before any kernel change, so a later withdraw of
+	// another path can still fall back to it even if this install fails.
+	o.addType5Path(prefix, path)
+}
+
+// fibShadows reports whether the underlay FIB writer owns prefix in the
+// overlay route table.
+//
+// The check and the RouteReplace that follows it are not atomic with the
+// FIB writer: the writer can install its route between them, and the
+// overlay route then replaces it. The window is bounded by the periodic
+// FIB resync (fibResyncDefault, 30 s), which installs the writer's routes
+// again with force.
+func (o *OverlayTier) fibShadows(prefix string) bool {
+	return o.fibOwns != nil && o.fibOwns(o.fibTable(), netip.MustParsePrefix(prefix))
+}
+
+// forgetShadowedType5Path forgets a withdrawn path of a prefix the FIB
+// writer owns. The kernel route is not touched. When the last path goes,
+// the gateway state of a route installed before the writer took over is
+// cleared. The caller holds type5PathsMu.
+func (o *OverlayTier) forgetShadowedType5Path(prefix, key string) {
+	delete(o.type5Active, prefix)
+	if len(o.forgetType5Path(prefix, key)) > 0 {
+		return
+	}
+	if link, err := o.netlinkOps.LinkByName(o.cfg.BridgeName); err == nil {
+		o.clearType5GatewayNeighbor(link, prefix)
+	}
+}
+
+// fibRemoved is called when the underlay FIB writer removed its route for
+// p in table. The overlay then installs a live Type-5 path for the prefix:
+// one kept in the shadow, or one whose route the writer had replaced.
+func (o *OverlayTier) fibRemoved(table int, p netip.Prefix) {
+	if table != o.fibTable() {
+		return
+	}
+	o.type5PathsMu.Lock()
+	defer o.type5PathsMu.Unlock()
+	if o.type5Stopped {
+		return
+	}
+	prefix := p.String()
+	delete(o.type5Active, prefix)
+	for _, path := range o.sortedType5Paths(prefix) {
+		if o.applyType5Path(path) {
+			o.markType5Active(prefix, path.key)
+			o.log.Info("underlay route removed, installed the type-5 route again", "prefix", prefix, "vtep", path.vtep)
+			return
+		}
+	}
 }
 
 // addType5Path records and installs a path. If the install fails, the
@@ -1239,6 +1318,13 @@ func (o *OverlayTier) resolveType5Gateway(ip net.IP) {
 // resolveType5Prefix re-evaluates the paths of a prefix with a path via the
 // gateway IP ip. The caller holds type5PathsMu.
 func (o *OverlayTier) resolveType5Prefix(prefix string, ip net.IP) {
+	if o.fibShadows(prefix) {
+		// The kernel route is the FIB writer's: do not replace or delete
+		// it. fibRemoved installs a resolved path when the writer removes
+		// its route.
+		delete(o.type5Active, prefix)
+		return
+	}
 	active, had := o.type5Active[prefix]
 	if p := o.type5Paths[prefix][active]; had && p != nil &&
 		(!type5OverlayGateway(p.route).Equal(ip) || o.type2HasIP(ip)) {

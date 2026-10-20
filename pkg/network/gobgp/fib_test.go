@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"slices"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -181,6 +182,21 @@ func TestFIBWriterKernel(t *testing.T) {
 	}
 	w := newFIBWriter(booty, sel, map[int]string{1000: "vrf-t"})
 	w.nl, w.resync = h, time.Second
+	var removedMu sync.Mutex
+	var removed []string
+	w.onRemove = func(table int, p netip.Prefix) {
+		removedMu.Lock()
+		defer removedMu.Unlock()
+		removed = append(removed, routeKey(table, p))
+	}
+	wantRemoved := func(want ...string) {
+		t.Helper()
+		removedMu.Lock()
+		defer removedMu.Unlock()
+		if !slices.Equal(removed, want) {
+			t.Fatalf("removal callbacks = %q, want %q", removed, want)
+		}
+	}
 	wctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {
@@ -196,8 +212,13 @@ func TestFIBWriterKernel(t *testing.T) {
 	fibTestAnnounce(t, fabric, "192.0.2.98/32", "10.99.0.1", false)
 	waitFIB(t, h, []string{"198.51.100.0/24 via 10.99.0.2 metric 20", "203.0.113.0/24 via 10.99.0.3 metric 20"})
 
+	if !w.owns(1000, netip.MustParsePrefix("198.51.100.0/24")) || w.owns(unix.RT_TABLE_MAIN, netip.MustParsePrefix("198.51.100.0/24")) {
+		t.Fatal("owns: want 198.51.100.0/24 in table 1000 only")
+	}
+
 	fibTestAnnounce(t, fabric, "198.51.100.0/24", "10.99.0.2", true)
 	waitFIB(t, h, []string{"203.0.113.0/24 via 10.99.0.3 metric 20"})
+	wantRemoved("1000/198.51.100.0/24")
 
 	_, lost, _ := net.ParseCIDR("203.0.113.0/24")
 	if err := h.RouteDel(&netlink.Route{Dst: lost, Table: 1000, Protocol: unix.RTPROT_BGP, Priority: fibMetric}); err != nil {
@@ -210,6 +231,7 @@ func TestFIBWriterKernel(t *testing.T) {
 	if got := fibTestRoutes(t, h); len(got) != 0 {
 		t.Fatalf("table 1000 after stop = %q, want no BGP routes", got)
 	}
+	wantRemoved("1000/198.51.100.0/24", "1000/203.0.113.0/24")
 }
 
 // A next hop that only the default route of the VRF covers is resolved

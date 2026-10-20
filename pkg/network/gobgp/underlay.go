@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -77,6 +78,8 @@ type UnderlayTier struct {
 	log          *slog.Logger
 	stopRA       chan struct{}                                                           // signals the periodic RA goroutine to stop
 	stopFIB      context.CancelFunc                                                      // stops the FIB writer
+	fib          atomic.Pointer[fibWriter]                                               // the running FIB writer, for FIBOwns
+	onFIBRemove  func(table int, p netip.Prefix)                                         // called for each route the FIB writer removed
 	fibDone      chan struct{}                                                           // closed when the FIB writer has removed its routes
 	peerDevs     map[string]string                                                       // unnumbered peer address -> interface
 	discoverPeer func(context.Context, string) (string, error)                           // overridable in tests; nil = discoverLinkLocalPeer
@@ -606,10 +609,18 @@ func (u *UnderlayTier) startFIBWriter() {
 	u.stopFIB = cancel
 	u.fibDone = make(chan struct{})
 	w := u.buildFIBWriter(u.vrfTable)
+	u.fib.Store(w)
 	go func() {
 		defer close(u.fibDone)
 		w.run(ctx)
 	}()
+}
+
+// FIBOwns reports whether the FIB writer installed a route for prefix p in
+// table (unix.RT_TABLE_MAIN without a VRF).
+func (u *UnderlayTier) FIBOwns(table int, p netip.Prefix) bool {
+	w := u.fib.Load()
+	return w != nil && w.owns(table, p)
 }
 
 // buildFIBWriter returns the FIB writer of the sessions, with the zebra
@@ -617,6 +628,7 @@ func (u *UnderlayTier) startFIBWriter() {
 func (u *UnderlayTier) buildFIBWriter(vrfTable func(string) int) *fibWriter {
 	sel, vrfs := u.fibSelector(vrfTable)
 	w := newFIBWriter(u.bgp, sel, vrfs)
+	w.onRemove = u.onFIBRemove
 	w.resolveViaDefault = u.cfg.ResolveViaDefault
 	return w
 }

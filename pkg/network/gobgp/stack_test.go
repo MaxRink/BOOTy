@@ -451,3 +451,26 @@ func TestStackVTEPRoutesOnlyWithoutSessions(t *testing.T) {
 		t.Error("with a provision gateway: overlay VTEP routes set, want none")
 	}
 }
+
+// The Stack wires the overlay to the FIB writer in both directions: the
+// overlay asks the running writer whether it owns a prefix, and the
+// writer the Stack builds reports a removed route back to the overlay.
+func TestStackWiresFIBOwnership(t *testing.T) {
+	s := NewStack(&Config{RouterID: "192.168.4.10", ProvisionVNI: 1000, BridgeName: "br.provision"})
+	mock := &mockOverlayNetlinkOps{}
+	s.overlay.netlinkOps = mock
+	w := s.underlay.buildFIBWriter(func(string) int { return 1000 })
+	w.installed[fibOwnedKey] = &netlink.Route{}
+	s.underlay.fib.Store(w)
+
+	mac, _ := net.ParseMAC("62:db:b8:c1:80:52")
+	s.overlay.handleType5Route(fibOwnedRoute, "192.168.4.1", mac, false)
+	if len(mock.routeReplaces) != 0 {
+		t.Fatalf("the overlay installed %v over the FIB writer's route", mock.routeReplaces)
+	}
+	delete(w.installed, fibOwnedKey)
+	w.notifyRemoved([]string{fibOwnedKey})
+	if len(mock.routeReplaces) != 1 || mock.routeReplaces[0].Dst.String() != "10.200.0.0/24" {
+		t.Fatalf("route replaces = %v, want the Type-5 route after the FIB writer removed its route", mock.routeReplaces)
+	}
+}

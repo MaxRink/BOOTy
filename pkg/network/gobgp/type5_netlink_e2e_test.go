@@ -5,6 +5,7 @@ package gobgp
 import (
 	"log/slog"
 	"net"
+	"net/netip"
 	"os"
 	"runtime"
 	"syscall"
@@ -13,6 +14,7 @@ import (
 	apipb "github.com/osrg/gobgp/v4/api"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
+	"golang.org/x/sys/unix"
 )
 
 const type5E2ETable = 4242
@@ -53,6 +55,64 @@ func TestType5NetlinkFailoverKeepsRoute(t *testing.T) {
 	overlay.handleType5Route(routeA, "192.0.2.1", nil, true)
 	if routes := type5E2EDefaultRoutes(t); len(routes) != 0 {
 		t.Fatalf("default route left after the last withdraw: %v", routes)
+	}
+}
+
+// One writer owns the default route in the kernel: while the FIB writer
+// has it in the table, the overlay keeps its Type-5 path in the shadow
+// and leaves the writer's route alone, also on a withdraw. When the writer
+// removes its route, the Type-5 route is installed as the backup.
+func TestType5NetlinkFIBOwnership(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Fatal("test requires root (run with sudo)")
+	}
+	enterTestNetns(t)
+	cfg := &Config{
+		RouterID: "192.0.2.10", ProvisionVNI: 4242, BridgeName: "br-t5e2e",
+		OverlayVRFName: "Vrf_t5e2e", OverlayVRFTableID: type5E2ETable,
+	}
+	setupType5E2ELinks(t, cfg)
+	dum := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "dum-fib"}}
+	if err := netlink.LinkAdd(dum); err != nil {
+		t.Fatalf("add dummy: %v", err)
+	}
+	if err := netlink.LinkSetUp(dum); err != nil {
+		t.Fatalf("set dummy up: %v", err)
+	}
+	overlay := NewOverlayTier(cfg)
+	overlay.log = slog.Default()
+	w := &fibWriter{nl: &netlink.Handle{}, log: slog.Default(), installed: map[string]*netlink.Route{}, onRemove: overlay.fibRemoved}
+	overlay.fibOwns = w.owns
+	_, all, _ := net.ParseCIDR("0.0.0.0/0")
+	fib := map[string]*netlink.Route{
+		routeKey(type5E2ETable, netip.MustParsePrefix("0.0.0.0/0")): {
+			Dst: all, LinkIndex: dum.Attrs().Index, Table: type5E2ETable, Protocol: unix.RTPROT_BGP, Priority: fibMetric,
+		},
+	}
+	viaFIB := func() {
+		t.Helper()
+		routes := type5E2EDefaultRoutes(t)
+		if len(routes) != 1 || routes[0].LinkIndex != dum.Attrs().Index {
+			t.Fatalf("default routes in table %d = %v, want the FIB writer's on dum-fib", type5E2ETable, routes)
+		}
+	}
+	route, mac := type5E2ERoute(t, 1), mustParseMAC(t, "02:00:00:00:00:a1")
+
+	w.apply(fib, false)
+	overlay.handleType5Route(route, "192.0.2.1", mac, false)
+	viaFIB()
+	w.apply(nil, false) // the underlay loses the default route
+	requireType5E2EDefaultVia(t, "192.0.2.1")
+
+	// The other direction: the writer replaces the Type-5 route. A withdraw
+	// then leaves the writer's route alone.
+	w.apply(fib, false)
+	viaFIB()
+	overlay.handleType5Route(route, "192.0.2.1", nil, true)
+	viaFIB()
+	w.apply(nil, false)
+	if routes := type5E2EDefaultRoutes(t); len(routes) != 0 {
+		t.Fatalf("default routes after the withdraw and the FIB removal = %v, want none", routes)
 	}
 }
 
