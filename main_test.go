@@ -3020,3 +3020,26 @@ func TestFollowLLDPMatchesResubscribes(t *testing.T) {
 		t.Fatal("the end of the run does not close the subscription")
 	}
 }
+
+// The LLDP link watch logs a failed receive, a message of another sender
+// only at debug, and nothing once the run or the subscription ended.
+func TestLLDPWatchErrors(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, nil)) // Info and up
+	sub, end := context.WithCancel(context.Background())
+	logErr := lldpWatchError(sub, log)
+	logErr(errors.New("Wrong sender portid 1234, expected 0"))
+	if buf.Len() != 0 {
+		t.Fatalf("a message of another sender logged %q", buf.String())
+	}
+	logErr(errors.New("Receive failed: no buffer space available"))
+	if !strings.Contains(buf.String(), "subscribing again") {
+		t.Fatalf("a failed receive logged %q", buf.String())
+	}
+	buf.Reset()
+	end()
+	logErr(errors.New("Receive failed: use of closed file"))
+	if buf.Len() != 0 {
+		t.Fatalf("the closed subscription logged %q", buf.String())
+	}
+}

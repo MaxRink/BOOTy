@@ -4,10 +4,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/config"
+	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/sriov"
 )
 
@@ -70,5 +72,33 @@ func TestPrepareFirmwareLLDPWiresLaterNICs(t *testing.T) {
 		if !reflect.DeepEqual(disabled, want) {
 			t.Errorf("keep agent %v: disabled %v, want %v", keep, disabled, want)
 		}
+	}
+}
+
+// setupNetworkAndTokenFlow stops the firmware LLDP agent before the network
+// setup and wires lldpPrepareNICs for NICs that appear later.
+func TestSetupNetworkStopsFirmwareLLDPFirst(t *testing.T) {
+	origDetect, origDiscover, origDisable, origPrep, origSetup := detectNICs, discoverPFs, disableFirmwareLLDP, lldpPrepareNICs, setupNetworkModeFn
+	t.Cleanup(func() {
+		detectNICs, discoverPFs, disableFirmwareLLDP, lldpPrepareNICs, setupNetworkModeFn = origDetect, origDiscover, origDisable, origPrep, origSetup
+	})
+	var order []string
+	detectNICs = func(context.Context) ([]string, error) { return []string{"eno1"}, nil }
+	discoverPFs = func() ([]sriov.PF, error) { return nil, nil }
+	disableFirmwareLLDP = func(nic string) (string, error) {
+		order = append(order, "agent off "+nic)
+		return "fw-lldp-agent", nil
+	}
+	lldpPrepareNICs = func([]string) {}
+	setupNetworkModeFn = func(context.Context, *config.MachineConfig) (network.Mode, error) {
+		order = append(order, "network")
+		lldpPrepareNICs([]string{"ens2f0"}) // a NIC that appears during the setup
+		return nil, errors.New("stop here")
+	}
+	if _, _, err := setupNetworkAndTokenFlow(context.Background(), &config.MachineConfig{}, nil, func() {}); err == nil {
+		t.Fatal("setupNetworkAndTokenFlow succeeded with a failing network setup")
+	}
+	if want := []string{"agent off eno1", "network", "agent off ens2f0"}; !reflect.DeepEqual(order, want) {
+		t.Fatalf("order %v, want %v", order, want)
 	}
 }

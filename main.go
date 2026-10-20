@@ -1765,12 +1765,11 @@ func followLLDPMatches(ctx context.Context, matches []network.LinkMatch, known f
 		// The subscription ends on a netlink error: subscribe again.
 		for again := false; ctx.Err() == nil; again = true {
 			updates := make(chan netlink.LinkUpdate, 16)
-			opts := netlink.LinkSubscribeOptions{ErrorCallback: func(err error) {
-				log.Warn("link watch for LLDP failed, subscribing again", "error", err)
-			}}
-			// netlink keeps the socket of a failed subscription until its
-			// done channel closes: one per subscription.
+			// One context per subscription, canceled when it ends: the
+			// netlink fork (#833) closes the socket after a receive error
+			// itself; upstream v1.3.1 keeps it until done closes.
 			sub, end := context.WithCancel(ctx)
+			opts := netlink.LinkSubscribeOptions{ErrorCallback: lldpWatchError(sub, log)}
 			if err := subscribe(updates, sub.Done(), opts); err != nil {
 				end()
 				log.Warn("NICs that appear later send no LLDP", "error", err)
@@ -1791,6 +1790,22 @@ func followLLDPMatches(ctx context.Context, matches []network.LinkMatch, known f
 			}
 		}
 	}()
+}
+
+// lldpWatchError logs a netlink error of the LLDP link watch: a failed
+// receive ends the subscription (the watch subscribes again), a message of
+// another sender is skipped (the subscription goes on), and the close of
+// the subscription or the end of the run is no error.
+func lldpWatchError(sub context.Context, log *slog.Logger) func(error) {
+	return func(err error) {
+		switch {
+		case sub.Err() != nil:
+		case strings.Contains(err.Error(), "Wrong sender portid"):
+			log.Debug("link watch for LLDP skipped a message", "error", err)
+		default:
+			log.Warn("link watch for LLDP failed, subscribing again", "error", err)
+		}
+	}
 }
 
 // emitLLDPOnNetplanNICs sends LLDP on the NICs with netplan "emit-lldp:
