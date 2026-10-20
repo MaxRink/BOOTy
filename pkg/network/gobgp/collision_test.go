@@ -203,8 +203,9 @@ func TestCollisionAfterCarrierLoss(t *testing.T) {
 
 	// The leaf drops its own connection with a NOTIFICATION before its OPEN.
 	// GoBGP answers it with the FSM Error (RFC 4271 Section 8.2.2) and goes
-	// on with its own connection, without the 5 s Idle hold (booty.6: the
-	// session came up more than 5 s after the carrier).
+	// on with its own connection, without an Idle hold (booty.6: the
+	// session came up more than 5 s after the carrier, the fixed idle hold
+	// time of GoBGP 4.10.0).
 	t.Run("notification before open on the leaf's connection", func(t *testing.T) {
 		s, l := startCollision(t)
 		start := time.Now()

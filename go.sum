@@ -1,7 +1,7 @@
 github.com/MaxRink/dhcp v0.0.0-20260901064844-234b97448fae-booty.2 h1:izpsZ0TkT/xxKyaiY/qift0rU+itH+uvRcjaXfmZMno=
 github.com/MaxRink/dhcp v0.0.0-20260901064844-234b97448fae-booty.2/go.mod h1:tGfUTcnFYGYvVNCaZZhwlJySU/fQQxh9TmpsFzWXnnY=
-github.com/MaxRink/gobgp/v4 v4.10.0-booty.16 h1:EWYo29NKX3AkljrqKccpfhFloyVMrMlnNwkZcD+ApGE=
-github.com/MaxRink/gobgp/v4 v4.10.0-booty.16/go.mod h1:cVD5Q5BXFPLQ1EKROFeXexGJi3XYca4pbs/drBwzUig=
+github.com/MaxRink/gobgp/v4 v4.10.0-booty.21 h1:QiIY7qmUvZhszIJ6XTrfEHzqr6sj3gfh46TTu1v5CnM=
+github.com/MaxRink/gobgp/v4 v4.10.0-booty.21/go.mod h1:cVD5Q5BXFPLQ1EKROFeXexGJi3XYca4pbs/drBwzUig=
 github.com/MaxRink/gopacket v1.7.4-booty.2 h1:f3nwO/gu5wwVjNx/EPrvSUaMfqq2reWYmQ6A54I2CnM=
 github.com/MaxRink/gopacket v1.7.4-booty.2/go.mod h1:QKowPlTLrQU2rqV5C5I14Aoaid3l8da3kbddibc/Wgk=
 github.com/MaxRink/netlink v1.3.1-booty.1 h1:QjaC7D12/UI44ax3GHd8e9om31k9qnjjEdPWT30PuII=

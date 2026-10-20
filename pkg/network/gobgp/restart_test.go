@@ -240,8 +240,10 @@ func TestKeepsGracefulRestartRoutes(t *testing.T) {
 
 // reestablishAfterLeafReset peers BOOTy (127.0.0.1) with a leaf
 // (127.0.0.2) that resets the session and connects again after 1 s in
-// Idle (FRR: 1 s after a TCP close, 2 s after a NOTIFICATION). It reports whether BOOTy is Established again within limit.
-func reestablishAfterLeafReset(t *testing.T, restarter bool, limit time.Duration) bool {
+// Idle (FRR: 1 s after a TCP close, 2 s after a NOTIFICATION). It returns
+// how long BOOTy took to be Established again, and false when that took
+// longer than limit.
+func reestablishAfterLeafReset(t *testing.T, restarter bool, limit time.Duration) (time.Duration, bool) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -286,8 +288,9 @@ func reestablishAfterLeafReset(t *testing.T, restarter bool, limit time.Duration
 	limited, stop := context.WithTimeout(ctx, limit)
 	defer stop()
 	_, ok := waitEstablished(limited, booty, "127.0.0.2", start.Unix())
-	t.Logf("restarter %v: Established again after %v: %v", restarter, time.Since(start), ok)
-	return ok
+	took := time.Since(start)
+	t.Logf("restarter %v: Established again after %v: %v", restarter, took, ok)
+	return took, ok
 }
 
 // waitEstablished waits until the session to addr is up since the Unix
@@ -312,19 +315,22 @@ func waitEstablished(ctx context.Context, s *server.BgpServer, addr string, sinc
 }
 
 // When the leaf resets the session, GoBGP alone closes the leaf's
-// connection for 5 s in Idle (osrg/gobgp#3735), and the two sides can
-// refuse each other for much longer (19 to 30 s seen); with the restarter
-// BOOTy accepts it at once, like FRR (1.7 s seen).
+// connection in Idle for its idle hold time: 2 s after the NOTIFICATION
+// since osrg/gobgp 4e70e768, a fixed 5 s before (osrg/gobgp#3735, 19 to
+// 30 s seen until both sides connected). With the restarter BOOTy accepts
+// it at once, like FRR (1.6 to 1.8 s seen, 2.6 to 3.0 s without).
 func TestRestarterAcceptsLeafAfterReset(t *testing.T) {
 	if testing.Short() {
 		t.Skip("takes about 10 s")
 	}
 	const limit = 4 * time.Second
-	if reestablishAfterLeafReset(t, false, limit) {
-		t.Errorf("without the restarter BOOTy was Established again within %v; GoBGP should hold it 5 s in Idle", limit)
-	}
-	if !reestablishAfterLeafReset(t, true, limit) {
+	without, _ := reestablishAfterLeafReset(t, false, 10*time.Second)
+	with, ok := reestablishAfterLeafReset(t, true, limit)
+	if !ok {
 		t.Errorf("with the restarter BOOTy was not Established again within %v", limit)
+	}
+	if with >= without {
+		t.Errorf("with the restarter BOOTy was Established again after %v, not sooner than without it (%v)", with, without)
 	}
 }
 
@@ -348,9 +354,11 @@ func TestPeerStateEventDropsZone(t *testing.T) {
 // fails before the carrier (BFD reset, the restarter adds the peer again,
 // then the carrier loss stops it), on the other after it. When the
 // carrier returns, the leaf connects at once (FRR starts the session on
-// interface up). With EnablePeer alone GoBGP held the first peer 5 s in
-// Idle (holdtimeIdle) and closed the leaf's connection meanwhile; now
-// both wait IdleHoldTimeAfterReset (1 s) and connect 1.5 to 2 s later.
+// interface up). With EnablePeer alone GoBGP 4.10.0 held the first peer
+// 5 s in Idle (holdtimeIdle) and closed the leaf's connection meanwhile;
+// now both wait 1 s and connect 1.5 to 2 s later. Since the fork tag
+// v4.10.0-booty.17 the administrative shutdown leaves 1 s as well, so
+// this test passes with and without the reset in startStoppedPeer.
 func TestCarrierReturnWaitsIdleHoldAfterReset(t *testing.T) {
 	if testing.Short() {
 		t.Skip("takes about 3 s")

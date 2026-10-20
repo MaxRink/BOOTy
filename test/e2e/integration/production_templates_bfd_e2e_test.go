@@ -268,10 +268,11 @@ func TestProdTplCarrierLossPastBFD(t *testing.T) {
 // FRR on the leaf and on the server waits 2 s (after a NOTIFICATION
 // v_start doubles the 1 s start timer) and accepts the other side's
 // connection meanwhile, so the session is up again in about 2 s on
-// the shadow node. GoBGP alone holds the peer 5 s in Idle and closes the
-// leaf's connections in that time (osrg/gobgp#3735: 36 s seen); BOOTy
-// starts the peer again at once, so the leaf session is Established again
-// within maxSession.
+// the shadow node. GoBGP alone holds the peer 2 s in Idle (the idle hold
+// time doubles after a NOTIFICATION; a fixed 5 s before osrg/gobgp
+// 4e70e768, osrg/gobgp#3735: 36 s seen) and closes the leaf's connections
+// in that time; BOOTy starts the peer again at once, so the leaf session
+// is Established again within maxSession.
 func TestProdTplLeafClear(t *testing.T) {
 	for _, node := range prodtplServers {
 		t.Run(node.name, func(t *testing.T) {

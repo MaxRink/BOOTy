@@ -225,8 +225,9 @@ func TestPeersIdleHoldAfterReset(t *testing.T) {
 // After a reset (BFD down) the peer leaves Idle within 3 s and the session
 // is Established again. With the GoBGP default idle hold time the peer
 // stays in Idle for 30 s. The other side is passive, like a peer that only
-// accepts: a GoBGP peer that receives the Cease stays in Idle for a fixed
-// 5 s, and two such peers connecting at each other can miss each other.
+// accepts: a GoBGP peer that receives the Cease stays in Idle for 2 s (the
+// idle hold time doubles, like v_start of FRR), and two such peers
+// connecting at each other can miss each other.
 func TestResetPeerReestablishes(t *testing.T) {
 	ctx := context.Background()
 	freePort := func() int32 {
@@ -316,45 +317,14 @@ func TestResetPeerReestablishes(t *testing.T) {
 	wait("Established again", is(apipb.PeerState_SESSION_STATE_ESTABLISHED), 15*time.Second)
 	t.Logf("established again %s after the reset", time.Since(start).Round(100*time.Millisecond))
 
-	// Carrier loss past BFD: the carrier code disables the peer, BFD then
-	// resets the peer without a session, and the carrier comes back. The
-	// peer must start with the 1 s idle hold after reset, not the 5 s
-	// holdtimeIdle (osrg/gobgp#3740, for BFD Down since the fork tag
-	// v4.10.0-booty.4).
-	if err := a.srv.DisablePeer(ctx, &apipb.DisablePeerRequest{Address: "127.0.0.1", Communication: "interface down"}); err != nil {
-		t.Fatal(err)
-	}
-	wait("Idle after the carrier loss", is(apipb.PeerState_SESSION_STATE_IDLE), 3*time.Second)
-	(&UnderlayTier{bgp: a.srv, log: slog.Default()}).resetPeer(ctx, "127.0.0.1", "BFD down")
-	time.Sleep(time.Second)
-	if err := a.srv.EnablePeer(ctx, &apipb.EnablePeerRequest{Address: "127.0.0.1"}); err != nil {
-		t.Fatal(err)
-	}
-	start = time.Now()
-	time.Sleep(50 * time.Millisecond)
-	wait("leaving Idle after the carrier came back", func(st apipb.PeerState_SessionState) bool { return st != apipb.PeerState_SESSION_STATE_IDLE }, 3*time.Second)
-	t.Logf("connecting %s after the carrier came back", time.Since(start).Round(100*time.Millisecond))
-
-	// A short carrier flap: the carrier comes back before BFD goes down,
-	// so the peer already waits the 5 s holdtimeIdle of the
-	// administrative shutdown when BFD resets it. The reset shortens the
-	// running wait to the 1 s idle hold after reset (fork tag
-	// v4.10.0-booty.6); before, the leaf's connection was refused for the
-	// rest of the 5 s.
-	wait("Established before the flap", is(apipb.PeerState_SESSION_STATE_ESTABLISHED), 15*time.Second)
-	if err := a.srv.DisablePeer(ctx, &apipb.DisablePeerRequest{Address: "127.0.0.1", Communication: "interface down"}); err != nil {
-		t.Fatal(err)
-	}
-	wait("Idle after the flap", is(apipb.PeerState_SESSION_STATE_IDLE), 3*time.Second)
-	if err := a.srv.EnablePeer(ctx, &apipb.EnablePeerRequest{Address: "127.0.0.1"}); err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(500 * time.Millisecond)
-	(&UnderlayTier{bgp: a.srv, log: slog.Default()}).resetPeer(ctx, "127.0.0.1", "BFD down")
-	start = time.Now()
-	time.Sleep(50 * time.Millisecond)
-	wait("leaving Idle after the BFD reset", func(st apipb.PeerState_SessionState) bool { return st != apipb.PeerState_SESSION_STATE_IDLE }, 3*time.Second)
-	t.Logf("connecting %s after the BFD reset", time.Since(start).Round(100*time.Millisecond))
+	// The carrier-loss cases (a reset of a peer without a session, a reset
+	// that shortens a running idle hold timer) are not tested here: BOOTy
+	// sets IdleHoldTimeAfterReset to 1 s, and since the fork tag
+	// v4.10.0-booty.17 an administrative shutdown leaves 1 s as well, so
+	// BOOTy cannot tell the fix from no fix. The fork tests them with other
+	// values: TestResetPeerWhileAdminDownAppliesIdleHoldTimeAfterReset,
+	// TestResetPeerShortensRunningIdleHoldTimer and
+	// TestResetAndEnableOfStoppedPeerSendNothing (pkg/server).
 }
 
 // The start race of the prodtpl lab, reproduced with a real GoBGP: a peer

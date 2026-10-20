@@ -199,7 +199,7 @@ func (u *UnderlayTier) Setup(ctx context.Context) error {
 	}
 	u.startRelearn()
 	if err := u.startRestarter(); err != nil {
-		u.log.Warn("a BGP peer waits 5 s in Idle after its session ends", "error", err)
+		u.log.Warn("a BGP peer refuses connections in Idle after its session ends", "error", err)
 	}
 
 	return nil
