@@ -9,7 +9,7 @@ directive:
 
 | Module | Replace in `go.mod` | Fork branch |
 |---|---|---|
-| `github.com/osrg/gobgp/v4` | `github.com/MaxRink/gobgp/v4 v4.10.0-booty.10` | `booty/v4.10`, see [GoBGP version and fork](networking.md#gobgp-version-and-fork) |
+| `github.com/osrg/gobgp/v4` | `github.com/MaxRink/gobgp/v4 v4.10.0-booty.16` | `booty/v4.10`, see [GoBGP version and fork](networking.md#gobgp-version-and-fork) |
 | `github.com/gopacket/gopacket` | `github.com/MaxRink/gopacket v1.7.4-booty.2` | [`booty/v1.7`](https://github.com/MaxRink/gopacket/tree/booty/v1.7) |
 | `github.com/vishvananda/netlink` | `github.com/MaxRink/netlink v1.3.1-booty.1` | [`booty/v1.3`](https://github.com/MaxRink/netlink/tree/booty/v1.3) |
 | `github.com/insomniacslk/dhcp` | `github.com/MaxRink/dhcp v0.0.0-20260901064844-234b97448fae-booty.2` | [`booty/master`](https://github.com/MaxRink/dhcp/tree/booty/master) |

@@ -8,7 +8,7 @@ updates:
       interval: weekly
     open-pull-requests-limit: 10
     ignore:
-      # go.mod replaces GoBGP with the fork tag v4.10.0-booty.10, so an
+      # go.mod replaces GoBGP with the fork tag v4.10.0-booty.16, so an
       # upstream bump would not change the build. Move the fork tag by hand:
       # docs/networking.md#gobgp-version-and-fork
       - dependency-name: github.com/osrg/gobgp/v4

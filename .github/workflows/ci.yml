@@ -5,9 +5,16 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      connect_at_once:
+        description: Run the production template lab with BGP_CONNECT_AT_ONCE=true (data for its default)
+        type: boolean
+        default: false
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.sha }}
+  # A manual run gets its own group, so several runs of one commit (for
+  # example with connect_at_once) do not cancel each other.
+  group: ci-${{ github.event.pull_request.number || (github.event_name == 'workflow_dispatch' && github.run_id) || github.sha }}
   cancel-in-progress: true
 
 env:
@@ -1831,6 +1838,14 @@ jobs:
         with:
           go-version: "1.27.2"
 
+      - name: BGP_CONNECT_AT_ONCE for the lab (manual input)
+        if: github.event_name == 'workflow_dispatch' && inputs.connect_at_once
+        run: |
+          for f in test/e2e/clab/data/vars-prodtpl-*; do
+            printf '\nexport BGP_CONNECT_AT_ONCE="true"\n' >> "$f"
+          done
+          grep -c BGP_CONNECT_AT_ONCE test/e2e/clab/data/vars-prodtpl-*
+
       - name: Build GoBGP test image
         run: test/e2e/clab/docker-build-retry.sh -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
 
@@ -1968,6 +1983,14 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.27.2"
+
+      - name: BGP_CONNECT_AT_ONCE for the lab (manual input)
+        if: github.event_name == 'workflow_dispatch' && inputs.connect_at_once
+        run: |
+          for f in test/e2e/clab/data/vars-prodtpl-*; do
+            printf '\nexport BGP_CONNECT_AT_ONCE="true"\n' >> "$f"
+          done
+          grep -c BGP_CONNECT_AT_ONCE test/e2e/clab/data/vars-prodtpl-*
 
       - name: Build GoBGP test image
         run: test/e2e/clab/docker-build-retry.sh -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
@@ -2107,6 +2130,14 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.27.2"
+
+      - name: BGP_CONNECT_AT_ONCE for the lab (manual input)
+        if: github.event_name == 'workflow_dispatch' && inputs.connect_at_once
+        run: |
+          for f in test/e2e/clab/data/vars-prodtpl-*; do
+            printf '\nexport BGP_CONNECT_AT_ONCE="true"\n' >> "$f"
+          done
+          grep -c BGP_CONNECT_AT_ONCE test/e2e/clab/data/vars-prodtpl-*
 
       - name: Build GoBGP test image
         run: test/e2e/clab/docker-build-retry.sh -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .

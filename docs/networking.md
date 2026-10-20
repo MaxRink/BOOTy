@@ -242,9 +242,25 @@ same resolution:
     again, and both connections complete within 100 microseconds (FRR
     debug trace of the production template lab, #811). FRR and GoBGP
     both resolve that collision per RFC 4271 section 6.8 and keep BOOTy's
-    connection, but in about one fault in ten the kept connection was
-    lost as well and the session came up twice. Without the option the
-    leaf's connection usually arrives first. The peer restart above stays:
+    connection; until the fork tag booty.11 GoBGP sometimes reset that
+    connection itself (fixed). With booty.12 and the option on, the
+    production template lab passed 12 of 15 jobs (5 manual runs of #831):
+    the two-uplink and native model labs 5 of 5, the one-uplink lab 2 of
+    5. All three failures are a graceful restart false positive: GoBGP is
+    Established on its own connection, the leaf's connection, whose SYN
+    was pending since the outage, completes a millisecond later, and
+    GoBGP takes that TCP connection as a restart of the peer (RFC 4724
+    section 5: a new connection while Established with the graceful
+    restart capability) and ends the new session, so the session comes
+    up twice. FRR has the same rule (`bgp_accept`), but its own stale
+    connect does not complete against the leaf in the lab. A possible
+    future change in the fork: in Established with graceful restart,
+    treat a new connection as a restart only when it sends an OPEN, and
+    close a connection that ends without one. A restarted peer sends its
+    OPEN at once, but this departs from RFC 4724 section 5, which reacts
+    to the TCP connection itself, so it is not done. Without the option
+    the leaf's connection usually arrives first, and the lab passed 10 of
+    10 jobs. The peer restart above stays:
     GoBGP still holds a peer 5 s in Idle after the peer ended the session
     and refuses the leaf meanwhile, which `ConnectAtOnce` does not change.
   Two more regressions of GoBGP 4.10.0 are fixed in the GoBGP fork that
@@ -537,8 +553,8 @@ BOOTy's other dependency forks (gopacket, netlink) are listed in
 [Dependency forks](dependency-forks.md).
 
 GoBGP mode embeds GoBGP 4.10.0 through a fork tag:
-`replace github.com/osrg/gobgp/v4 => github.com/MaxRink/gobgp/v4 v4.10.0-booty.10`
-in `go.mod`. The tag is v4.10.0 with thirteen fixes and four features. Do
+`replace github.com/osrg/gobgp/v4 => github.com/MaxRink/gobgp/v4 v4.10.0-booty.16`
+in `go.mod`. The tag is v4.10.0 with sixteen fixes and four features. Do
 not use the tag v4.10.0-booty.7: it stops answering a NOTIFICATION in
 OpenSent, which RFC 4271 section 8.2.2 does not allow (booty.8 and later
 answer it again).
@@ -552,9 +568,12 @@ answer it again).
 | A NOTIFICATION as the first message on the leaf's connection in OpenSent: answer it with the FSM Error (RFC 4271 section 8.2.2) and go on with BOOTy's own connection (booty.8) | The session waits 5 s in Idle although BOOTy's own connection is about to come up (`TestProdTplCarrierLossPastBFD`). |
 | Close the leaf's connection that loses a collision only when the leaf's OPEN arrives on it, with Cease/Connection Collision Resolution (RFC 4271 section 6.8) (booty.9) | GoBGP closed it at once, FRR connected again, and with graceful restart the new connection ended the session a second time (`TestProdTplOneDropPerFault`: two drops per fault). |
 | Review follow-ups of the booty.9 change: a split OPEN on the losing connection is read whole, its header is checked, a NOTIFICATION with a version error gets no answer, and NOTIFICATIONs on the losing connection do not count for the session (booty.10) | A split OPEN got FSM Error 5/1 instead of the collision Cease; the version error got an answer against RFC 4271 section 8.2.2 (Event 24). |
+| Keep a dialed outgoing connection when the leaf's OPEN arrives on the leaf's connection in OpenSent (booty.11) | With `BGP_CONNECT_AT_ONCE`, GoBGP reset its own connection while the leaf (lower BGP Identifier) kept it and closed the other one, so the session waited 5 s in Idle (packet capture of the production template lab). |
+| No connect retry in OpenConfirm (RFC 4271 section 8.2.2) after the outgoing connect failed, and a test of the dialed mark (booty.12) | GoBGP connected again while the session went on with the leaf's connection. |
+| In OpenConfirm and Established the outgoing connection manager skips the dial and keeps running instead of ending (booty.13) | With a stale FSM state the manager of booty.12 could end while the FSM was already back in Active, which then had no outgoing connection manager. |
 | Take a new connection from a restarting peer (RFC 4724) | A peer that restarts with graceful restart cannot open a new session while the old one is still up. |
 | Discard EVPN NLRIs of unknown route types | An EVPN route type that GoBGP does not know resets the session instead of being ignored (RFC 7606). |
-| Send IPv4 routes with an IPv6 next hop only with the extended next hop capability | A peer without RFC 8950 support gets routes with a next hop it cannot use. |
+| Send IPv4 routes with an IPv6 next hop only with the extended next hop capability, for all five IPv4 families of RFC 8950 section 4, IPv4 VPN multicast included (booty.15), and with an IPv4-mapped IPv6 next hop counted as IPv6 (booty.16) | A peer without RFC 8950 support gets routes with a next hop it cannot use. Before booty.15 and booty.16, IPv4 VPN multicast routes and routes with an IPv4-mapped IPv6 next hop such as `::ffff:192.0.2.1` still went to such a peer. |
 | Advertise extended next hop only for the IPv4 families of RFC 8950 | GoBGP also offers it for l2vpn evpn, and FRR logs a capability warning per OPEN. |
 | Keep unknown EVPN extended community sub-types (RFC 7606 section 7.14) | A route with an EVPN extended community sub-type that GoBGP does not know is treated as withdrawn: FRR's MAC/IP routes with the ARP/ND community (sub-type 0x08) are withdrawn. |
 | Decode the EVPN ARP/ND extended community (RFC 9047) | The router (R), override (O) and immutable (I) flags of a MAC/IP route, and the proxy flag that FRR sends, are not available to BOOTy. |
@@ -567,7 +586,7 @@ GoBGP 4 is required: GoBGP 3.37 panics on a truncated EVPN NLRI from any
 peer, also on an IPv4-only session, which ends BOOTy (PID 1);
 `TestEVPNDecodeTruncatedNLRIReturnsError` pins that 4.10 returns an error.
 
-Drop the replace when an osrg/gobgp release contains all seventeen changes
+Drop the replace when an osrg/gobgp release contains all twenty changes
 (for the two opt-in features, with the same API). Then
 check the GO-2026-4736 exception in `hack/check-govulncheck.py`: it names
 `github.com/osrg/gobgp/v4` 4.10.0, which govulncheck does not report while
