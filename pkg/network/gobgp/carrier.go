@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 
-	apipb "github.com/osrg/gobgp/v4/api"
-	"github.com/osrg/gobgp/v4/pkg/server"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 )
@@ -27,22 +25,17 @@ type carrierWatch struct {
 	// to a new link-local address; nil keeps the address of peers.
 	current func(iface string) string
 	down    map[string]bool
-	// disable and enable stop and start a peer; GoBGP by default.
+	// disable and enable stop and start a peer (UnderlayTier.newCarrierWatch
+	// sets them).
 	disable, enable func(ctx context.Context, addr string) error
 	log             *slog.Logger
 }
 
-func newCarrierWatch(bgp *server.BgpServer, peers map[string]string, log *slog.Logger) *carrierWatch {
+func newCarrierWatch(peers map[string]string, log *slog.Logger) *carrierWatch {
 	return &carrierWatch{
 		peers: peers,
 		down:  map[string]bool{},
-		disable: func(ctx context.Context, addr string) error {
-			return bgp.DisablePeer(ctx, &apipb.DisablePeerRequest{Address: addr, Communication: "interface down"}) //nolint:wrapcheck // logged with the peer
-		},
-		enable: func(ctx context.Context, addr string) error {
-			return bgp.EnablePeer(ctx, &apipb.EnablePeerRequest{Address: addr}) //nolint:wrapcheck // logged with the peer
-		},
-		log: log,
+		log:   log,
 	}
 }
 

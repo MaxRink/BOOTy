@@ -293,7 +293,33 @@ same resolution:
   `network.bgp.fastExternalFailover`, `BGP_FAST_EXTERNAL_FAILOVER`; on by
   default like FRR) stops an unnumbered session as soon as its NIC loses
   carrier. Native sessions without the setting keep a
-  `no bgp fast-external-failover` of `frr.conf` in the same VRF.
+  `no bgp fast-external-failover` of `frr.conf` in the same VRF. When the
+  carrier returns, BOOTy resets the stopped GoBGP peer and enables it. The
+  reset sends nothing; it makes the peer wait `IdleHoldTimeAfterReset`
+  (1 s) in Idle, then connect after a random 1.5 to 2 s, and accept the
+  leaf's connection from the end of the 1 s. Without the reset the wait
+  depended on the order of BFD loss and carrier loss: 1 s when BFD went
+  down after the carrier loss, 5 s (`holdtimeIdle`) when it went down
+  first, because the peer restarter had added the peer again. In the
+  kindmetal EVPN parity run with both leaves down this delayed one
+  uplink by 5 s, and all four sessions were back after 6.8 s against 4.6
+  to 5.7 s for FRR. FRR starts the session at once on interface up
+  (`bgp_start_interface_nbrs` in `bgp_zebra.c`). BOOTy does not delete
+  and add the peer to start it at once: it then connects at the same
+  time as the leaf. GoBGP takes a leaf connection that completes after
+  the session is up as a graceful restart and ends the session whenever
+  the leaf sent the graceful restart capability (GoBGP fork commit
+  6bf0511e). RFC 4724 section 5 and FRR (`bgp_accept`,
+  `PEER_STATUS_NSF_MODE`) do that only when the leaf also sent address
+  family tuples. In the production template lab that happened in 4 of 11
+  jobs. The peer also keeps the stale routes of a leaf in graceful
+  restart, like FRR for a peer in NSF wait (`bgp_stop` in `bgp_fsm.c`).
+  A peer that the carrier loss did not stop is left alone. BOOTy waits
+  until GoBGP has applied each stop and start (at most 200 ms, a few
+  milliseconds in practice): `DisablePeer` and `EnablePeer` only queue the
+  change, and GoBGP drops a change while another one is queued. Without
+  the wait a fast carrier flap left the peer down, or up after down, up,
+  down.
 
 GoBGP mode installs the learned IPv4 and IPv6 unicast routes like zebra:
 into the table of each session's VRF (the main table without a VRF), with

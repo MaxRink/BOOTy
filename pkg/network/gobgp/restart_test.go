@@ -5,6 +5,7 @@ package gobgp
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -340,5 +341,318 @@ func TestPeerStateEventDropsZone(t *testing.T) {
 	if s.GetNeighborAddress() != "fe80::1" || s.GetSessionState() != apipb.PeerState_SESSION_STATE_ESTABLISHED ||
 		s.GetAdminState() != apipb.PeerState_ADMIN_STATE_UP {
 		t.Fatalf("peerStateEvent() = %v, want fe80::1 established up", s)
+	}
+}
+
+// The kindmetal EVPN parity run with both leaves down: on one uplink BFD
+// fails before the carrier (BFD reset, the restarter adds the peer again,
+// then the carrier loss stops it), on the other after it. When the
+// carrier returns, the leaf connects at once (FRR starts the session on
+// interface up). With EnablePeer alone GoBGP held the first peer 5 s in
+// Idle (holdtimeIdle) and closed the leaf's connection meanwhile; now
+// both wait IdleHoldTimeAfterReset (1 s) and connect 1.5 to 2 s later.
+func TestCarrierReturnWaitsIdleHoldAfterReset(t *testing.T) {
+	if testing.Short() {
+		t.Skip("takes about 3 s")
+	}
+	ctx := context.Background()
+	bootyPort := freePort(t)
+	u := &UnderlayTier{bgp: startServerAt(t, 65001, "10.0.0.1", "127.0.0.1", bootyPort), log: slog.Default()}
+	timers := func(atOnce bool) *apipb.Timers {
+		return &apipb.Timers{Config: &apipb.TimersConfig{ConnectRetry: 10, HoldTime: 9, KeepaliveInterval: 3, IdleHoldTimeAfterReset: idleHoldAfterReset, ConnectAtOnce: atOnce}}
+	}
+	type uplink struct {
+		iface, addr string
+		leaf        *server.BgpServer
+	}
+	links := []*uplink{{iface: "eth0", addr: "127.0.0.2"}, {iface: "eth1", addr: "127.0.0.3"}}
+	leafPeer := func(l *uplink) *apipb.Peer {
+		return &apipb.Peer{
+			Conf:      &apipb.PeerConf{NeighborAddress: "127.0.0.1", PeerAsn: 65001},
+			Transport: &apipb.Transport{LocalAddress: l.addr, RemotePort: uint32(bootyPort)}, //nolint:gosec // test port
+			Timers:    timers(true), AfiSafis: ipv4Families(),
+		}
+	}
+	ifaces := map[string]string{}
+	for i, l := range links {
+		port := freePort(t)
+		l.leaf = startServerAt(t, uint32(65002+i), l.addr, l.addr, port) //nolint:gosec // small
+		if err := l.leaf.AddPeer(ctx, &apipb.AddPeerRequest{Peer: leafPeer(l)}); err != nil {
+			t.Fatal(err)
+		}
+		if err := u.addPeer(ctx, &apipb.Peer{
+			Conf:      &apipb.PeerConf{NeighborAddress: l.addr, PeerAsn: uint32(65002 + i)},  //nolint:gosec // small
+			Transport: &apipb.Transport{LocalAddress: "127.0.0.1", RemotePort: uint32(port)}, //nolint:gosec // test port
+			Timers:    timers(false), AfiSafis: ipv4Families(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		u.recordInterfacePeer(l.iface, l.addr)
+		ifaces[l.iface] = l.addr
+	}
+	if err := u.startRestarter(); err != nil {
+		t.Fatal(err)
+	}
+	defer u.stopRestart()
+	w := u.newCarrierWatch(ifaces)
+
+	waitFor := func(addr string, ok func(*apipb.Peer) bool) {
+		t.Helper()
+		for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+			done := false
+			_ = u.bgp.ListPeer(ctx, &apipb.ListPeerRequest{Address: addr}, func(p *apipb.Peer) { done = ok(p) })
+			if done {
+				return
+			}
+		}
+		t.Fatalf("peer %s: state not reached", addr)
+	}
+	established := func(p *apipb.Peer) bool {
+		return p.GetState().GetSessionState() == apipb.PeerState_SESSION_STATE_ESTABLISHED
+	}
+	bfdDown := func(addr string) {
+		t.Helper()
+		if err := u.bgp.ResetPeer(ctx, &apipb.ResetPeerRequest{Address: addr, BfdDown: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	carrierLoss := func(l *uplink) {
+		t.Helper()
+		w.handle(l.iface, false)
+		if err := l.leaf.DisablePeer(ctx, &apipb.DisablePeerRequest{Address: "127.0.0.1"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, l := range links {
+		waitFor(l.addr, established)
+	}
+
+	// eth0: BFD Down, the restarter adds the peer again, then the carrier goes.
+	bfdDown(links[0].addr)
+	waitFor(links[0].addr, func(p *apipb.Peer) bool { return p.GetTimers().GetState().GetUptime() == nil })
+	carrierLoss(links[0])
+	// eth1: the carrier goes, then BFD Down.
+	carrierLoss(links[1])
+	bfdDown(links[1].addr)
+	for _, l := range links {
+		waitFor(l.addr, func(p *apipb.Peer) bool {
+			return p.GetState().GetAdminState() == apipb.PeerState_ADMIN_STATE_DOWN && p.GetState().GetSessionState() == apipb.PeerState_SESSION_STATE_IDLE
+		})
+	}
+
+	start := time.Now()
+	for _, l := range links {
+		w.handle(l.iface, true)
+		// The leaf starts the session at once on interface up, like FRR.
+		if err := l.leaf.DeletePeer(ctx, &apipb.DeletePeerRequest{Address: "127.0.0.1"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := l.leaf.AddPeer(ctx, &apipb.AddPeerRequest{Peer: leafPeer(l)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	limited, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	for _, l := range links {
+		if _, ok := waitEstablished(limited, u.bgp, l.addr, 0); !ok {
+			t.Errorf("%s: not Established within 3 s after the carrier returned", l.iface)
+			continue
+		}
+		t.Logf("%s: Established %v after the carrier returned", l.iface, time.Since(start))
+	}
+}
+
+// carrierTier is a tier with the GoBGP peer 127.0.0.1 of a fake speaker
+// on eth0, and the carrier watch of that interface.
+func carrierTier(t *testing.T, gr bool) (*UnderlayTier, *carrierWatch, net.Conn) {
+	t.Helper()
+	u := &UnderlayTier{log: slog.Default(), bgp: startServer(t, 65000, "192.0.2.17", -1)}
+	conn := fakeSpeaker(t, u, gr)
+	u.recordInterfacePeer("eth0", "127.0.0.1")
+	w := u.newCarrierWatch(map[string]string{"eth0": "127.0.0.1"})
+	return u, w, conn
+}
+
+// A leaf that restarts with graceful restart (its session ended without
+// a NOTIFICATION) and then loses carrier keeps its stale routes in GoBGP
+// until the carrier is back and it advertises again, like FRR: bgp_stop
+// keeps the stale paths of a peer in NSF wait and the restart timer runs
+// on (bgp_fsm.c), and the start on interface up (bgp_start_interface_nbrs)
+// does not clear them. Deleting the GoBGP peer would drop them.
+func TestCarrierReturnKeepsGracefulRestartRoutes(t *testing.T) {
+	u, w, conn := carrierTier(t, true)
+	nlri, err := bgp.NewIPAddrPrefix(netip.MustParsePrefix("10.9.9.0/24"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	nh, err := bgp.NewPathAttributeNextHop(netip.MustParseAddr("127.0.0.1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	update := bgp.NewBGPUpdateMessage(nil, []bgp.PathAttributeInterface{
+		bgp.NewPathAttributeOrigin(0),
+		bgp.NewPathAttributeAsPath([]bgp.AsPathParamInterface{bgp.NewAs4PathParam(bgp.BGP_ASPATH_ATTR_TYPE_SEQ, []uint32{65500})}),
+		nh,
+	}, []bgp.PathNLRI{{NLRI: nlri}})
+	b, err := update.Serialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Write(b); err != nil {
+		t.Fatal(err)
+	}
+	family := ipv4Families()[0].GetConfig().GetFamily()
+	hasRoute := func() bool { return len(listPaths(t, u.bgp, family)["10.9.9.0/24"]) > 0 }
+	for deadline := time.Now().Add(5 * time.Second); !hasRoute(); time.Sleep(20 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("route not received")
+		}
+	}
+	_ = conn.Close()
+	waitPeer(t, u, func(p *apipb.Peer) bool { return idleAfterUp(p) && keepsGracefulRestartRoutes(p) })
+
+	w.handle("eth0", false)
+	waitPeer(t, u, func(p *apipb.Peer) bool {
+		return p.GetState().GetAdminState() == apipb.PeerState_ADMIN_STATE_DOWN
+	})
+	if !hasRoute() {
+		t.Fatal("the carrier loss dropped the stale route")
+	}
+	w.handle("eth0", true)
+	waitPeer(t, u, func(p *apipb.Peer) bool {
+		return p.GetState().GetAdminState() == apipb.PeerState_ADMIN_STATE_UP
+	})
+	if !hasRoute() {
+		t.Fatal("the carrier return dropped the stale route of the restarting leaf")
+	}
+}
+
+// A session that is still Established when the carrier returns (the
+// carrier loss did not stop it, for example a lost DisablePeer) is left
+// alone.
+func TestCarrierReturnLeavesEstablishedPeer(t *testing.T) {
+	u, w, _ := carrierTier(t, false)
+	var up int64
+	_ = u.bgp.ListPeer(context.Background(), &apipb.ListPeerRequest{Address: "127.0.0.1"}, func(p *apipb.Peer) {
+		up = p.GetTimers().GetState().GetUptime().GetSeconds()
+	})
+	w.disable = func(context.Context, string) error { return errors.New("lost") }
+	w.handle("eth0", false)
+	w.handle("eth0", true)
+	time.Sleep(200 * time.Millisecond)
+	waitPeer(t, u, func(p *apipb.Peer) bool {
+		return p.GetState().GetSessionState() == apipb.PeerState_SESSION_STATE_ESTABLISHED &&
+			p.GetTimers().GetState().GetUptime().GetSeconds() == up && !p.GetConf().GetAdminDown()
+	})
+}
+
+// The carrier watch stops and starts a peer under peerOps, so the peer
+// restarter and the relearner cannot delete and add it at the same time.
+func TestCarrierOpsHoldPeerOps(t *testing.T) {
+	u := &UnderlayTier{log: slog.Default(), bgp: startServer(t, 65000, "192.0.2.17", -1)}
+	w := u.newCarrierWatch(map[string]string{"eth0": "127.0.0.1"})
+	for name, op := range map[string]func(context.Context, string) error{"disable": w.disable, "enable": w.enable} {
+		u.peerOps.Lock()
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			_ = op(context.Background(), "127.0.0.1")
+		}()
+		select {
+		case <-done:
+			u.peerOps.Unlock()
+			t.Fatalf("%s ran without peerOps", name)
+		case <-time.After(200 * time.Millisecond):
+		}
+		u.peerOps.Unlock()
+		<-done
+	}
+}
+
+// A carrier loss and return handled back to back leave the peer enabled:
+// DisablePeer only queues the stop, so without stopPeer's wait the start
+// read the peer as still enabled and skipped it, and the stop then left
+// the peer down for good (reviewer probe: 27 of 30 runs).
+func TestCarrierFlapBackToBack(t *testing.T) {
+	u, w, _ := carrierTier(t, false)
+	w.handle("eth0", false)
+	w.handle("eth0", true)
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		admin := apipb.PeerState_ADMIN_STATE_UNSPECIFIED
+		_ = u.bgp.ListPeer(context.Background(), &apipb.ListPeerRequest{Address: "127.0.0.1"}, func(p *apipb.Peer) { admin = p.GetState().GetAdminState() })
+		if admin == apipb.PeerState_ADMIN_STATE_DOWN && time.Until(deadline) < time.Second {
+			t.Fatal("peer stuck administratively down after a fast carrier flap")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// A peer that is enabled and waits in Idle (its session ended and the
+// restarter does not run) when the carrier returns without a stop before
+// is not reset, enabled or added again.
+func TestCarrierReturnLeavesIdlePeer(t *testing.T) {
+	u, w, conn := carrierTier(t, false)
+	_ = conn.Close()
+	waitPeer(t, u, idleAfterUp)
+	w.disable = func(context.Context, string) error { return errors.New("lost") }
+	w.handle("eth0", false)
+	reset := false
+	w.enable = func(ctx context.Context, addr string) error {
+		err := u.startStoppedPeer(ctx, addr)
+		_ = u.bgp.ListPeer(ctx, &apipb.ListPeerRequest{Address: addr}, func(p *apipb.Peer) {
+			reset = p.GetState().GetAdminState() != apipb.PeerState_ADMIN_STATE_UP || p.GetTimers().GetState().GetUptime() == nil
+		})
+		return err
+	}
+	w.handle("eth0", true)
+	if reset {
+		t.Fatal("the Idle peer was stopped or added again")
+	}
+	waitPeer(t, u, func(p *apipb.Peer) bool {
+		return p.GetState().GetAdminState() == apipb.PeerState_ADMIN_STATE_UP && p.GetTimers().GetState().GetUptime() != nil
+	})
+}
+
+func adminState(u *UnderlayTier) apipb.PeerState_AdminState {
+	a := apipb.PeerState_ADMIN_STATE_UNSPECIFIED
+	_ = u.bgp.ListPeer(context.Background(), &apipb.ListPeerRequest{Address: "127.0.0.1"}, func(p *apipb.Peer) { a = p.GetState().GetAdminState() })
+	return a
+}
+
+// Carrier down, up and down back to back: the second stop met the start
+// still queued, GoBGP dropped it and the peer stayed enabled on a link
+// without carrier (reviewer probe: 24 of 30 runs). startStoppedPeer now
+// waits until the start is applied.
+func TestCarrierFlapDownUpDown(t *testing.T) {
+	u, w, _ := carrierTier(t, false)
+	w.handle("eth0", false)
+	w.handle("eth0", true)
+	w.handle("eth0", false)
+	time.Sleep(300 * time.Millisecond)
+	if a := adminState(u); a != apipb.PeerState_ADMIN_STATE_DOWN {
+		t.Fatalf("admin state %v after carrier down, up, down; want down", a)
+	}
+	w.handle("eth0", true)
+	time.Sleep(300 * time.Millisecond)
+	if a := adminState(u); a != apipb.PeerState_ADMIN_STATE_UP {
+		t.Fatalf("admin state %v after the carrier returned; want up", a)
+	}
+}
+
+// Fast carrier flaps of a peer that already waits in Idle (its session
+// ended, the restarter does not run): the stop must be waited for by its
+// admin state, the session state is Idle before the stop is applied.
+func TestCarrierFlapIdlePeer(t *testing.T) {
+	u, w, conn := carrierTier(t, false)
+	_ = conn.Close()
+	waitPeer(t, u, idleAfterUp)
+	for i := range 10 {
+		w.handle("eth0", false)
+		w.handle("eth0", true)
+		time.Sleep(50 * time.Millisecond)
+		if a := adminState(u); a != apipb.PeerState_ADMIN_STATE_UP {
+			t.Fatalf("flap %d: admin state %v after the carrier returned; want up", i, a)
+		}
 	}
 }

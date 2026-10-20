@@ -776,8 +776,10 @@ func (u *UnderlayTier) startCarrierWatch() {
 // newCarrierWatch returns the carrier watch of the peers; it acts on the
 // current address of each peer, which the relearner may change.
 func (u *UnderlayTier) newCarrierWatch(peers map[string]string) *carrierWatch {
-	w := newCarrierWatch(u.bgp, peers, u.log)
+	w := newCarrierWatch(peers, u.log)
 	w.current = u.ifacePeer
+	w.disable = u.stopPeer
+	w.enable = u.startStoppedPeer
 	// Under peerOps, so the peer restarter cannot delete and add a peer
 	// between the stop and its own check, which would leave it up on a
 	// link without carrier.
