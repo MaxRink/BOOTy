@@ -294,20 +294,33 @@ same resolution:
   after a connection collision GoBGP went to Idle for 5 s instead of
   using its own completed connection
   ([osrg/gobgp#3741](https://github.com/osrg/gobgp/issues/3741)).
-- BFD Down while a BGP session starts. Like bgpd, a BFD Down in the
-  second the BGP session came up does not reset it: a route reflector with
+- BFD Down while a BGP session starts. Like bgpd 10.3 and later, a BFD
+  Down in OpenConfirm, in Established before the uptime is set, or in the
+  second the BGP session came up does not reset it
+  (`bfd_session_status_update` resets only when
+  `last_event > peer->uptime`, both in seconds; bgpd 10.2 stops the
+  session on every BFD Up to Down). A route reflector with
   `update-source` re-keys its BFD session when its side of the session
-  comes up (`bgp_peer_bfd_update_source`). Known deviation: BOOTy also does
-  not reset a session in OpenConfirm, or Established before GoBGP has set
-  its uptime. bgpd resets in that case (`bfd_session_status_update` resets
-  whenever `last_event > peer->uptime`), but its BFD Down arrives through
-  zebra, after the RR's KEEPALIVE, so the shadow node does not see it.
-  BOOTy's BFD is in the same process and can see the Down first. When the
-  session is Established, BOOTy checks again: if BFD is not Up within the
-  detection time at the slow 1 s rate (multiplier x 1 s, 3 s by default)
-  after the Down, it resets the session then, so a real failure is not
-  hidden until the hold timer expires. The RR's re-keyed session is Up
-  again after 1 s in the lab. Teardown stops these checks.
+  comes up (`bgp_peer_bfd_update_source`), and BOOTy's multihop session
+  sees the Down with diag 3 (Neighbor Signaled Session Down) within
+  milliseconds. For diag 3 only, BOOTy is more tolerant than bgpd (known
+  deviation): GoBGP's uptime has whole seconds, so a Down in the next
+  second does not reset the session either, and neither does a Down in
+  Connect, Active or OpenSent, because GoBGP sends the KEEPALIVE that
+  brings the RR up before its peer state leaves Active (outgoing
+  connection) or OpenSent (incoming connection). bgpd's BFD Down arrives
+  through zebra, after the RR's KEEPALIVE, so the shadow node does not
+  see this. A diag 3 Down for a peer that GoBGP does not know (BOOTy
+  restarted it) is ignored. Any other diag, for example an expired
+  detection time, is a path failure and gets only bgpd's tolerance. Idle
+  and an older Established session reset at once. Otherwise BOOTy checks
+  again, once per peer and only for the session it saw: if BFD is not Up
+  within the detection time at the slow 1 s rate (multiplier x 1 s, 3 s
+  by default) after the last Down and that session is Established, it
+  resets the session then, so a real failure is not hidden until the hold
+  timer expires. If the peer was restarted meanwhile, the check ends. The
+  RR's re-keyed session is Up again after 1 s in the lab. Teardown stops
+  these checks.
 - `bgp bestpath as-path multipath-relax` (native `network.bgp.multipathRelax`,
   `BGP_MULTIPATH_RELAX`) installs equal-cost paths with different AS paths
   of the same length as one multipath route.

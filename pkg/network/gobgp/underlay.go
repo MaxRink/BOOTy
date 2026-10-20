@@ -112,11 +112,13 @@ type UnderlayTier struct {
 	bfdUp        sync.Map                      // BFD peer name -> bool, the session is Up
 	bfdUpGrace   time.Duration                 // overridable in tests; zero = bfdRecheckGrace
 	// checkCtx, canceled by Teardown, bounds the BFD rechecks of
-	// starting sessions (recheck); checkMu guards it and checks.Add.
+	// starting sessions (recheck); checkMu guards it, checks.Add and
+	// rechecks (the running recheck of each BFD peer).
 	checkMu    sync.Mutex
 	checkCtx   context.Context //nolint:containedctx // canceled by Teardown, like stopRelearn
 	stopChecks context.CancelFunc
 	checks     sync.WaitGroup
+	rechecks   map[string]*bfdRecheck
 	stopLLDP   func() // stops the LLDP senders and waits for them
 }
 

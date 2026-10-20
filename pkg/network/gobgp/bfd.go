@@ -158,49 +158,67 @@ func bfdTimers(txMS, rxMS, mult uint32) bfd.Timers {
 // itself (the outgoingConnManager.run and connectLoop functions of the
 // fork); without it, after 1.5 to 2 s.
 //
-// Like bgpd, a BFD Down does not reset a BGP session that came up in the
-// same second (bss->last_event > peer->uptime, both in seconds): a
-// route reflector with "update-source" re-keys its BFD session for us
-// when the BGP session comes up (bgp_peer_bfd_update_source), so the BFD
-// session we just brought Up goes Down in that second. The FRR shadow
-// node sees the same Down and keeps the session; kindmetal and the lab
-// saw BOOTy reset the RR session once at every start. The RR comes up
-// when it receives our KEEPALIVE and can re-key BFD before its KEEPALIVE
-// moves our session from OpenConfirm to Established, so a BFD Down in
-// OpenConfirm does not reset the session at once either (bgpd would, but
-// its BFD Down comes through zebra and arrives after its KEEPALIVE).
-// GoBGP's ListPeer shows OpenConfirm until its server loop handles the
-// state change, after the FSM logged "Peer Up", and then Established
-// without an uptime until the FSM sets it; both count as coming up. So a
-// real failure is not hidden until the hold timer expires, a skipped BFD
-// Down is checked again when the session is Established: if BFD is not
-// Up again within bfdRecheckGrace of the Down, the session is reset then.
+// Like bgpd, a BFD Down does not reset a BGP session that is just coming
+// up: OpenConfirm, Established before GoBGP has set the uptime, or the
+// same second as the uptime (FRR 10.3 and later: bss->last_event >
+// peer->uptime, both in seconds; 10.2 stops the session on every Up to
+// Down).
+//
+// A route reflector with "update-source" re-keys its BFD session for us
+// when its side of the BGP session comes up (bgp_peer_bfd_update_source),
+// so the BFD session we just brought Up goes Down at once, with diag 3
+// (Neighbor Signaled Session Down). The FRR shadow node sees the same Down
+// and keeps the session. For that diag only, BOOTy is more tolerant,
+// because GoBGP shows the start late: the RR comes up when it receives our
+// KEEPALIVE, and GoBGP writes that KEEPALIVE before its server loop moves
+// the peer out of Active (outgoing connection) or OpenSent (incoming
+// connection), so ListPeer can show any state from Connect on; and
+// GoBGP's uptime is in whole seconds, so a Down in the next second can be
+// 1 ms after the session came up. Idle (no session; the reset sets the
+// idle hold time after reset) still resets at once, and a Down for a peer
+// that GoBGP does not know (BOOTy restarted it) is ignored: the new peer
+// has a new session. Any other diag, such as an expired detection time,
+// is a path failure and keeps the rule above.
+//
+// A skipped BFD Down is checked again (recheck), so a real failure is not
+// hidden until the hold timer expires: if BFD is not Up again within
+// bfdRecheckGrace of the Down and the session is Established, it is reset
+// then.
 func (u *UnderlayTier) bfdChanged(p *bfd.Peer, from, to bfd.State, diag bfd.Diag) {
 	u.bfdUp.Store(p.Name, to == bfd.StateUp)
 	if from != bfd.StateUp || to != bfd.StateDown {
 		return
 	}
+	now := time.Now
+	if u.now != nil {
+		now = u.now
+	}
+	downAt := now()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	session := u.bgpSession
 	if session == nil {
 		session = u.sessionState
 	}
-	now := time.Now
-	if u.now != nil {
-		now = u.now
-	}
-	// Only the same second: GoBGP's uptime is wall-clock time, and a time
-	// sync that steps the clock back puts it in the future (FRR compares
-	// monotonic times). Then the BFD Down resets the session as usual.
-	switch state, at := session(ctx, p.Name); {
-	case state == apipb.PeerState_SESSION_STATE_OPENCONFIRM:
-		u.log.Info("BFD down while the BGP session is coming up (OpenConfirm), not resetting it yet", "peer", p.Name, "diag", diag)
-		u.recheck(p)
+	rekey := diag == bfd.DiagNeighborSaysDown
+	// GoBGP's uptime is wall-clock time, and a time sync that steps the
+	// clock back puts it in the future (FRR compares monotonic times).
+	// Then the BFD Down resets the session as usual.
+	state, at := session(ctx, p.Name)
+	switch upFor := downAt.Unix() - at.Unix(); {
+	case state == apipb.PeerState_SESSION_STATE_IDLE:
+	case rekey && state == apipb.PeerState_SESSION_STATE_UNSPECIFIED:
+		u.log.Info("BFD down for an unknown BGP peer, not resetting it", "peer", p.Name, "diag", diag)
 		return
-	case state == apipb.PeerState_SESSION_STATE_ESTABLISHED && (at.IsZero() || now().Unix() == at.Unix()):
-		u.log.Info("BFD down in the second the BGP session came up, not resetting it yet, like FRR", "peer", p.Name, "diag", diag)
-		u.recheck(p)
+	case state == apipb.PeerState_SESSION_STATE_OPENCONFIRM,
+		state == apipb.PeerState_SESSION_STATE_ESTABLISHED && at.IsZero(),
+		rekey && state != apipb.PeerState_SESSION_STATE_ESTABLISHED:
+		u.log.Info("BFD down while the BGP session is coming up, not resetting it yet", "peer", p.Name, "state", state, "diag", diag)
+		u.recheck(p, time.Time{})
+		return
+	case upFor == 0 || rekey && upFor == 1:
+		u.log.Info("BFD down right after the BGP session came up, not resetting it yet, like FRR", "peer", p.Name, "diag", diag)
+		u.recheck(p, at)
 		return
 	}
 	u.log.Warn("BFD down, resetting the BGP session", "peer", p.Name, "diag", diag)
@@ -215,19 +233,40 @@ func bfdRecheckGrace(p *bfd.Peer) time.Duration {
 	return time.Duration(cmp.Or(p.Timers.DetectMult, 3)) * bfd.SlowTx
 }
 
-// recheck starts resetUnlessBFDUp for p; Teardown stops it (stopRechecks).
-func (u *UnderlayTier) recheck(p *bfd.Peer) {
+// bfdRecheck is the running recheck of a BFD peer. checkMu guards it.
+type bfdRecheck struct {
+	downAt time.Time // the last BFD Down; the grace time counts from it
+	uptime time.Time // the uptime of the session it checks; zero until known
+}
+
+// recheck starts resetUnlessBFDUp for p, for the session with uptime (zero:
+// the session that comes up next). A peer has at most one recheck: a
+// Down while one runs restarts its grace time and binds it to the
+// session of that Down. Teardown stops it
+// (stopRechecks).
+func (u *UnderlayTier) recheck(p *bfd.Peer, uptime time.Time) {
 	grace := cmp.Or(u.bfdUpGrace, bfdRecheckGrace(p))
 	u.checkMu.Lock()
 	defer u.checkMu.Unlock()
 	if u.checkCtx == nil {
 		u.checkCtx, u.stopChecks = context.WithCancel(context.Background())
 	}
+	if rc, ok := u.rechecks[p.Name]; ok {
+		// The Down can be one of a new session (BOOTy restarted the
+		// peer within a tick): check that one.
+		rc.downAt, rc.uptime = time.Now(), uptime
+		return
+	}
+	if u.rechecks == nil {
+		u.rechecks = map[string]*bfdRecheck{}
+	}
+	rc := &bfdRecheck{downAt: time.Now(), uptime: uptime}
+	u.rechecks[p.Name] = rc
 	ctx := u.checkCtx
 	u.checks.Add(1)
 	go func() {
 		defer u.checks.Done()
-		u.resetUnlessBFDUp(ctx, p.Name, time.Now(), grace)
+		u.resetUnlessBFDUp(ctx, p.Name, rc, grace)
 	}()
 }
 
@@ -246,8 +285,11 @@ func (u *UnderlayTier) stopRechecks() {
 
 // resetUnlessBFDUp waits until the BGP session of name is Established with
 // an uptime, then resets it unless BFD came Up again within grace after
-// downAt. A session that does not come up needs no reset.
-func (u *UnderlayTier) resetUnlessBFDUp(ctx context.Context, name string, downAt time.Time, grace time.Duration) {
+// the last Down. It ends without a reset when the grace time is over and
+// the session is not coming up (Connect, Active or OpenSent), and when the
+// session it checks ended (Idle, the peer is gone, or another uptime):
+// BOOTy restarted the peer, and the new session has its own BFD Down.
+func (u *UnderlayTier) resetUnlessBFDUp(ctx context.Context, name string, rc *bfdRecheck, grace time.Duration) {
 	session := u.bgpSession
 	if session == nil {
 		session = u.sessionState
@@ -255,28 +297,49 @@ func (u *UnderlayTier) resetUnlessBFDUp(ctx context.Context, name string, downAt
 	tick := time.NewTicker(cmp.Or(grace/30, 10*time.Millisecond))
 	defer tick.Stop()
 	for range tick.C {
-		if up, ok := u.bfdUp.Load(name); ok && up.(bool) {
-			return
-		}
 		qctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		state, at := session(qctx, name)
 		cancel()
-		switch {
-		case ctx.Err() != nil: // Teardown
-			return
-		case state == apipb.PeerState_SESSION_STATE_OPENCONFIRM || state == apipb.PeerState_SESSION_STATE_ESTABLISHED && at.IsZero():
-			continue // still coming up; the hold timer bounds this
-		case state != apipb.PeerState_SESSION_STATE_ESTABLISHED:
-			return
-		case time.Since(downAt) < grace:
-			continue
+		// The decision and the end of the recheck under checkMu: a Down
+		// either restarts this recheck's grace time or starts a new one.
+		u.checkMu.Lock()
+		reset, done := u.recheckStep(ctx, name, rc, grace, state, at)
+		if done {
+			delete(u.rechecks, name)
 		}
-		u.log.Warn("BGP session came up while BFD stayed down, resetting it", "peer", name)
-		rctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		u.reset(rctx, name)
-		cancel()
-		return
+		u.checkMu.Unlock()
+		if reset {
+			u.log.Warn("BGP session came up while BFD stayed down, resetting it", "peer", name)
+			rctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			u.reset(rctx, name)
+			cancel()
+		}
+		if done {
+			return
+		}
 	}
+}
+
+// recheckStep decides one tick of resetUnlessBFDUp; checkMu is held.
+func (u *UnderlayTier) recheckStep(ctx context.Context, name string, rc *bfdRecheck, grace time.Duration,
+	state apipb.PeerState_SessionState, at time.Time) (reset, done bool) {
+	established := state == apipb.PeerState_SESSION_STATE_ESTABLISHED && !at.IsZero()
+	if established && rc.uptime.IsZero() {
+		rc.uptime = at
+	}
+	up, _ := u.bfdUp.Load(name)
+	switch isUp, _ := up.(bool); {
+	case ctx.Err() != nil, isUp: // Teardown, or BFD is Up again
+		return false, true
+	case established && !at.Equal(rc.uptime),
+		state == apipb.PeerState_SESSION_STATE_IDLE, state == apipb.PeerState_SESSION_STATE_UNSPECIFIED:
+		return false, true // the session ended
+	case state == apipb.PeerState_SESSION_STATE_OPENCONFIRM || state == apipb.PeerState_SESSION_STATE_ESTABLISHED && at.IsZero():
+		return false, false // still coming up; the hold timer bounds this
+	case time.Since(rc.downAt) < grace:
+		return false, false // ListPeer can lag behind the FSM (bfdChanged)
+	}
+	return established, true
 }
 
 func (u *UnderlayTier) reset(ctx context.Context, name string) {
