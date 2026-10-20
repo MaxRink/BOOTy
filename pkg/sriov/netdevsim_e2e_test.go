@@ -27,6 +27,10 @@ type netdevsim struct {
 	dir string // /sys/bus/netdevsim/devices/netdevsim<id>
 }
 
+// wedgedID is the id of the netdevsim device that a sysfs write did not
+// return for, 0 for none. The tests do not run in parallel.
+var wedgedID int
+
 const netdevsimBus = "/sys/bus/netdevsim"
 
 // physPortRe matches the phys_port_name of a netdevsim PF port. The port
@@ -43,16 +47,87 @@ func newNetdevsim(t *testing.T, id, ports int) *netdevsim {
 	if _, err := os.Stat(netdevsimBus); err != nil {
 		t.Fatalf("netdevsim not loaded (modprobe netdevsim): %v", err)
 	}
-	writeSys(t, filepath.Join(netdevsimBus, "new_device"), fmt.Sprintf("%d %d", id, ports))
+	// The wedged device keeps its PF netdev, and every Discover blocks on
+	// its devlink lock: fail now instead of at the go test timeout.
+	if wedgedID != 0 {
+		t.Fatalf("netdevsim%d is wedged by an earlier test", wedgedID)
+	}
 	n := &netdevsim{id: id, dir: filepath.Join(netdevsimBus, "devices", "netdevsim"+strconv.Itoa(id))}
+	n.within(t, "new_device", func() error {
+		return os.WriteFile(filepath.Join(netdevsimBus, "new_device"), fmt.Appendf(nil, "%d %d", id, ports), 0o200)
+	})
 	t.Cleanup(func() {
-		if err := os.WriteFile(filepath.Join(netdevsimBus, "del_device"), []byte(strconv.Itoa(id)), 0o200); err != nil {
-			t.Errorf("delete netdevsim%d: %v", id, err)
+		// del_device of a wedged device blocks with the netdevsim bus lock
+		// held. Skipping it does not make the device usable again: later
+		// tests fail at the wedgedID check above.
+		if wedgedID == n.id {
+			t.Logf("not deleting the wedged %s", n.name())
+			return
 		}
+		n.within(t, "del_device", func() error {
+			return os.WriteFile(filepath.Join(netdevsimBus, "del_device"), []byte(strconv.Itoa(id)), 0o200)
+		})
 	})
 	n.waitPorts(t, ports)
 	settleUdev(t)
 	return n
+}
+
+// within runs fn and fails the test when fn fails or does not return in
+// a minute. A netdevsim sysfs write that oopses in the kernel never
+// returns, and it holds the device lock, so every later write to the
+// device hangs too: mark the device wedged and fail with the kernel log
+// instead of waiting for the go test timeout. fn runs on another
+// goroutine that can outlive the test, so it must not use t.
+func (n *netdevsim) within(t *testing.T, what string, fn func() error) {
+	t.Helper()
+	const limit = time.Minute
+	done := make(chan error, 1)
+	go func() { done <- fn() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("%s: %v", what, err)
+		}
+	case <-time.After(limit):
+		wedgedID = n.id
+		out, err := exec.CommandContext(t.Context(), "dmesg").CombinedOutput()
+		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		lines = lines[max(0, len(lines)-60):]
+		t.Fatalf("%s did not return in %s (kernel oops or hung driver), dmesg (%v):\n%s", what, limit, err, strings.Join(lines, "\n"))
+	}
+}
+
+// vfRepTeardownOopses reports a kernel whose netdevsim oopses when it
+// deletes a VF representor (sriov_numvfs 0 or legacy mode in switchdev
+// mode, del_device): Linux 6.18 to 7.1-rc2 with PSP call
+// psp_dev_unregister(NULL) for VF ports. Linux 7.1-rc3 has the fix, commit
+// 7ce3f1bedaac "netdevsim: psp: only call nsim_psp_uninit() on PFs"; 7.0.y
+// and 6.18.y have no backport. The
+// PF ports have the psp_rereg debugfs file when the kernel has PSP.
+func (n *netdevsim) vfRepTeardownOopses(t *testing.T) bool {
+	t.Helper()
+	psp, _ := filepath.Glob(filepath.Join("/sys/kernel/debug/netdevsim", n.name(), "ports", "*", "psp_rereg"))
+	if len(psp) == 0 {
+		return false
+	}
+	var u unix.Utsname
+	if err := unix.Uname(&u); err != nil {
+		t.Fatal(err)
+	}
+	release := unix.ByteSliceToString(u.Release[:])
+	var major, minor int
+	if _, err := fmt.Sscanf(release, "%d.%d", &major, &minor); err != nil {
+		t.Fatalf("kernel release %q: %v", release, err)
+	}
+	if major == 7 && minor == 1 {
+		var rc int
+		if _, after, ok := strings.Cut(release, "-rc"); ok {
+			_, _ = fmt.Sscanf(after, "%d", &rc)
+		}
+		return rc == 1 || rc == 2
+	}
+	return major < 7 || major == 7 && minor < 1
 }
 
 // settleUdev waits until udev has handled the new netdevs, so it does not
@@ -125,9 +200,18 @@ func writeSys(t *testing.T, path, value string) {
 
 func netdevsimPFs(t *testing.T, n *netdevsim) []PF {
 	t.Helper()
-	all, err := NewInspector().Discover()
+	pfs, err := n.discover()
 	if err != nil {
 		t.Fatal(err)
+	}
+	return pfs
+}
+
+// discover returns the PF ports of the device.
+func (n *netdevsim) discover() ([]PF, error) {
+	all, err := NewInspector().Discover()
+	if err != nil {
+		return nil, err
 	}
 	var pfs []PF
 	for _, pf := range all {
@@ -135,7 +219,7 @@ func netdevsimPFs(t *testing.T, n *netdevsim) []PF {
 			pfs = append(pfs, pf)
 		}
 	}
-	return pfs
+	return pfs, nil
 }
 
 // waitPFs waits until Discover reports want PF ports of the device: udev
@@ -201,12 +285,17 @@ func netdevsimReconcile(t *testing.T, n *netdevsim, rt RuntimeSettings) *Result 
 	waitPFs(t, n, 1)
 	p := Profile{Name: "nsim", Match: Match{Driver: "netdevsim"}, Runtime: rt}
 	r := &Reconciler{Config: &Config{Profiles: []Profile{p}, OnDrift: OnDriftFail},
-		Discover: func() ([]PF, error) { return netdevsimPFs(t, n), nil },
+		Discover: n.discover,
 		Runtime:  NewKernelRuntime()}
-	res, err := r.Run(t.Context())
-	if err != nil {
-		t.Fatalf("reconcile: %v\nfindings: %+v", err, res.Findings)
-	}
+	ctx := t.Context()
+	var res *Result
+	n.within(t, "reconcile", func() error {
+		var err error
+		if res, err = r.Run(ctx); err != nil {
+			return fmt.Errorf("%w\nfindings: %+v", err, res.Findings)
+		}
+		return nil
+	})
 	return res
 }
 
@@ -235,11 +324,17 @@ func TestNetdevsimRuntimeVFAttributes(t *testing.T) {
 
 // TestNetdevsimRuntimeSwitchdevAndReset switches the eSwitch to switchdev
 // with VFs, checks the result, and lets the handoff reset restore legacy
-// mode without VFs.
+// mode without VFs. A kernel that oopses on the VF representor teardown
+// gets the eSwitch change without VFs.
 func TestNetdevsimRuntimeSwitchdevAndReset(t *testing.T) {
 	n := newNetdevsim(t, 4712, 1)
 	n.setMaxVFs(t, 8)
-	res := netdevsimReconcile(t, n, RuntimeSettings{NumVFs: ptr(2), EswitchMode: EswitchSwitchdev})
+	vfs := 2
+	if n.vfRepTeardownOopses(t) {
+		t.Log("netdevsim of this kernel oopses on the VF representor teardown, switching the eSwitch without VFs")
+		vfs = 0
+	}
+	res := netdevsimReconcile(t, n, RuntimeSettings{NumVFs: ptr(vfs), EswitchMode: EswitchSwitchdev})
 	var handoff bool
 	for _, f := range res.Findings {
 		if f.Setting == SettingHandoff {
