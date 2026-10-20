@@ -10,6 +10,10 @@ The E2E vrnetlab test suite validates standby heartbeat delivery end-to-end.
 Cycle time, running from RAM and the CAPRF reuse path:
 [agent-fast-cycle.md](agent-fast-cycle.md).
 
+> The limitations of the kexec handoff (firmware state, measured boot,
+> Secure Boot, boot loader semantics, networking, CAPRF interaction) are
+> documented in [kexec.md](kexec.md).
+
 ## Summary
 
 Extend BOOTy to support a **hot standby** mode where machines boot into the

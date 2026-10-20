@@ -4,6 +4,10 @@
 
 ## Priority: P1
 
+> The limitations of the kexec handoff (firmware state, measured boot,
+> Secure Boot, boot loader semantics, networking, CAPRF interaction) are
+> documented in [kexec.md](kexec.md).
+
 ## Summary
 
 Extend BOOTy's kexec subsystem with multi-kernel selection (version pinning,

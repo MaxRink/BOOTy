@@ -139,6 +139,10 @@ kexec runs. If kexec is disabled or fails, BOOTy powers off and does not do a
 normal reboot, because the firmware boot path can still point at the old
 active slot.
 
+The kexec handoff has limits: it skips the firmware, so boot counting,
+`BootNext`, measured boot and firmware changes do not apply. See
+[kexec.md](kexec.md).
+
 Config validation rejects these combinations:
 
 - `preserveExisting` without `IMAGE_MODE=ab` or without `activeSlot`.

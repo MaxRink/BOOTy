@@ -1105,6 +1105,10 @@ re-initialization. After provisioning, BOOTy parses the installed GRUB config,
 loads the kernel and initramfs, unmounts the target filesystems, then executes
 the kexec syscall.
 
+See [docs/kexec.md](docs/kexec.md) for every limitation of the kexec path
+(firmware state, measured boot, Secure Boot, boot loader semantics,
+networking, CAPRF interaction) and when to reboot instead.
+
 ```bash
 # Disable kexec (force hard reboot via firmware)
 export DISABLE_KEXEC=true
