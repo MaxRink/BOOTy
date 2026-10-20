@@ -57,9 +57,12 @@ echo "` + mirrorCheckEnd + `"
 systemctl poweroff --no-block
 `
 
+// The check writes to ttyS0, so the serial getty waits for it: agetty hangs
+// up the tty, and the check output after that is lost (seen on Ubuntu 26.04).
 const mirrorCheckUnit = `[Unit]
 Description=BOOTy mirrored root e2e check
 After=local-fs.target
+Before=serial-getty@ttyS0.service
 
 [Service]
 Type=oneshot

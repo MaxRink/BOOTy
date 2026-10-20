@@ -123,6 +123,12 @@ const (
 	EFISystemPartitionGUID = "C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
 	LinuxFilesystemGUID    = "0FC63DAF-8483-4772-8E79-3D69D8477DE4"
 	LinuxFilesystemMBRType = "83"
+	// Root partition types of the Discoverable Partitions Specification
+	// (UAPI.2) for x86-64 and arm64. The Ubuntu 26.04 cloud image marks its
+	// root partition with the x86-64 type instead of the Linux filesystem
+	// type.
+	LinuxRootX86_64GUID = "4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709"
+	LinuxRootARM64GUID  = "B921B045-1DF0-41C3-AF44-4C6F280D3FAE"
 )
 
 // StopRAIDArrays stops all RAID arrays via mdadm.
@@ -1058,7 +1064,7 @@ func (m *Manager) FindRootPartition(parts []Partition) (*Partition, error) {
 	var candidates []*Partition
 	var namedRoot []*Partition
 	for i := range parts {
-		if !isLinuxFilesystemPartitionType(parts[i].Type) {
+		if !IsLinuxRootPartitionType(parts[i].Type) {
 			continue
 		}
 		candidates = append(candidates, &parts[i])
@@ -1081,9 +1087,16 @@ func (m *Manager) FindRootPartition(parts []Partition) (*Partition, error) {
 	}
 }
 
-func isLinuxFilesystemPartitionType(partitionType string) bool {
-	return strings.EqualFold(partitionType, LinuxFilesystemGUID) ||
-		strings.EqualFold(partitionType, LinuxFilesystemMBRType)
+// IsLinuxRootPartitionType reports whether a partition of this type can hold
+// the root filesystem: the GPT or MBR Linux filesystem type or a
+// Discoverable Partitions Specification root type.
+func IsLinuxRootPartitionType(partitionType string) bool {
+	for _, t := range []string{LinuxFilesystemGUID, LinuxFilesystemMBRType, LinuxRootX86_64GUID, LinuxRootARM64GUID} {
+		if strings.EqualFold(partitionType, t) {
+			return true
+		}
+	}
+	return false
 }
 
 func partitionCandidateList(parts []*Partition) string {

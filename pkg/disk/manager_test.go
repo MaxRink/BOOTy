@@ -594,6 +594,27 @@ func TestFindRootPartitionAcceptsMBRLinuxType(t *testing.T) {
 	}
 }
 
+// The Ubuntu 26.04 cloud image: root with the Discoverable Partitions
+// Specification x86-64 root type, /boot with the extended boot type.
+func TestFindRootPartitionAcceptsDiscoverableRootType(t *testing.T) {
+	mgr := NewManager(newMockCommander())
+	for _, rootType := range []string{LinuxRootX86_64GUID, "B921B045-1DF0-41C3-AF44-4C6F280D3FAE"} {
+		parts := []Partition{
+			{Node: "/dev/sda1", Type: rootType, Name: "cloudimg-rootfs"},
+			{Node: "/dev/sda13", Type: "BC13C2FF-59E6-4262-A352-B275FD6F7172"},
+			{Node: "/dev/sda14", Type: "21686148-6449-6E6F-744E-656564454649"},
+			{Node: "/dev/sda15", Type: EFISystemPartitionGUID},
+		}
+		root, err := mgr.FindRootPartition(parts)
+		if err != nil {
+			t.Fatalf("%s: unexpected error: %v", rootType, err)
+		}
+		if root.Node != "/dev/sda1" {
+			t.Errorf("%s: expected /dev/sda1, got %s", rootType, root.Node)
+		}
+	}
+}
+
 func TestFindRootPartitionNotFound(t *testing.T) {
 	mgr := NewManager(newMockCommander())
 	parts := []Partition{

@@ -7,12 +7,15 @@ package integration
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"net"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -148,14 +151,58 @@ func prodtplNodeLLDP(t *testing.T, container, nic string) (mac, id, host string)
 		}
 		out[i] = strings.TrimSpace(o)
 	}
+	if container == prodtplNetworkd {
+		out[1] = prodtplNetworkdChassisID(t, out[1])
+	}
 	return out[0], out[1], out[2]
+}
+
+// prodtplNetworkdLLDPAppID is LLDP_APP_ID of systemd sd-lldp-tx.c.
+var prodtplNetworkdLLDPAppID = [16]byte{0x07, 0x3a, 0x43, 0xbf, 0x54, 0xde, 0x40, 0x8d, 0x8e, 0xc4, 0x96, 0xed, 0xfd, 0x94, 0x72, 0xdc}
+
+// prodtplNetworkdChassisID returns the chassis ID that the networkd node
+// sends for its machine ID. Up to systemd 257 (Ubuntu 22.04 and 24.04) it is
+// the machine ID. From 258 (Ubuntu 26.04: 259) networkd sends an ID derived
+// from it, sd_id128_get_machine_app_specific(LLDP_APP_ID), unless
+// SYSTEMD_LLDP_SEND_MACHINE_ID=1 (systemd NEWS of 258): HMAC-SHA256 of the
+// application ID keyed with the machine ID, first 16 bytes, as a v4 UUID.
+// BOOTy sends the machine ID like the legacy ramdisk (249).
+func prodtplNetworkdChassisID(t *testing.T, machineID string) string {
+	t.Helper()
+	v, err := prodtplExec(context.Background(), prodtplNetworkd, "dpkg-query", "-W", "-f", "${Version}", "systemd")
+	if err != nil {
+		t.Fatalf("networkd node systemd version: %v", err)
+	}
+	v = strings.TrimSpace(v)
+	major, err := strconv.Atoi(strings.SplitN(v, ".", 2)[0])
+	if err != nil {
+		t.Fatalf("networkd node systemd version %q: %v", v, err)
+	}
+	if major < 258 {
+		t.Logf("networkd node: systemd %s, chassis ID is the machine ID", v)
+		return machineID
+	}
+	key, err := hex.DecodeString(machineID)
+	if err != nil || len(key) != 16 {
+		t.Fatalf("networkd node machine ID %q: want 32 hex digits (%v)", machineID, err)
+	}
+	mac := hmac.New(sha256.New, key)
+	mac.Write(prodtplNetworkdLLDPAppID[:])
+	id := mac.Sum(nil)[:16]
+	id[6] = id[6]&0x0f | 0x40
+	id[8] = id[8]&0x3f | 0x80
+	t.Logf("networkd node: systemd %s, chassis ID derived from the machine ID", v)
+	return hex.EncodeToString(id)
 }
 
 // BOOTy sends the frame that systemd-networkd 249 sends with
 // EmitLLDP=yes: on the same leaf, the frame of the networkd node and the
 // frame of BOOTy are the same once the MAC, the machine ID, the interface
 // name and the hostname are replaced, with the same TLVs in the same
-// order.
+// order. CI runs the networkd node on every Ubuntu LTS in standard support
+// (networkd-test.Dockerfile, UBUNTU): 22.04 (systemd 249, the legacy
+// ramdisk) is the parity reference; 24.04 (255) sends the same frame;
+// 26.04 (259) differs only in the chassis ID (prodtplNetworkdChassisID).
 func TestProdTplLLDPLikeNetworkd(t *testing.T) {
 	norm := func(frame []byte, mac, id, nic, host string) string {
 		r := strings.NewReplacer(mac, "MAC", id, "MACHINE-ID", nic, "IFNAME", host, "HOSTNAME")
@@ -180,8 +227,8 @@ func TestProdTplLLDPLikeNetworkd(t *testing.T) {
 }
 
 // BOOTy receives LLDP on every physical NIC (LLDP_RECEIVE, on by
-// default): it logs the networkd node on lldp1 with its machine ID as
-// chassis ID, its port and its hostname.
+// default): it logs the networkd node on lldp1 with its chassis ID (the
+// machine ID up to systemd 257), its port and its hostname.
 func TestProdTplLLDPReceive(t *testing.T) {
 	_, id, host := prodtplNodeLLDP(t, prodtplNetworkd, "lldp1")
 	want := []string{`msg="LLDP neighbor"`, "interface=lldp1", "chassisID=" + id, "portID=lldp1", "systemName=" + host}

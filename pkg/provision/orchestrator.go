@@ -2321,8 +2321,7 @@ func findRootPartitionByNumber(parts []disk.Partition, targetDisk string, number
 }
 
 func isLinuxRootPartition(part disk.Partition) bool {
-	return strings.EqualFold(part.Type, disk.LinuxFilesystemGUID) ||
-		strings.EqualFold(part.Type, disk.LinuxFilesystemMBRType)
+	return disk.IsLinuxRootPartitionType(part.Type)
 }
 
 func partitionNumberForSelector(node, targetDisk string) int {

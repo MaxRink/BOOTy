@@ -339,7 +339,7 @@ jobs:
             test_tag: e2e
             test_regex: "^TestMirroredRootBootFailoverVM$"
             # Two subtests of at most 8 + 6 + 6 minutes plus image preparation.
-            test_timeout: 50m
+            go_timeout: 50m
             timeout_minutes: 70
             privileged: true
             ovmf_vars: OVMF_VARS.fd
@@ -362,7 +362,7 @@ jobs:
             test_tag: e2e
             test_regex: "^TestMirroredRootBootFailoverVM$"
             # Two subtests of at most 8 + 6 + 6 minutes plus image preparation.
-            test_timeout: 50m
+            go_timeout: 50m
             timeout_minutes: 70
             privileged: true
             ovmf_vars: OVMF_VARS.fd
@@ -371,6 +371,33 @@ jobs:
             mirror_os_image: ubuntu-24.04-server-cloudimg-amd64.img
             mirror_os_image_url: https://cloud-images.ubuntu.com/releases/noble/release-20260911/ubuntu-24.04-server-cloudimg-amd64.img
             mirror_os_image_sha256: 612b2c0cc1bc413a6cb8c38fd611794caf0f2b436c50013d8b3794db12ad7354
+            mirror_separate_boot: "true"
+            mirror_root_partition_number: "1"
+            mirror_disk_size: 6G
+            setup: |
+              cp /usr/share/OVMF/OVMF_VARS_4M.fd OVMF_VARS.fd
+              sudo apt-get install -y --no-install-recommends cloud-guest-utils efibootmgr
+          # Every Ubuntu LTS in standard support boots after provisioning:
+          # 22.04 and 24.04 above, 26.04 (Linux 7.0, dracut) here.
+          - scenario: mirror-boot-failover-ubuntu-26.04
+            qemu_extra: ""
+            # Provision with the pinned 6.8 kernel like the scenarios above: an
+            # older target kernel must read the arrays, and the production
+            # ramdisk kernel is older than 6.19 too.
+            kernel_debs: |
+              b1f19b3c6ce0684e6884fec1abb9b88bc55362b37147d03a75d8ef0244a820f1  https://launchpad.net/ubuntu/+archive/primary/+files/linux-image-6.8.0-1071-azure_6.8.0-1071.79_amd64.deb
+              d27fd905b01bf76b8a14c9ac88eb55c76a79f8025a7c2c15b8481ac786153ce0  https://launchpad.net/ubuntu/+archive/primary/+files/linux-modules-6.8.0-1071-azure_6.8.0-1071.79_amd64.deb
+            test_tag: e2e
+            test_regex: "^TestMirroredRootBootFailoverVM$"
+            go_timeout: 50m
+            timeout_minutes: 70
+            privileged: true
+            ovmf_vars: OVMF_VARS.fd
+            ovmf_code: /usr/share/OVMF/OVMF_CODE_4M.fd
+            # Ubuntu 26.04 cloud image: separate /boot partition (13) mirrored as md1.
+            mirror_os_image: ubuntu-26.04-server-cloudimg-amd64.img
+            mirror_os_image_url: https://cloud-images.ubuntu.com/releases/resolute/release-20260927/ubuntu-26.04-server-cloudimg-amd64.img
+            mirror_os_image_sha256: 8800651811af9a85465ad1d552add729947bb16488dddb4a9b5305a3d97332b2
             mirror_separate_boot: "true"
             mirror_root_partition_number: "1"
             mirror_disk_size: 6G

@@ -3363,6 +3363,24 @@ func TestParsePartitionsRejectsMissingConfiguredRootPartitionLabel(t *testing.T)
 	}
 }
 
+func TestParsePartitionsAcceptsDiscoverableRootPartitionNumber(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.RootPartitionNumber = 1
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	cmd.setResult("sfdisk --json", sfdiskJSON(t, []disk.Partition{
+		{Node: "/dev/sda1", Type: disk.LinuxRootX86_64GUID, Name: "cloudimg-rootfs"},
+		{Node: "/dev/sda15", Type: disk.EFISystemPartitionGUID},
+	}), nil)
+
+	if err := o.parsePartitions(context.Background()); err != nil {
+		t.Fatalf("parsePartitions: %v", err)
+	}
+	if o.rootPartition != "/dev/sda1" {
+		t.Fatalf("root partition = %q, want /dev/sda1", o.rootPartition)
+	}
+}
+
 func TestParsePartitionsRejectsNonLinuxConfiguredRootPartitionNumber(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Provision.Disk.RootPartitionNumber = 1

@@ -379,7 +379,11 @@ mirror companion, else every disk. BOOTy never assembles existing arrays while i
 ramdisk has no `mdadm.conf`, so a scan would also start foreign or stale
 arrays. The installed system gets `/etc/mdadm/mdadm.conf` (and
 `/etc/mdadm.conf`) with the legacy line `AUTO +imsm +1.x -all` and the
-`ARRAY` lines of `/dev/md2` and `/dev/md1`.
+`ARRAY` lines of `/dev/md2` and `/dev/md1`. It also gets
+`/etc/dracut.conf.d/90-booty-mirror.conf`, which adds the `mdraid` module,
+sets `mdadmconf="yes"` and adds `rd.md.uuid=<uuid>` of each array to the
+initramfs command line. Without it, a dracut initramfs (Ubuntu 26.04) does
+not assemble the arrays. initramfs-tools ignores the file.
 
 On UEFI, the `create-mirror-efi-boot-entry` step copies the ESP to the second
 disk and creates the firmware boot entry `<label>-disk2` for it (for example
@@ -538,16 +542,22 @@ applies:
 1. `PARTITION_LAYOUT` or A/B mode: the partition or logical volume with
    mountpoint `/`.
 2. `ROOT_PARTITION_LABEL`: the partition with this GPT partition name. The match
-   ignores case. The partition must have the Linux filesystem type. BOOTy fails
-   if the label matches more than one partition or no partition.
+   ignores case. The partition must have the Linux filesystem type or a
+   Discoverable Partitions root type (see below). BOOTy fails if the label
+   matches more than one partition or no partition.
 3. `ROOT_PARTITION_NUMBER`: the partition with this 1-based number. It must
-   have the Linux filesystem type.
+   have the Linux filesystem type or a Discoverable Partitions root type.
 4. Automatic detection.
 
 `ROOT_PARTITION_LABEL` and `ROOT_PARTITION_NUMBER` are mutually exclusive.
 
 Automatic detection uses only partitions with the Linux filesystem type (GPT
-`0FC63DAF-8483-4772-8E79-3D69D8477DE4` or MBR `83`):
+`0FC63DAF-8483-4772-8E79-3D69D8477DE4` or MBR `83`) or a root type of the
+Discoverable Partitions Specification for x86-64
+(`4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709`, as in the Ubuntu 26.04 cloud image)
+or arm64 (`B921B045-1DF0-41C3-AF44-4C6F280D3FAE`). The labels and numbers
+above accept the same types. `GROW_PARTITION=last-linux` still uses only the
+Linux filesystem type:
 
 1. If exactly one candidate is named `root` or `/` (case is ignored), BOOTy
    uses it. If more than one has these names, BOOTy fails.

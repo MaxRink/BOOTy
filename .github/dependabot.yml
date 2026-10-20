@@ -28,11 +28,17 @@ updates:
     schedule:
       interval: weekly
     ignore:
-      # test/e2e/clab/networkd-test.Dockerfile is the systemd-networkd 249
-      # reference (Ubuntu 22.04, what the legacy ramdisk sends). Newer Ubuntu
-      # releases ship a newer systemd that changes what the LLDP parity tests
-      # compare, so the base image is moved on purpose, not by Dependabot.
+      # test/e2e/clab/networkd-test.Dockerfile pins one ubuntu image per LTS
+      # release in standard support (22.04, 24.04, 26.04). Dependabot merges
+      # these FROM lines into one ubuntu dependency with the version of the
+      # first (22.04) and ignores every tag above it, so no line moves to
+      # another release (25.10, 26.10); the digest of each pinned tag still
+      # gets updates. A new LTS is added by hand as a new FROM line.
       - dependency-name: ubuntu
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
+          - version-update:semver-patch
     groups:
       docker-major:
         group-by: dependency-name

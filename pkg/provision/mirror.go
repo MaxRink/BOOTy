@@ -496,6 +496,27 @@ func writeMdadmConf(root, content string) error {
 	return nil
 }
 
+// dracutMirrorConf is the dracut configuration that assembles the mirror
+// arrays in the initramfs. Without rd.md.uuid or rd.auto on the command line,
+// dracut (Ubuntu 26.04) skips MD RAID activation, and a generic (not
+// host-only) initramfs carries no rd.md.uuid, so the root array never
+// appears. dracut writes kernel_cmdline into the initramfs. initramfs-tools
+// ignores the file.
+func dracutMirrorConf(arrayLines []string) string {
+	var b strings.Builder
+	b.WriteString("# Written by BOOTy: assemble the mirror arrays in the initramfs.\n" +
+		"add_dracutmodules+=\" mdraid \"\nmdadmconf=\"yes\"\nkernel_cmdline+=\"")
+	for _, line := range arrayLines {
+		for _, f := range strings.Fields(line) {
+			if uuid, ok := strings.CutPrefix(f, "UUID="); ok {
+				b.WriteString(" rd.md.uuid=" + uuid)
+			}
+		}
+	}
+	b.WriteString(" \"\n")
+	return b.String()
+}
+
 const mirrorGrubConfig = "# Written by BOOTy: the root filesystem is a RAID1 array. Booting by the\n" +
 	"# PARTUUID of one member would bypass the array.\nGRUB_FORCE_PARTUUID=\n"
 
@@ -520,6 +541,10 @@ func (o *Orchestrator) configureMdadmAt(ctx context.Context, root string) error 
 	}
 	if err := writeMdadmConf(root, mdadmConfHeader+strings.Join(arrayLines, "\n")+"\n"); err != nil {
 		return err
+	}
+	if err := writeTargetRootFile(root, filepath.Join(root, "etc", "dracut.conf.d", "90-booty-mirror.conf"),
+		[]byte(dracutMirrorConf(arrayLines))); err != nil {
+		return fmt.Errorf("write dracut mirror config: %w", err)
 	}
 	if err := o.rewriteMirrorFstab(ctx, root); err != nil {
 		return err
