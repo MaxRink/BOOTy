@@ -83,7 +83,8 @@ func TestReplaceInterfacePeer(t *testing.T) {
 	for _, shared := range []bool{false, true} {
 		ctx := context.Background()
 		s := startServer(t, 4210000017, "192.0.2.17", -1)
-		cfg := &Config{ASN: 4210000017, LocalAS: 65501, AllowASIn: 3}
+		cfg := &Config{ASN: 4210000017, LocalAS: 65501, AllowASIn: 3, RouteMapIn: "IN",
+			RouteMaps: []network.RouteMap{{Name: "IN", Entries: []network.RouteMapEntry{{Seq: 10}}}}}
 		u := &UnderlayTier{bgp: s, cfg: cfg, log: slog.Default()}
 		u.recordInterfacePeer("lo", "fe80::1%lo")
 		if shared {
@@ -94,11 +95,12 @@ func TestReplaceInterfacePeer(t *testing.T) {
 		if err := u.addPeer(ctx, peer); err != nil {
 			t.Fatal(err)
 		}
-		for name, list := range map[string][]string{"rm-in": {"fe80::1/128", "fe80::9/128"}, "other": {"fe80::9/128"}} {
-			if err := s.AddDefinedSet(ctx, &apipb.AddDefinedSetRequest{DefinedSet: &apipb.DefinedSet{
-				DefinedType: apipb.DefinedType_DEFINED_TYPE_NEIGHBOR, Name: name, List: list}}); err != nil {
-				t.Fatal(err)
-			}
+		if err := u.installPolicies(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.AddDefinedSet(ctx, &apipb.AddDefinedSetRequest{DefinedSet: &apipb.DefinedSet{
+			DefinedType: apipb.DefinedType_DEFINED_TYPE_NEIGHBOR, Name: "other", List: []string{"fe80::1/128", "fe80::9/128"}}}); err != nil {
+			t.Fatal(err)
 		}
 		u.bfd = bfd.NewManager(slog.Default(), nil)
 		if err := u.bfd.Add(&bfd.Peer{Name: "fe80::1%lo", Addr: netip.MustParseAddr("fe80::1%lo"),
@@ -119,12 +121,14 @@ func TestReplaceInterfacePeer(t *testing.T) {
 		}
 		sets := map[string][]string{}
 		_ = s.ListDefinedSet(ctx, &apipb.ListDefinedSetRequest{DefinedType: apipb.DefinedType_DEFINED_TYPE_NEIGHBOR},
-			func(d *apipb.DefinedSet) { sets[d.GetName()] = slices.Sorted(slices.Values(d.GetList())) })
-		wantIn := []string{"fe80::2/128", "fe80::9/128"}
+			func(d *apipb.DefinedSet) {
+				sets[d.GetName()] = slices.Compact(slices.Sorted(slices.Values(d.GetList())))
+			})
+		wantIn := []string{"fe80::2/128"}
 		if shared {
-			wantIn = []string{"fe80::1/128", "fe80::2/128", "fe80::9/128"}
+			wantIn = []string{"fe80::1/128", "fe80::2/128"}
 		}
-		if !slices.Equal(sets["rm-in"], wantIn) || !slices.Equal(sets["other"], []string{"fe80::9/128"}) {
+		if !slices.Equal(sets["rm-in-IN-ipv4-unicast"], wantIn) || !slices.Equal(sets["other"], []string{"fe80::1/128", "fe80::9/128"}) {
 			t.Fatalf("shared=%v: neighbor sets = %v, want rm-in %v", shared, sets, wantIn)
 		}
 		if got := u.bfd.Names(); !slices.Equal(got, []string{"fe80::2%lo"}) {
@@ -140,6 +144,92 @@ func TestReplaceInterfacePeer(t *testing.T) {
 			t.Fatalf("shared=%v: old address maps to %q", shared, old)
 		}
 		u.bfd.Close()
+	}
+}
+
+// Two switches that did not answer at setup share the placeholder address,
+// so its neighbor sets mix the policies of both sessions. A moved peer
+// takes only the sets of its own session: the tester session in
+// Vrf_underlay keeps its route-map and does not inherit the "bgp
+// ebgp-requires-policy" reject of the default VRF session (CI run
+// 39474191755, the tester got no routes from BOOTy and BOOTy none from it).
+func TestReplaceInterfacePeerSharedPlaceholder(t *testing.T) {
+	ctx := context.Background()
+	s := startServer(t, 4210000017, "192.0.2.17", -1)
+	cfg := &Config{ASN: 4210000017,
+		RouteMaps: []network.RouteMap{{Name: "OUT", Entries: []network.RouteMapEntry{{Seq: 10}}}},
+		Sessions: []network.BGPSession{
+			{Name: "lo", Interface: true, VRF: "Vrf_underlay", RemoteASN: 65510, IPv4Unicast: true,
+				RouteMaps: []network.SessionRouteMaps{{Family: "ipv4-unicast", Out: "OUT"}}},
+			{Name: "eth9", Interface: true, RemoteASN: 65510, IPv4Unicast: true, EBGPRequiresPolicy: true},
+		}}
+	u := &UnderlayTier{bgp: s, cfg: cfg, log: slog.Default()}
+	u.recordInterfacePeer("lo", placeholderPeer("lo"))
+	u.recordInterfacePeer("eth9", placeholderPeer("eth9"))
+	peer := buildInterfacePeer(cfg, "lo", placeholderPeer("lo"), ipv4Families())
+	u.ifacePeerConfs["lo"] = peer
+	if err := u.addPeer(ctx, peer); err != nil {
+		t.Fatal(err)
+	}
+	if err := u.installPolicies(ctx); err != nil {
+		t.Fatal(err)
+	}
+	sets := func() map[string][]string {
+		out := map[string][]string{}
+		_ = s.ListDefinedSet(ctx, &apipb.ListDefinedSetRequest{DefinedType: apipb.DefinedType_DEFINED_TYPE_NEIGHBOR},
+			func(d *apipb.DefinedSet) {
+				out[d.GetName()] = slices.Compact(slices.Sorted(slices.Values(d.GetList())))
+			})
+		return out
+	}
+	const placeholder = "fe80::fdff:ffff:ffff:ff80/128"
+
+	if err := u.replaceInterfacePeer(ctx, "lo", placeholderPeer("lo"), "fe80::2%lo"); err != nil {
+		t.Fatal(err)
+	}
+	got := sets()
+	want := map[string][]string{
+		"rm-out-OUT-ipv4-unicast":               {"fe80::2/128"},
+		"ebgp-requires-policy-in-ipv4-unicast":  {placeholder},
+		"ebgp-requires-policy-out-ipv4-unicast": {placeholder},
+	}
+	if !maps.EqualFunc(got, want, slices.Equal) {
+		t.Fatalf("neighbor sets after the first move = %v, want %v", got, want)
+	}
+
+	// A move that fails (the eth9 peer is not in GoBGP here) keeps the old
+	// address in the sets of its session.
+	u.ifacePeerConfs["eth9"] = buildInterfacePeer(cfg, "eth9", placeholderPeer("eth9"), ipv4Families())
+	if err := u.replaceInterfacePeer(ctx, "eth9", placeholderPeer("eth9"), "fe80::9%eth9"); err == nil {
+		t.Fatal("moving a peer that is not in GoBGP succeeded")
+	}
+	got = sets()
+	want = map[string][]string{
+		"rm-out-OUT-ipv4-unicast":               {"fe80::2/128"},
+		"ebgp-requires-policy-in-ipv4-unicast":  {"fe80::9/128", placeholder},
+		"ebgp-requires-policy-out-ipv4-unicast": {"fe80::9/128", placeholder},
+	}
+	if !maps.EqualFunc(got, want, slices.Equal) {
+		t.Fatalf("neighbor sets after a failed move = %v, want %v", got, want)
+	}
+
+	// The second switch answers; its peer is not in GoBGP here, so only
+	// its neighbor sets move. The placeholder leaves every set.
+	leave, err := u.joinNeighborSets(ctx, placeholderPeer("eth9"), "fe80::9%eth9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := u.leaveNeighborSets(ctx, placeholderPeer("eth9"), leave); err != nil {
+		t.Fatal(err)
+	}
+	got = sets()
+	want = map[string][]string{
+		"rm-out-OUT-ipv4-unicast":               {"fe80::2/128"},
+		"ebgp-requires-policy-in-ipv4-unicast":  {"fe80::9/128"},
+		"ebgp-requires-policy-out-ipv4-unicast": {"fe80::9/128"},
+	}
+	if !maps.EqualFunc(got, want, slices.Equal) {
+		t.Fatalf("neighbor sets after the second move = %v, want %v", got, want)
 	}
 }
 

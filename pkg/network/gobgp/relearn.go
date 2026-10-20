@@ -166,7 +166,11 @@ func (u *UnderlayTier) replaceInterfacePeer(ctx context.Context, iface, old, add
 	if conf == nil {
 		return fmt.Errorf("no peer configuration for %s", iface)
 	}
-	if err := u.moveNeighborSets(ctx, old, addr, !shared); err != nil {
+	// addr joins the neighbor sets before the peer moves, so the new
+	// session never runs without its policy; old leaves them after the
+	// move, so a failed move keeps the old peer's policy.
+	leave, err := u.joinNeighborSets(ctx, old, addr)
+	if err != nil {
 		return err
 	}
 	peer, _ := proto.Clone(conf).(*apipb.Peer)
@@ -176,6 +180,9 @@ func (u *UnderlayTier) replaceInterfacePeer(ctx context.Context, iface, old, add
 	}
 	if err := u.movePeer(ctx, old, peer); err != nil {
 		return err
+	}
+	if err := u.leaveNeighborSets(ctx, old, leave); err != nil {
+		u.log.Warn("old peer address stays in its neighbor sets", "peer", old, "error", err)
 	}
 	u.peerMu.Lock()
 	u.ifacePeerConfs[iface] = peer
@@ -217,39 +224,95 @@ func (u *UnderlayTier) movePeer(ctx context.Context, old string, peer *apipb.Pee
 	return nil
 }
 
-// moveNeighborSets puts addr into every neighbor set that holds old, so
-// the route-maps and checks of the peer stay; old leaves them unless
-// another interface peer has the same address.
-func (u *UnderlayTier) moveNeighborSets(ctx context.Context, old, addr string, drop bool) error {
+// joinNeighborSets puts addr into the neighbor sets of the peer at old,
+// so its route-maps and checks stay, and returns the sets that old must
+// leave. The sets are those of the peer's own configuration, not every
+// set that holds the address: unnumbered peers on other interfaces can
+// share old (the placeholder, or a switch with the same link-local
+// address), and GoBGP neighbor sets have no zone. old stays in a set
+// that another peer with that address is in.
+func (u *UnderlayTier) joinNeighborSets(ctx context.Context, old, addr string) ([]string, error) {
 	oldIP, err1 := netip.ParseAddr(old)
 	newIP, err2 := netip.ParseAddr(addr)
 	if err := errors.Join(err1, err2); err != nil {
-		return fmt.Errorf("peer address: %w", err)
+		return nil, fmt.Errorf("peer address: %w", err)
 	}
 	from, to := hostPrefix(oldIP), hostPrefix(newIP)
+	u.peerMu.RLock()
+	peers := u.policyPeers()
+	u.peerMu.RUnlock()
+	var own, others []policyPeer
+	for _, p := range peers {
+		switch {
+		case p.name == old:
+			own = append(own, p)
+		case hostPrefix(p.addr) == from:
+			others = append(others, p)
+		}
+	}
+	mine, err := u.neighborSetNames(own)
+	if err != nil {
+		return nil, err
+	}
+	keep, err := u.neighborSetNames(others)
+	if err != nil {
+		return nil, err
+	}
 	var names []string
 	if err := u.bgp.ListDefinedSet(ctx, &apipb.ListDefinedSetRequest{DefinedType: apipb.DefinedType_DEFINED_TYPE_NEIGHBOR},
 		func(d *apipb.DefinedSet) {
-			if slices.Contains(d.GetList(), from) {
+			if slices.Contains(mine, d.GetName()) && slices.Contains(d.GetList(), from) {
 				names = append(names, d.GetName())
 			}
 		}); err != nil {
-		return fmt.Errorf("list neighbor sets: %w", err)
+		return nil, fmt.Errorf("list neighbor sets: %w", err)
 	}
+	var leave []string
 	for _, name := range names {
 		set := &apipb.DefinedSet{DefinedType: apipb.DefinedType_DEFINED_TYPE_NEIGHBOR, Name: name, List: []string{to}}
 		if err := u.bgp.AddDefinedSet(ctx, &apipb.AddDefinedSetRequest{DefinedSet: set}); err != nil {
-			return fmt.Errorf("add %s to neighbor set %s: %w", to, name, err)
+			return nil, fmt.Errorf("add %s to neighbor set %s: %w", to, name, err)
 		}
-		if !drop {
-			continue
+		if !slices.Contains(keep, name) {
+			leave = append(leave, name)
 		}
-		set = &apipb.DefinedSet{DefinedType: apipb.DefinedType_DEFINED_TYPE_NEIGHBOR, Name: name, List: []string{from}}
+	}
+	return leave, nil
+}
+
+// leaveNeighborSets removes old from the neighbor sets names.
+func (u *UnderlayTier) leaveNeighborSets(ctx context.Context, old string, names []string) error {
+	ip, err := netip.ParseAddr(old)
+	if err != nil {
+		return fmt.Errorf("peer address: %w", err)
+	}
+	from := hostPrefix(ip)
+	for _, name := range names {
+		set := &apipb.DefinedSet{DefinedType: apipb.DefinedType_DEFINED_TYPE_NEIGHBOR, Name: name, List: []string{from}}
 		if err := u.bgp.DeleteDefinedSet(ctx, &apipb.DeleteDefinedSetRequest{DefinedSet: set}); err != nil {
 			return fmt.Errorf("remove %s from neighbor set %s: %w", from, name, err)
 		}
 	}
 	return nil
+}
+
+// neighborSetNames returns the names of the policy neighbor sets that
+// hold the peers.
+func (u *UnderlayTier) neighborSetNames(peers []policyPeer) ([]string, error) {
+	if len(peers) == 0 {
+		return nil, nil
+	}
+	p, err := buildPolicy(peers, u.cfg.RouteMaps, u.cfg.CommunityLists)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, s := range p.sets {
+		if s.GetDefinedType() == apipb.DefinedType_DEFINED_TYPE_NEIGHBOR {
+			names = append(names, s.GetName())
+		}
+	}
+	return names, nil
 }
 
 // placeholderPeer is the address of an unnumbered peer whose switch did
