@@ -46,22 +46,25 @@ var live struct {
 }
 
 // recordTX notes a send attempt and writes the state file. frame is nil
-// when the NIC had no carrier.
+// when the NIC had no carrier. Without a frame and with the error of the
+// last record nothing changed, so it does not write the file again.
 func recordTX(iface string, info *Info, frame []byte, err error, now time.Time) {
 	live.Lock()
 	byIface := func(t TxState) bool { return t.Interface == iface }
-	if !slices.ContainsFunc(live.tx, byIface) {
+	i := slices.IndexFunc(live.tx, byIface)
+	if i >= 0 && frame == nil && live.tx[i].Error == txError(err) {
+		live.Unlock()
+		return
+	}
+	if i < 0 {
 		live.tx = append(live.tx, TxState{Interface: iface})
 		slices.SortFunc(live.tx, func(a, b TxState) int { return strings.Compare(a.Interface, b.Interface) })
 	}
 	t := &live.tx[slices.IndexFunc(live.tx, byIface)]
 	t.Profile, t.Announce = cmp.Or(info.Profile, ProfileNetworkd), cmp.Or(info.Announce, AnnounceParity)
-	switch {
-	case err != nil:
-		t.Error = err.Error()
-	case frame == nil:
-		t.Error = "no carrier"
-	default:
+	if frame == nil {
+		t.Error = txError(err)
+	} else {
 		t.Error, t.LastTX = "", now
 		t.Frames++
 		if len(frame) > 14 {
@@ -70,6 +73,14 @@ func recordTX(iface string, info *Info, frame []byte, err error, now time.Time) 
 	}
 	live.Unlock()
 	writeState(now)
+}
+
+// txError is the Error of a TxState without a frame.
+func txError(err error) string {
+	if err != nil {
+		return err.Error()
+	}
+	return "no carrier"
 }
 
 // stateInterval is the shortest time between two writes of the state

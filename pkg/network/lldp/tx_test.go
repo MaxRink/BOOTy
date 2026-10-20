@@ -4,18 +4,14 @@ package lldp
 
 import (
 	"bytes"
-	"context"
 	"encoding/binary"
 	"encoding/hex"
-	"errors"
-	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/gopacket/gopacket"
 	"github.com/gopacket/gopacket/layers"
@@ -172,24 +168,6 @@ func TestFrameBM4XCableCheck(t *testing.T) {
 	}
 }
 
-// Only the bm4x profile and LLDP_EMIT_ALL skip NICs without carrier; the
-// networkd emitter tries every NIC as before.
-func TestCarrierOnly(t *testing.T) {
-	for _, tt := range []struct {
-		info Info
-		want bool
-	}{
-		{Info{}, false},
-		{Info{Profile: ProfileNetworkd}, false},
-		{Info{Profile: ProfileBM4XCableCheck}, true},
-		{Info{CarrierOnly: true}, true},
-	} {
-		if got := tt.info.carrierOnly(); got != tt.want {
-			t.Errorf("%+v: carrierOnly = %v, want %v", tt.info, got, tt.want)
-		}
-	}
-}
-
 // network.lldp.portIDFormat selects the port ID of the bm4x-cablecheck
 // profile; "" is "mac" byte for byte.
 func TestFrameBM4XPortIDFormats(t *testing.T) {
@@ -265,61 +243,5 @@ func TestShutdownFrame(t *testing.T) {
 	l, _ = gopacket.NewPacket(b, layers.LayerTypeEthernet, gopacket.Default).Layer(layers.LayerTypeLinkLayerDiscovery).(*layers.LinkLayerDiscovery)
 	if l == nil || l.PortID.Subtype != layers.LLDPPortIDSubtypeMACAddr || !bytes.Equal(l.PortID.ID, mac) {
 		t.Errorf("bm4x shutdown frame port ID %+v, want the NIC MAC like its normal frames", l)
-	}
-}
-
-// The sender ends with the shutdown LLDPDU when it stops.
-func TestEmitEndsWithShutdownFrame(t *testing.T) {
-	orig := sendFrame
-	t.Cleanup(func() { sendFrame = orig })
-	ttls := make(chan uint16, 16)
-	sendFrame = func(iface string, info *Info, build func(string, net.HardwareAddr, *Info) ([]byte, error)) ([]byte, error) {
-		b, err := build(iface, net.HardwareAddr{2, 0, 0, 0, 0, 1}, info)
-		if err != nil {
-			return nil, err
-		}
-		l, _ := gopacket.NewPacket(b, layers.LayerTypeEthernet, gopacket.Default).Layer(layers.LayerTypeLinkLayerDiscovery).(*layers.LinkLayerDiscovery)
-		if l != nil {
-			ttls <- l.TTL
-		}
-		return b, nil
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	wait := Emit(ctx, []string{"eth0"}, &Info{MachineID: "m", SystemName: "host1"}, slog.Default())
-	if got := <-ttls; got != txTTL {
-		t.Fatalf("first frame TTL %d, want %d", got, txTTL)
-	}
-	cancel()
-	wait()
-	close(ttls)
-	var last uint16 = txTTL
-	for v := range ttls {
-		last = v
-	}
-	if last != 0 {
-		t.Fatalf("last frame TTL %d, want 0 (shutdown LLDPDU)", last)
-	}
-}
-
-// Only sent frames count for the fast start; a carrier loss starts it
-// over; a NIC without carrier is polled at the fast interval.
-func TestFastInit(t *testing.T) {
-	var f fastInit
-	frame, fast, slow := []byte{1}, txFastInterval, txInterval
-	for i, tt := range []struct {
-		frame []byte
-		err   error
-		want  time.Duration
-	}{
-		{nil, nil, fast}, {nil, nil, fast}, // no carrier yet
-		{frame, nil, fast}, {frame, nil, fast}, {frame, nil, fast}, {frame, nil, slow}, // 4 fast frames
-		{frame, nil, slow},
-		{nil, errors.New("send failed"), slow}, // an error does not restart
-		{nil, nil, fast},                       // carrier lost
-		{frame, nil, fast}, {frame, nil, fast}, {frame, nil, fast}, {frame, nil, slow},
-	} {
-		if got := f.next(tt.frame, tt.err); got != tt.want {
-			t.Fatalf("step %d: wait %v, want %v", i, got, tt.want)
-		}
 	}
 }

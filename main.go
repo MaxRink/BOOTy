@@ -1258,7 +1258,6 @@ func startLLDPEmitAll(ctx context.Context, l *config.LLDPConfig) {
 	}
 	info := lldp.SystemInfo()
 	info.Profile, info.PortIDFormat, info.Announce = l.Profile, l.PortIDFormat, l.Announce
-	info.CarrierOnly = true
 	// Its own context: the run context is not canceled before kexec,
 	// reboot or power off, so the handoff stops it to send the shutdown
 	// LLDPDU (IEEE 802.1AB), like the GoBGP sender at its teardown.

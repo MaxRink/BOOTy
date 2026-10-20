@@ -737,14 +737,36 @@ per boot, kept in `/run/booty/machine-id`; it never uses or writes
 provisioned OS), port ID the interface name, TTL 120 s, system name the
 hostname, and the capabilities station, bridge and router (station
 enabled). When the sending stops, BOOTy sends a shutdown LLDPDU (TTL 0,
-IEEE 802.1AB), so the switch drops BOOTy at once instead of after 120 s;
-networkd does not send one. An `emit-lldp: true` on a netplan match block
-without `set-name` (the legacy L2 netplan has `all-en` with `name: "en*"`)
-sends on every NIC the block selects. BOOTy sends in every network mode,
-like networkd, which sends whatever the addressing (DHCP, static, FRR).
-Outside GoBGP mode a NIC that appears later and a block selects sends too
-(with the firmware LLDP agent turned off first, like at the start); the
-GoBGP underlay sends only on the NICs resolved at the setup. With `LLDP_RECEIVE` (on by default) BOOTy also listens on every
+IEEE 802.1AB) on each NIC with carrier, so the switch drops BOOTy at once
+instead of after 120 s; networkd does not send one. An `emit-lldp: true` on a netplan match
+block without `set-name` (the legacy L2 netplan has `all-en` with
+`name: "en*"`) sends on every NIC the block selects. BOOTy sends in every
+network mode, like networkd, which sends whatever the addressing (DHCP,
+static, FRR). Outside GoBGP mode a NIC that appears later and a block
+selects sends too (with the firmware LLDP agent turned off first, like at
+the start); the GoBGP underlay sends only on the NICs resolved at the
+setup.
+
+The timing is that of networkd 249 (`networkd-lldp-tx.c`), in every
+profile. Each delay is a base plus a random jitter of 0 to 400 ms:
+
+- A NIC sends only while it has carrier (`link_has_carrier`: operstate
+  up, or operstate unknown with lower up and running and not dormant).
+  BOOTy follows the carrier with netlink link updates, like networkd.
+- Carrier gained (`link_carrier_gained`, `link_lldp_emit_start`): the
+  first frame 0.8 s plus jitter later, then 3 more 0.8 s plus jitter
+  apart (txFastInit 4, msgFastTx 1 s of IEEE 802.1AB), then one every
+  29.8 s plus jitter (msgTxInterval 30 s). The TTL is 120 s.
+- Carrier lost (`link_carrier_lost`, `link_lldp_emit_stop`): no frames,
+  and none counts. The next carrier gain starts the 4 fast frames again.
+  A failed send counts, like in networkd.
+- A start while the timer runs sets the fast frames back to 4 and only
+  lowers the timeout, like `link_lldp_emit_start`.
+- When the link watch loses updates (ENOBUFS), BOOTy subscribes again and
+  reads the carrier again. A NIC that is missing, deleted or renamed gets
+  no frames; BOOTy logs it once and `booty lldp status` shows it.
+
+With `LLDP_RECEIVE` (on by default) BOOTy also listens on every
 physical NIC, logs each new or changed neighbor and adds the current
 neighbors to the hardware inventory report; the legacy ramdisk only
 sends. The receive joins the LLDP multicast groups (01:80:c2:00:00:0e,

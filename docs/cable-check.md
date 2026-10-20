@@ -41,9 +41,10 @@ builds the ISO with `LLDP_DISABLE_FW_AGENT=false`.
 
 The flow with bm4x is unchanged: `START_LLDP` inserts the ISO and powers the
 host on, NSO collects the neighbor tables, and `STOP_LLDP` powers the host
-off and ejects the ISO. The kernel sends the first frame on each NIC within
-seconds of BOOTy starting and then one every 30 s (TTL 120 s), like
-systemd-networkd and lldpd. bm4x waits `redfish.image-boot` (60 s in
+off and ejects the ISO. BOOTy sends the first frame on each NIC with
+carrier about 1 s after it starts sending or after the carrier comes up,
+3 more about 1 s apart, then one every 30 s (TTL 120 s), like
+systemd-networkd 249. bm4x waits `redfish.image-boot` (60 s in
 production) after the boot.
 
 ## Host-side checks

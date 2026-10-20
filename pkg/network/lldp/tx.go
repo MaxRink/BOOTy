@@ -21,12 +21,16 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Transmit timing of systemd-networkd (sd-lldp-tx.c): 4 fast frames 1 s
-// apart, then one frame every 30 s, TTL 120 s (4 intervals).
+// Transmit timing of systemd-networkd 249 (networkd-lldp-tx.c; the same
+// in sd-lldp-tx.c since 250). txFastInit (IEEE 802.1AB) is 4 frames.
+// msgFastTx (1 s) and msgTxInterval (30 s) lose half the jitter, and each
+// delay adds a random jitter in [0, 400 ms), so the frames go out 1 s and
+// 30 s apart on average. TTL 120 s is ceil(4 * 29.8 s).
 const (
 	txFastInit     = 4
-	txFastInterval = time.Second
-	txInterval     = 30 * time.Second
+	txJitter       = 400 * time.Millisecond
+	txFastInterval = time.Second - txJitter/2
+	txInterval     = 30*time.Second - txJitter/2
 	txTTL          = 120
 )
 
@@ -51,17 +55,10 @@ type Info struct {
 	PrettyHostname string // system description; omitted when empty
 	Profile        string // identity profile; "" is ProfileNetworkd
 	PortIDFormat   string // port ID of the bm4x-cablecheck profile; "" is PortIDMAC
-	// CarrierOnly skips NICs without carrier instead of trying to send
-	// (LLDP_EMIT_ALL). The bm4x-cablecheck profile always does.
-	CarrierOnly bool
 	// Announce is the announce level; "" is AnnounceParity. System is the
 	// host data that the standard and full levels send.
 	Announce string
 	System   System
-}
-
-func (i *Info) carrierOnly() bool {
-	return i.CarrierOnly || i.Profile == ProfileBM4XCableCheck
 }
 
 // SystemInfo reads the machine ID of the boot, the hostname and the pretty
@@ -189,12 +186,13 @@ func tlv(t layers.LLDPTLVType, s string) layers.LinkLayerDiscoveryValue {
 // EmitLLDP=yes. It returns a function that waits for the senders.
 func Emit(ctx context.Context, ifaces []string, info *Info, log *slog.Logger) (wait func()) {
 	var wg sync.WaitGroup
+	states := make(map[string]chan linkState, len(ifaces))
 	for _, iface := range ifaces {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			emitOn(ctx, iface, info, log.With("interface", iface))
-		}()
+		states[iface] = make(chan linkState, 1)
+	}
+	wg.Go(func() { watchCarrier(ctx, states, log) })
+	for iface, ch := range states {
+		wg.Go(func() { emitOn(ctx, iface, info, ch, log.With("interface", iface)) })
 	}
 	return wg.Wait
 }
@@ -227,47 +225,83 @@ func dottedMAC(mac net.HardwareAddr) string {
 	return b.String()
 }
 
-func emitOn(ctx context.Context, iface string, info *Info, log *slog.Logger) {
+// emitOn sends the frames of one NIC like networkd 249: a carrier gain
+// starts the transmit timer (link_carrier_gained -> link_lldp_emit_start),
+// a carrier loss stops it (link_carrier_lost -> link_lldp_emit_stop).
+// states carries the carrier of the NIC (watchCarrier).
+func emitOn(ctx context.Context, iface string, info *Info, states <-chan linkState, log *slog.Logger) {
 	if info.Profile == ProfileBM4XCableCheck {
 		log.Info("sending LLDP frames with the bm4x-cablecheck identity")
 	} else {
 		log.Info("sending LLDP frames like networkd EmitLLDP=yes")
 	}
+	// Log a failure once; the NIC may come back (carrier, rename).
 	failed := false
-	var fast fastInit
-	for {
-		frame, err := sendFrame(iface, info, Frame)
-		recordTX(iface, info, frame, err, time.Now())
-		if err != nil && !failed {
-			// Log once; the NIC may come back (carrier, rename).
+	warn := func(err error) {
+		if !failed {
 			log.Warn("LLDP frame not sent", "error", err)
 			failed = true
-		} else if err == nil {
-			failed = false
 		}
-		wait := fast.next(frame, err)
+	}
+	var tx txTimer
+	var cur linkState
+	timer := time.NewTimer(0)
+	timer.Stop()
+	arm := func() {
+		timer.Stop()
+		if !tx.next.IsZero() {
+			timer.Reset(time.Until(tx.next))
+		}
+	}
+	for {
 		select {
 		case <-ctx.Done():
 			// IEEE 802.1AB: a port that stops sending sends a shutdown
 			// LLDPDU, so the switch does not keep BOOTy for the TTL.
-			if _, err := sendFrame(iface, info, ShutdownFrame); err != nil {
-				log.Debug("LLDP shutdown frame not sent", "error", err)
+			if cur.carrier {
+				if _, err := sendFrame(iface, info, ShutdownFrame); err != nil {
+					log.Debug("LLDP shutdown frame not sent", "error", err)
+				}
 			}
 			return
-		case <-time.After(wait):
+		case s := <-states:
+			now := time.Now()
+			switch {
+			case s.err != nil:
+				tx.stop()
+				recordTX(iface, info, nil, s.err, now)
+				warn(s.err)
+			case !s.carrier:
+				tx.stop()
+				recordTX(iface, info, nil, nil, now)
+				failed = false
+			case !cur.carrier:
+				tx.start(now)
+				failed = false
+			}
+			cur = s
+			arm()
+		case <-timer.C:
+			now := time.Now()
+			frame, err := sendFrame(iface, info, Frame)
+			recordTX(iface, info, frame, err, now)
+			if err != nil {
+				warn(err)
+			} else {
+				failed = false
+			}
+			tx.fired(now)
+			arm()
 		}
 	}
 }
 
-// sendFrame sends the frame that build makes for the NIC and returns it;
-// nil when the NIC has no carrier. Tests replace it.
+// sendFrame sends the frame that build makes for the NIC and returns it.
+// Tests replace it.
 var sendFrame = func(iface string, info *Info, build func(string, net.HardwareAddr, *Info) ([]byte, error)) ([]byte, error) {
 	ifi, err := net.InterfaceByName(iface)
 	if err != nil {
 		return nil, fmt.Errorf("interface %s: %w", iface, err)
-	}
-	if info.carrierOnly() && ifi.Flags&net.FlagRunning == 0 {
-		return nil, nil // no carrier: send once the link is up
 	}
 	frame, err := build(iface, ifi.HardwareAddr, info)
 	if err != nil {
@@ -284,24 +318,4 @@ var sendFrame = func(iface string, info *Info, build func(string, net.HardwareAd
 		return nil, fmt.Errorf("send on %s: %w", iface, err)
 	}
 	return frame, nil
-}
-
-// fastInit counts the frames sent since the link came up: the first
-// txFastInit go out txFastInterval apart, then one every txInterval. A NIC
-// without carrier (frame nil, no error) starts over and is polled at the
-// fast interval, so its first frames go out as soon as the link is up,
-// like networkd after a carrier change.
-type fastInit struct{ sent int }
-
-func (f *fastInit) next(frame []byte, err error) time.Duration {
-	switch {
-	case err == nil && frame != nil:
-		f.sent++
-	case err == nil:
-		f.sent = 0
-	}
-	if f.sent < txFastInit {
-		return txFastInterval
-	}
-	return txInterval
 }

@@ -1223,7 +1223,7 @@ jobs:
             sudo modprobe netdevsim
           fi
           sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestNetdevsim' ./pkg/sriov/ 2>&1 | tee -a linux-e2e-logs/go-test.log
-          sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestOpenRXGroupsAndOwnFrames' ./pkg/network/lldp/ 2>&1 | tee -a linux-e2e-logs/go-test.log
+          sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestOpenRXGroupsAndOwnFrames|^TestEmitFollowsVethCarrier' ./pkg/network/lldp/ 2>&1 | tee -a linux-e2e-logs/go-test.log
           sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestLinkKernel|^TestModuleEEPROMKernel' ./pkg/network/ethtool/ 2>&1 | tee -a linux-e2e-logs/go-test.log
           if grep -E '^[[:space:]]*--- SKIP:' linux-e2e-logs/go-test.log; then
             echo "::error::linux e2e tests skipped in CI"
