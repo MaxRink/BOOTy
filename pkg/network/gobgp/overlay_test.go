@@ -5137,3 +5137,46 @@ func TestProcessRouteUpdateType5L3VNI(t *testing.T) {
 		t.Fatal("Type-5 with gateway mode: the VNI check must not apply")
 	}
 }
+
+// #747 x #775: a resolved gateway IP route, then an unusable update of the
+// same route key from another next hop (multicast router MAC, no gateway).
+// The update is a withdraw of the tracked path: one route delete via the
+// gateway IP, and the gateway's neighbor entry, which belongs to its Type-2
+// route, stays.
+func TestType5GatewayIPRouteConvertedWithdraw(t *testing.T) {
+	gw := net.ParseIP("10.1.0.5")
+	o, m := type2TestOverlay()
+	o.cfg.ResolveOverlayIndex = true
+	o.handleType2Route(&apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:00:00:05", IpAddress: gw.String()}, "10.0.0.2", 0, false)
+	path := func(nh string, r *apipb.EVPNIPPrefixRoute, mac string) *apipb.Path {
+		t.Helper()
+		mp, err := wrapAttr(&apipb.MpReachNLRIAttribute{Family: &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN}, NextHops: []string{nh}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ec, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{Communities: []*apipb.ExtendedCommunity{mustRT2(t, 65000, 100), mustRouterMAC(t, mac)}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		n, err := wrapNLRI(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &apipb.Path{Nlri: n, Pattrs: []*apipb.Attribute{mp, ec}}
+	}
+	o.processRouteUpdate(path("10.0.0.1", &apipb.EVPNIPPrefixRoute{IpPrefix: "10.100.0.0", IpPrefixLen: 24, Label: 100, GwAddress: gw.String()}, "62:db:b8:c1:80:52"))
+	if len(m.routeReplaces) != 1 || !m.routeReplaces[0].Gw.Equal(gw) {
+		t.Fatalf("route replaces %v, want the route via %s", m.routeReplaces, gw)
+	}
+	before := len(m.dels)
+	o.processRouteUpdate(path("10.0.0.3", &apipb.EVPNIPPrefixRoute{IpPrefix: "10.100.0.0", IpPrefixLen: 24, Label: 100, GwAddress: "0.0.0.0"}, "01:00:5e:00:00:01"))
+	if len(m.routeDels) != 1 || !m.routeDels[0].Gw.Equal(gw) {
+		t.Fatalf("route deletes %v, want one via %s", m.routeDels, gw)
+	}
+	if dels := m.dels[before:]; len(dels) != 0 {
+		t.Fatalf("neighbor or FDB deletes %v, want none", dels)
+	}
+	if _, ok := o.type2Neigh[gw.String()]; !ok {
+		t.Fatal("the Type-2 neighbor of the gateway is forgotten")
+	}
+}
