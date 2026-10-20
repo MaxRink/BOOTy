@@ -2972,3 +2972,51 @@ func TestDHCPFallbackBadResolverFails(t *testing.T) {
 		t.Fatalf("networkModeWithResolvers(dhcpFallback) = %T, %v; want the resolver error", mode, err)
 	}
 }
+
+// A failed link watch closes its subscription (netlink keeps the socket
+// until done closes) and, subscribed again, resolves the matches once, so a
+// NIC whose event was lost sends LLDP too.
+func TestFollowLLDPMatchesResubscribes(t *testing.T) {
+	origSub, origResolve, origPrep := lldpLinkSubscribe, resolveLinkMatches, lldpPrepareNICs
+	t.Cleanup(func() { lldpLinkSubscribe, resolveLinkMatches, lldpPrepareNICs = origSub, origResolve, origPrep })
+	lldpPrepareNICs = func([]string) {}
+	resolveLinkMatches = func(context.Context, []network.LinkMatch) ([]string, error) {
+		return []string{"enp1s0", "enp2s0"}, nil
+	}
+	dones := make(chan (<-chan struct{}), 2)
+	var calls atomic.Int32
+	lldpLinkSubscribe = func(ch chan<- netlink.LinkUpdate, done <-chan struct{}, _ netlink.LinkSubscribeOptions) error {
+		dones <- done
+		if calls.Add(1) == 1 {
+			close(ch) // the receive failed (ENOBUFS), the event of enp2s0 is lost
+			return nil
+		}
+		go func() { <-done; close(ch) }()
+		return nil
+	}
+	started := make(chan []string, 2)
+	ctx, cancel := context.WithCancel(context.Background())
+	known := func(n string) bool { return n == "enp1s0" }
+	followLLDPMatches(ctx, []network.LinkMatch{{Name: "en*"}}, known, func(n []string) { started <- n }, slog.Default())
+	first := <-dones
+	select {
+	case <-first:
+	case <-time.After(time.Second):
+		t.Fatal("the failed subscription is not closed")
+	}
+	select {
+	case n := <-started:
+		if !slices.Equal(n, []string{"enp2s0"}) {
+			t.Fatalf("started %v, want enp2s0", n)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the NIC of the lost event never sends LLDP")
+	}
+	second := <-dones
+	cancel()
+	select {
+	case <-second:
+	case <-time.After(time.Second):
+		t.Fatal("the end of the run does not close the subscription")
+	}
+}

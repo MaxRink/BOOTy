@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/sriov"
 )
 
@@ -36,5 +37,38 @@ func TestDisableNICFirmwareLLDPLeavesSRIOVPorts(t *testing.T) {
 	disableNICFirmwareLLDP(context.Background(), cfg)
 	if want := []string{"ens1f0", "eno1"}; !reflect.DeepEqual(disabled, want) {
 		t.Fatalf("with an fwLLDPAgent profile on ens1f1: disabled %v, want %v", disabled, want)
+	}
+}
+
+// prepareFirmwareLLDP stops the agent now and wires lldpPrepareNICs, so a
+// NIC that appears later gets it stopped too; with the agent kept neither.
+func TestPrepareFirmwareLLDPWiresLaterNICs(t *testing.T) {
+	origDetect, origDiscover, origDisable, origPrep := detectNICs, discoverPFs, disableFirmwareLLDP, lldpPrepareNICs
+	t.Cleanup(func() {
+		detectNICs, discoverPFs, disableFirmwareLLDP, lldpPrepareNICs = origDetect, origDiscover, origDisable, origPrep
+	})
+	detectNICs = func(context.Context) ([]string, error) { return []string{"eno1"}, nil }
+	discoverPFs = func() ([]sriov.PF, error) { return nil, nil }
+	var disabled []string
+	disableFirmwareLLDP = func(nic string) (string, error) {
+		disabled = append(disabled, nic)
+		return "fw-lldp-agent", nil
+	}
+	for _, keep := range []bool{false, true} {
+		disabled, lldpPrepareNICs = nil, func([]string) {}
+		cfg := &config.MachineConfig{}
+		if keep {
+			off := false
+			cfg.Network.LLDP.DisableFirmwareAgent = &off
+		}
+		prepareFirmwareLLDP(context.Background(), cfg)
+		lldpPrepareNICs([]string{"ens2f0"})
+		want := []string{"eno1", "ens2f0"}
+		if keep {
+			want = nil
+		}
+		if !reflect.DeepEqual(disabled, want) {
+			t.Errorf("keep agent %v: disabled %v, want %v", keep, disabled, want)
+		}
 	}
 }
