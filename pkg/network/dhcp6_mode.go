@@ -65,8 +65,8 @@ var (
 	}
 )
 
-// listenICMPv6 opens an ICMPv6 socket bound to the NIC.
-func listenICMPv6(ctx context.Context, ifname string) (net.PacketConn, error) {
+// ListenICMPv6 opens an ICMPv6 socket bound to the NIC (SO_BINDTODEVICE).
+func ListenICMPv6(ctx context.Context, ifname string) (net.PacketConn, error) {
 	lc := net.ListenConfig{Control: func(_, _ string, rc syscall.RawConn) error {
 		var serr error
 		err := rc.Control(func(fd uintptr) { serr = unix.BindToDevice(int(fd), ifname) })
@@ -83,7 +83,7 @@ func listenICMPv6(ctx context.Context, ifname string) (net.PacketConn, error) {
 // link-layer address option, as networkd's NDisc client does (the kernel
 // fills in the checksum).
 func sendRS(ifname string, mac net.HardwareAddr) error {
-	conn, err := listenICMPv6(context.Background(), ifname)
+	conn, err := ListenICMPv6(context.Background(), ifname)
 	if err != nil {
 		return err
 	}
@@ -104,7 +104,7 @@ func sendRS(ifname string, mac net.HardwareAddr) error {
 // watchRA calls fn with the M and O flags of every router advertisement
 // that the NIC receives, until ctx ends.
 func watchRA(ctx context.Context, iface *net.Interface, fn func(managed, other bool)) error {
-	conn, err := listenICMPv6(ctx, iface.Name)
+	conn, err := ListenICMPv6(ctx, iface.Name)
 	if err != nil {
 		return err
 	}

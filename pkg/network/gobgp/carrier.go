@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"time"
 
 	apipb "github.com/osrg/gobgp/v4/api"
 	"github.com/osrg/gobgp/v4/pkg/server"
@@ -19,7 +18,9 @@ import (
 // FRR does this for directly connected eBGP peers ("bgp
 // fast-external-failover", on by default): zebra reports the interface
 // down and bgpd stops the peer, so its routes are withdrawn at once
-// instead of after the hold time.
+// instead of after the hold time. The switch also forgets the neighbor
+// address and refuses the connect until it gets an RA; startPeriodicRA
+// sends those RAs at once when the carrier returns.
 type carrierWatch struct {
 	peers map[string]string // interface -> peer address as added to GoBGP
 	// current returns the peer address now, after the relearner moved it
@@ -28,17 +29,7 @@ type carrierWatch struct {
 	down    map[string]bool
 	// disable and enable stop and start a peer; GoBGP by default.
 	disable, enable func(ctx context.Context, addr string) error
-	// announce sends a Router Advertisement on an interface whose carrier
-	// came back. An FRR unnumbered peer forgets the neighbor address on
-	// interface down and refuses our connect until it gets an RA; zebra
-	// sends one at once on link up, the periodic RA comes up to 10 s later.
-	announce func(iface string)
-	// raRepeat sends the RA again after this time, in case the link-local
-	// address was still tentative; 0 sends it once. The timers stop with
-	// the watch.
-	raRepeat time.Duration
-	raTimers map[string]*time.Timer
-	log      *slog.Logger
+	log             *slog.Logger
 }
 
 func newCarrierWatch(bgp *server.BgpServer, peers map[string]string, log *slog.Logger) *carrierWatch {
@@ -51,10 +42,7 @@ func newCarrierWatch(bgp *server.BgpServer, peers map[string]string, log *slog.L
 		enable: func(ctx context.Context, addr string) error {
 			return bgp.EnablePeer(ctx, &apipb.EnablePeerRequest{Address: addr}) //nolint:wrapcheck // logged with the peer
 		},
-		announce: sendRouterAdvertisement,
-		// GoBGP connects 2 to 3 s after the enable.
-		raRepeat: time.Second,
-		log:      log,
+		log: log,
 	}
 }
 
@@ -76,7 +64,6 @@ func (w *carrierWatch) start(stop chan struct{}) (<-chan struct{}, error) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		defer w.stopRATimers()
 		for u := range updates {
 			w.handleUpdate(u)
 		}
@@ -111,24 +98,7 @@ func (w *carrierWatch) handle(iface string, carrier bool) {
 		return
 	}
 	w.log.Info("uplink has carrier again, starting its BGP session", "interface", iface, "neighbor", addr)
-	w.announce(iface)
-	if w.raRepeat > 0 {
-		if w.raTimers == nil {
-			w.raTimers = map[string]*time.Timer{}
-		}
-		if t := w.raTimers[iface]; t != nil {
-			t.Stop()
-		}
-		w.raTimers[iface] = time.AfterFunc(w.raRepeat, func() { w.announce(iface) })
-	}
 	if err := w.enable(ctx, addr); err != nil {
 		w.log.Warn("start BGP session", "neighbor", addr, "error", err)
-	}
-}
-
-// stopRATimers stops the repeated RAs; it runs on the update goroutine.
-func (w *carrierWatch) stopRATimers() {
-	for _, t := range w.raTimers {
-		t.Stop()
 	}
 }

@@ -25,7 +25,7 @@ func linkUpdate(name string, flags uint32) netlink.LinkUpdate {
 }
 
 // Carrier loss stops the session once, a repeated loss does nothing, the
-// carrier coming back sends an RA and starts the session once, and other
+// carrier coming back starts the session once, and other
 // interfaces are ignored.
 // IFF_LOWER_UP is the carrier; IFF_UP alone is not.
 func TestCarrierWatchDisableEnable(t *testing.T) {
@@ -41,8 +41,7 @@ func TestCarrierWatchDisableEnable(t *testing.T) {
 			calls = append(calls, "enable "+addr)
 			return nil
 		},
-		announce: func(iface string) { calls = append(calls, "RA "+iface) },
-		log:      slog.Default(),
+		log: slog.Default(),
 	}
 	steps := []struct {
 		update netlink.LinkUpdate
@@ -52,9 +51,9 @@ func TestCarrierWatchDisableEnable(t *testing.T) {
 		{linkUpdate("ens1f0np0", unix.IFF_UP), []string{"disable fe80::1%ens1f0np0"}},
 		{linkUpdate("ens1f0np0", unix.IFF_UP), []string{"disable fe80::1%ens1f0np0"}},
 		{linkUpdate("eth9", 0), []string{"disable fe80::1%ens1f0np0"}},
-		{linkUpdate("ens1f0np0", unix.IFF_UP|unix.IFF_LOWER_UP), []string{"disable fe80::1%ens1f0np0", "RA ens1f0np0", "enable fe80::1%ens1f0np0"}},
-		{linkUpdate("ens1f0np0", unix.IFF_UP|unix.IFF_LOWER_UP), []string{"disable fe80::1%ens1f0np0", "RA ens1f0np0", "enable fe80::1%ens1f0np0"}},
-		{netlink.LinkUpdate{}, []string{"disable fe80::1%ens1f0np0", "RA ens1f0np0", "enable fe80::1%ens1f0np0"}},
+		{linkUpdate("ens1f0np0", unix.IFF_UP|unix.IFF_LOWER_UP), []string{"disable fe80::1%ens1f0np0", "enable fe80::1%ens1f0np0"}},
+		{linkUpdate("ens1f0np0", unix.IFF_UP|unix.IFF_LOWER_UP), []string{"disable fe80::1%ens1f0np0", "enable fe80::1%ens1f0np0"}},
+		{netlink.LinkUpdate{}, []string{"disable fe80::1%ens1f0np0", "enable fe80::1%ens1f0np0"}},
 	}
 	for i, s := range steps {
 		w.handleUpdate(s.update)
@@ -152,57 +151,17 @@ func TestDebounce(t *testing.T) {
 	}
 }
 
-// The RA is sent again after raRepeat; stopping the watch stops a pending
-// repeat.
-func TestCarrierWatchRARepeat(t *testing.T) {
-	sent := make(chan string, 8)
-	newWatch := func() *carrierWatch {
-		return &carrierWatch{
-			peers:    map[string]string{"ens1f0np0": "fe80::1%ens1f0np0"},
-			down:     map[string]bool{"ens1f0np0": true},
-			disable:  func(context.Context, string) error { return nil },
-			enable:   func(context.Context, string) error { return nil },
-			announce: func(iface string) { sent <- iface },
-			raRepeat: 50 * time.Millisecond,
-			log:      slog.Default(),
-		}
-	}
-	count := func(within time.Duration) int {
-		n, deadline := 0, time.After(within)
-		for {
-			select {
-			case <-sent:
-				n++
-			case <-deadline:
-				return n
-			}
-		}
-	}
-	w := newWatch()
-	w.handle("ens1f0np0", true)
-	if n := count(300 * time.Millisecond); n != 2 {
-		t.Fatalf("RAs after carrier up = %d, want 2", n)
-	}
-	w = newWatch()
-	w.handle("ens1f0np0", true)
-	w.stopRATimers()
-	if n := count(300 * time.Millisecond); n != 1 {
-		t.Fatalf("RAs after carrier up and stop = %d, want 1", n)
-	}
-}
-
 // After the relearner moved a peer, the carrier watch stops and starts it
 // under its current address.
 func TestCarrierWatchCurrentAddress(t *testing.T) {
 	var calls []string
 	w := &carrierWatch{
-		peers:    map[string]string{"eth1": "fe80::1%eth1"},
-		current:  func(string) string { return "fe80::2%eth1" },
-		down:     map[string]bool{},
-		disable:  func(_ context.Context, addr string) error { calls = append(calls, "disable "+addr); return nil },
-		enable:   func(_ context.Context, addr string) error { calls = append(calls, "enable "+addr); return nil },
-		announce: func(string) {},
-		log:      slog.Default(),
+		peers:   map[string]string{"eth1": "fe80::1%eth1"},
+		current: func(string) string { return "fe80::2%eth1" },
+		down:    map[string]bool{},
+		disable: func(_ context.Context, addr string) error { calls = append(calls, "disable "+addr); return nil },
+		enable:  func(_ context.Context, addr string) error { calls = append(calls, "enable "+addr); return nil },
+		log:     slog.Default(),
 	}
 	w.handle("eth1", false)
 	w.handle("eth1", true)

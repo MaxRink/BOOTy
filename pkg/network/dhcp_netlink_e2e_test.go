@@ -341,7 +341,7 @@ func TestSendRSOnVeth(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	conn, err := listenICMPv6(context.Background(), "rs-r0")
+	conn, err := ListenICMPv6(context.Background(), "rs-r0")
 	if err != nil {
 		t.Fatal(err)
 	}

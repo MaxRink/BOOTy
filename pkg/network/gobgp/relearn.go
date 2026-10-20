@@ -129,7 +129,8 @@ func hasCarrier(iface string) bool {
 
 // movedPeer returns another link-local neighbor on iface that answers on
 // the BGP port, when the old address does not. A switch that connects
-// from its new address leaves it in the neighbor table; the RA asks it to.
+// from its new address leaves it in the neighbor table, and so do its
+// RAs. Like zebra, BOOTy sends no RA for this beyond the scheduled ones.
 func movedPeer(ctx context.Context, iface, old string) string {
 	ifi, err := net.InterfaceByName(iface)
 	if err != nil {
@@ -137,7 +138,6 @@ func movedPeer(ctx context.Context, iface, old string) string {
 	}
 	cands := slices.DeleteFunc(findLinkLocalNeighbors(ifi, iface), func(a string) bool { return a == old })
 	if len(cands) == 0 {
-		sendRouterAdvertisement(iface)
 		return ""
 	}
 	return chooseMoved(ctx, old, cands)

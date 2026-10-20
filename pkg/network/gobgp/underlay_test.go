@@ -89,7 +89,7 @@ func TestPeriodicRAEndsWithZeroLifetime(t *testing.T) {
 	sent := map[string][]uint16{}
 	orig := raSend
 	t.Cleanup(func() { raSend = orig })
-	raSend = func(iface string, lifetime uint16) {
+	raSend = func(iface string, lifetime uint16) bool {
 		if lifetime == 0 {
 			// A slow final RA: Teardown must still wait for it.
 			time.Sleep(50 * time.Millisecond)
@@ -97,6 +97,7 @@ func TestPeriodicRAEndsWithZeroLifetime(t *testing.T) {
 		mu.Lock()
 		sent[iface] = append(sent[iface], lifetime)
 		mu.Unlock()
+		return true
 	}
 	u := NewUnderlayTier(&Config{})
 	u.nics = []string{"eth0", "eth1"}
