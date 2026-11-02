@@ -413,8 +413,10 @@ func (u *UnderlayTier) sessionState(ctx context.Context, addr string) (apipb.Pee
 }
 
 func (u *UnderlayTier) resetPeer(ctx context.Context, addr, reason string) {
-	// BfdDown sends Cease/BFD Down (subcode 10) like FRR; GoBGP sends no
-	// shutdown communication with it, so reason only goes to the log.
+	// BfdDown sends Cease/BFD Down (subcode 10) like FRR; when the N bit
+	// was exchanged, GoBGP wraps it in a Hard Reset as FRR does. GoBGP
+	// sends no shutdown communication with it, so reason only goes to the
+	// log.
 	if err := u.bgp.ResetPeer(ctx, &apipb.ResetPeerRequest{Address: addr, BfdDown: true}); err != nil {
 		u.log.Warn("reset BGP peer", "peer", addr, "reason", reason, "error", err)
 	}

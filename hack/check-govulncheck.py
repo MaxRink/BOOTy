@@ -45,7 +45,7 @@ ALLOWLIST = {
     "GO-2026-4736": AllowlistedVulnerability(
         module="github.com/osrg/gobgp/v4",
         reason="fixed by 583080a7 since v4.4.0; the Go vuln DB lists no fixed version",
-        versions=frozenset({"4.10.0"}),
+        versions=frozenset({"4.11.0"}),
     ),
     # Stable gRPC v1.84.0 contains the backported fix for GHSA-2v4p-qf9q-27wj.
     # Keep this exact-version exception narrow while the Go vulnerability
