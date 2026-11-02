@@ -207,13 +207,20 @@ func (u *UnderlayTier) restartPeer(ctx context.Context, addr string) (bool, erro
 // whenever the leaf sent the graceful restart capability, and ended the
 // session (production template lab). Since booty.18 and booty.19 it does
 // that only when the leaf sent address family tuples in the current
-// session, like RFC 4724 section 5 and FRR (bgp_accept,
-// PEER_STATUS_NSF_MODE), so helper-only leaves are not affected; upstream
-// 3eef7645 (v4.11.0) has the same gate. Not deleting the peer also keeps
-// the stale routes of a leaf in graceful restart, as FRR keeps those of a
-// peer in NSF wait across interface down and up (bgp_stop in bgp_fsm.c).
-// The fork keeps them on the administrative shutdown too
-// (v4.11.0-booty.1); upstream aborts the restart there.
+// session. v4.11.0-booty.5 reads the new OPEN in the background and
+// requires preserved forwarding state: the GR F bit wins per family, an
+// LLGR tuple counts only for a family that the GR capability does not
+// list and with a nonzero stale time, and only negotiated families and
+// locally advertised capabilities count. The background read keeps
+// DisablePeer/EnablePeer responsive, and the replayed connection keeps
+// syscall.Conn for the socket options. FRR helper-only leaves advertise GR F=0, LLGR F=1
+// and stale time zero, so upstream 3eef7645 (v4.11.0) accepted their late
+// connection as a restart and dropped the just-recovered session a second
+// time. Not deleting the peer also keeps the stale routes of a leaf in
+// graceful restart, as FRR keeps those of a peer in NSF wait across
+// interface down and up (bgp_stop in bgp_fsm.c). The fork keeps them on
+// the administrative shutdown too (v4.11.0-booty.5); upstream aborts the
+// restart there.
 //
 // A peer that is not administratively down (the carrier loss did not stop
 // it, so its session may still be up) is left alone. Up to the fork tag

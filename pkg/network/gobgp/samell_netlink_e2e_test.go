@@ -110,10 +110,15 @@ func TestHelperSameLinkLocalSwitches(t *testing.T) {
 		}
 	}
 	addRoute(t, sw, "198.51.100.0/24", 0)
+	tmp := out + ".tmp"
 	for {
 		vt, _ := received(ctx, sw, "fe80::2%llvt")
 		vu, _ := received(ctx, sw, "fe80::2%llvu")
-		_ = os.WriteFile(out, fmt.Appendf(nil, "%d %d", vt, vu), 0o600)
+		// The reader opens the file by name. Replace it atomically so it
+		// never sees the empty file between truncate and write.
+		if err := os.WriteFile(tmp, fmt.Appendf(nil, "%d %d", vt, vu), 0o600); err == nil {
+			_ = os.Rename(tmp, out)
+		}
 		time.Sleep(100 * time.Millisecond)
 	}
 }

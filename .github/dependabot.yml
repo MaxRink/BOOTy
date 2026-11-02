@@ -12,7 +12,7 @@ updates:
         patterns: ["*"]
         update-types: [minor, patch]
     ignore:
-      # go.mod replaces GoBGP with the fork tag v4.11.0-booty.1, so an
+      # go.mod replaces GoBGP with the fork tag v4.11.0-booty.5, so an
       # upstream bump would not change the build. Move the fork tag by hand:
       # docs/networking.md#gobgp-version-and-fork
       - dependency-name: github.com/osrg/gobgp/v4
