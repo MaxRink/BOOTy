@@ -43,7 +43,7 @@ var evpnMinLen = [...]int{1: 25, 2: 33, 3: 17, 4: 23, 5: 34}
 // from a peer must end in an error (RFC 7606 section 5.3: session reset or
 // AFI/SAFI disable), not in a panic of the GoBGP receive goroutine, which
 // would end BOOTy, the PID 1 of the ramdisk. GoBGP 3.37.0 panics for
-// these inputs (slice bounds in the route type decoders); 4.10.0 checks
+// these inputs (slice bounds in the route type decoders); 4.11.0 checks
 // the lengths (upstream commit ac5a8894).
 func TestEVPNDecodeTruncatedNLRIReturnsError(t *testing.T) {
 	for routeType := byte(1); routeType <= 5; routeType++ {
@@ -54,7 +54,14 @@ func TestEVPNDecodeTruncatedNLRIReturnsError(t *testing.T) {
 						t.Fatalf("decode panicked: %v", r)
 					}
 				}()
-				if _, err := bgp.ParseBGPMessage(evpnUpdate(routeType, make([]byte, n))); err == nil {
+				nlri := make([]byte, n)
+				if routeType == 2 && n > 22 {
+					// RFC 7432 section 9.2.1: the MAC address length is
+					// 48. Without it, the decoder stops at the length
+					// before it reaches the truncated field under test.
+					nlri[22] = 48
+				}
+				if _, err := bgp.ParseBGPMessage(evpnUpdate(routeType, nlri)); err == nil {
 					t.Fatal("decoded a truncated EVPN NLRI without an error")
 				}
 			})
@@ -68,6 +75,9 @@ func TestEVPNUpdateValidAtMinLen(t *testing.T) {
 	for routeType := byte(1); routeType <= 5; routeType++ {
 		nlri := make([]byte, evpnMinLen[routeType])
 		switch routeType {
+		case 2:
+			// RFC 7432 section 9.2.1: the MAC address length is 48.
+			nlri[22] = 48
 		case 3:
 			nlri[12] = 32 // IPv4 originating router
 		case 4:

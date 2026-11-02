@@ -11,7 +11,7 @@ require (
 	github.com/insomniacslk/dhcp v0.0.0-20260901064844-234b97448fae
 	github.com/klauspost/compress v1.20.3
 	github.com/mdlayher/packet v1.2.0
-	github.com/osrg/gobgp/v4 v4.10.0
+	github.com/osrg/gobgp/v4 v4.11.0
 	github.com/pierrec/lz4/v4 v4.1.33
 	github.com/spf13/cobra v1.10.2
 	github.com/telekom/t-caas-go-library v0.1.3
@@ -60,10 +60,10 @@ require (
 	gotest.tools/v3 v3.5.2 // indirect
 )
 
-// GoBGP master after 4.10.0 (6d26fa29) plus the BOOTy fixes; why, and when
+// GoBGP master after 4.11.0 (629e5ae8) plus the BOOTy fixes; why, and when
 // to drop it:
 // docs/networking.md#gobgp-version-and-fork
-replace github.com/osrg/gobgp/v4 => github.com/MaxRink/gobgp/v4 v4.10.0-booty.24
+replace github.com/osrg/gobgp/v4 => github.com/MaxRink/gobgp/v4 v4.11.0-booty.1
 
 // gopacket 1.7.4 and netlink 1.3.1 plus the BOOTy fixes; why, and when to
 // drop them: docs/dependency-forks.md

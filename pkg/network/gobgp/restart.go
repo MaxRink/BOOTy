@@ -32,7 +32,9 @@ import (
 // can still be refused and then retries only after its connect timer. FRR
 // accepts connections while it waits. A peer that is added again starts
 // in Active at once: it accepts the leaf's connection and, with
-// BGP_CONNECT_AT_ONCE (ConnectAtOnce), connects itself at once.
+// BGP_CONNECT_AT_ONCE (ConnectAtOnce), connects itself at once. Since
+// upstream bfdd6742 (v4.11.0) a connection that arrives with an idle hold
+// time of 0 is passed to Active instead of being closed at random.
 // ConnectAtOnce does not replace the restart: it shortens the first
 // connect after Idle, but GoBGP still holds the peer in Idle and refuses
 // the leaf meanwhile.
@@ -206,10 +208,12 @@ func (u *UnderlayTier) restartPeer(ctx context.Context, addr string) (bool, erro
 // session (production template lab). Since booty.18 and booty.19 it does
 // that only when the leaf sent address family tuples in the current
 // session, like RFC 4724 section 5 and FRR (bgp_accept,
-// PEER_STATUS_NSF_MODE), so helper-only leaves are not affected. Not
-// deleting the peer also keeps the stale routes of a leaf in graceful
-// restart, as FRR keeps those of a peer in NSF wait across interface down
-// and up (bgp_stop in bgp_fsm.c).
+// PEER_STATUS_NSF_MODE), so helper-only leaves are not affected; upstream
+// 3eef7645 (v4.11.0) has the same gate. Not deleting the peer also keeps
+// the stale routes of a leaf in graceful restart, as FRR keeps those of a
+// peer in NSF wait across interface down and up (bgp_stop in bgp_fsm.c).
+// The fork keeps them on the administrative shutdown too
+// (v4.11.0-booty.1); upstream aborts the restart there.
 //
 // A peer that is not administratively down (the carrier loss did not stop
 // it, so its session may still be up) is left alone. Up to the fork tag
